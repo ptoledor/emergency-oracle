@@ -34,8 +34,7 @@ PROGRESS_FILE = SCRAPED_DIR / "progress.json"
 COOKIES_FILE  = Path(__file__).parent / "cookies.json"
 LOG_FILE      = SCRAPED_DIR / "scraper.log"
 
-BATCH_SIZE  = 7   # dias por batch antes de pausar (una semana)
-BATCH_PAUSE = 60  # segundos de pausa entre batches
+
 MAX_SCROLLS = 20  # maximo de scrolls por consulta diaria
 PROBE_SINCE = "2024-01-09"  # dia conocido con tweets, para verificar rate limit
 PROBE_UNTIL = "2024-01-10"
@@ -238,8 +237,8 @@ async def scrape(args):
             log.info(f"[+] Total: {total} dias | Pendientes: {len(pending)}")
 
             recently_done: deque[str] = deque(maxlen=2)
-            since_last_pause = 0
             need_new_cookies = False
+            need_retry = False
 
             for i, (since, until) in enumerate(pending):
                 seq = all_ranges.index((since, until)) + 1
@@ -249,7 +248,6 @@ async def scrape(args):
                     log.warning(f"  [{seq:03d}/{total}] {since} SIN_RESPUESTA — reiniciando, reintentando...")
                     await context.close()
                     context = await make_context(browser, active_cookies)
-                    since_last_pause = 0
                     await asyncio.sleep(15)
                     rows, got_response, rate_limited = await scrape_period(context, since, until)
 
@@ -283,24 +281,19 @@ async def scrape(args):
                     recently_done.clear()
                     save_progress(done_periods)
                     log.warning(f"[!] Revertidos y CSVs eliminados: {rollback}")
-                    log.warning(f"[!] Actualiza cookies.json y vuelve a ejecutar para retomar.")
-                    need_new_cookies = True
+                    log.warning(f"[!] Rate limit confirmado — esperando 1 minuto y reintentando...")
+                    await context.close()
+                    await asyncio.sleep(60)
+                    context = await make_context(browser, active_cookies)
+                    need_retry = True
                     break
 
-                wait = random.uniform(5, 15)
+                wait = random.uniform(5, 45)
                 await asyncio.sleep(wait)
 
-                since_last_pause += 1
-                if since_last_pause >= BATCH_SIZE and i < len(pending) - 1:
-                    remaining = len(pending) - i - 1
-                    log.info(f"[pausa {BATCH_PAUSE}s -- {remaining} dias pendientes]")
-                    await context.close()
-                    await asyncio.sleep(BATCH_PAUSE)
-                    context = await make_context(browser, active_cookies)
-                    since_last_pause = 0
-
-            if need_new_cookies:
-                break
+            if need_retry:
+                need_retry = False
+                continue
             break  # finalizado sin rate limit
 
         await context.close()

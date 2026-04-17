@@ -1,12 +1,13 @@
 [
-    {"name": "auth_token",         "value": "000a0740c41f349bc7da9e1ea428a0d449bca788",  "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": true,  "sameSite": "no_restriction"},
-    {"name": "ct0",                "value": "f02c3f746dac75c663000ca21d0f851d61ca26212458c841d513f245464aa74943c65d7a05db8a3f9694746a53c06bd329c9fd84506f1318beb6a8c4eb2ab2e954a6ca94ce19aff877f11e249c5cf981", "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "lax"},
+    {"name": "auth_token",         "value": "0d9a135bc74ba659dcf837798318c96935ad751c",  "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": true,  "sameSite": "no_restriction"},
+    {"name": "ct0",                "value": "cff45242562e021b32b1a96fb9f6acfd8c6dde2ee0d3de06c4b1efbd8494ae3232ec409d18be012bb4c32d7e71803b8f8ef12d018f8de497bbeb8010406f278a23ae67d38716881a30c341d13e96c5da", "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "lax"},
     {"name": "twid",               "value": "u%3D1937743479133626368",                    "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
-    {"name": "kdt",                "value": "8V1c32MRGzta99dLfQgOBYaAKXc4T7GE45F7bYjq",  "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": true,  "sameSite": "no_restriction"},
-    {"name": "att",                "value": "1-UMiJ4fHbT8DlqDvBgZ8mtLsSWa3ooDA2bciJlhOD","domain": ".x.com", "path": "/", "secure": true,  "httpOnly": true,  "sameSite": "no_restriction"},
-    {"name": "guest_id",           "value": "v1%3A177640525588286213",                    "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
-    {"name": "guest_id_ads",       "value": "v1%3A177640525588286213",                    "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
-    {"name": "guest_id_marketing", "value": "v1%3A177640525588286213",                    "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
-    {"name": "personalization_id", "value": "\"v1_VVNNmgmb2luIjriH9tUw4w==\"",            "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
+    {"name": "kdt",                "value": "uNZkvSVTm1zTfVRlh5mNTM6zH82rFpEaECGdepdZ",  "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": true,  "sameSite": "no_restriction"},
+    {"name": "att",                "value": "1-iVIwDLRSlgfY5RL7FEXee60gzPDaGkecbetY2EkH","domain": ".x.com", "path": "/", "secure": true,  "httpOnly": true,  "sameSite": "no_restriction"},
+    {"name": "gt",                 "value": "2045025951822537060",                         "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
+    {"name": "guest_id",           "value": "v1%3A177640715630173200",                    "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
+    {"name": "guest_id_ads",       "value": "v1%3A177640715630173200",                    "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
+    {"name": "guest_id_marketing", "value": "v1%3A177640715630173200",                    "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
+    {"name": "personalization_id", "value": "\"v1_ZR98sVZ6OnJvrYPfm+nyjA==\"",            "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
     {"name": "__cuid",             "value": "0f7591d906b945a8a2bec4e64b245c15",           "domain": ".x.com", "path": "/", "secure": false, "httpOnly": false, "sameSite": "lax"}
 ]
