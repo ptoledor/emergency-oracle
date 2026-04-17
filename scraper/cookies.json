@@ -1,11 +1,12 @@
-{
-    "auth_token": "defc4ed9466db40430d5bc4e9015eb78c3c5e038",
-    "ct0": "c24e14ed9183ce89befb5d950a40270b7a8b4b270d1d6472eec0d94db9ae34a9deb51e9c0304277658e8d9fd21b226c56804cc752e68b23f09646b9677951e57bf98b72f249b147e64f108e63664b49c",
-    "twid": "u%3D1937743479133626368",
-    "guest_id": "v1%3A177638298855962195",
-    "kdt": "WKYhWeBm1fYPiKQ20yP06uMIpeMC3FCOVdxlAweB",
-    "att": "1-6vjA5hL64I4LO6nsFGB8nxOofjlNqRLdg79TadFW",
-    "personalization_id": "\"v1_iclu4GbLkQgdLsvvHHc1pA==\"",
-    "dnt": "1",
-    "lang": "en"
-}
+[
+    {"name": "auth_token",         "value": "000a0740c41f349bc7da9e1ea428a0d449bca788",  "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": true,  "sameSite": "no_restriction"},
+    {"name": "ct0",                "value": "f02c3f746dac75c663000ca21d0f851d61ca26212458c841d513f245464aa74943c65d7a05db8a3f9694746a53c06bd329c9fd84506f1318beb6a8c4eb2ab2e954a6ca94ce19aff877f11e249c5cf981", "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "lax"},
+    {"name": "twid",               "value": "u%3D1937743479133626368",                    "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
+    {"name": "kdt",                "value": "8V1c32MRGzta99dLfQgOBYaAKXc4T7GE45F7bYjq",  "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": true,  "sameSite": "no_restriction"},
+    {"name": "att",                "value": "1-UMiJ4fHbT8DlqDvBgZ8mtLsSWa3ooDA2bciJlhOD","domain": ".x.com", "path": "/", "secure": true,  "httpOnly": true,  "sameSite": "no_restriction"},
+    {"name": "guest_id",           "value": "v1%3A177640525588286213",                    "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
+    {"name": "guest_id_ads",       "value": "v1%3A177640525588286213",                    "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
+    {"name": "guest_id_marketing", "value": "v1%3A177640525588286213",                    "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
+    {"name": "personalization_id", "value": "\"v1_VVNNmgmb2luIjriH9tUw4w==\"",            "domain": ".x.com", "path": "/", "secure": true,  "httpOnly": false, "sameSite": "no_restriction"},
+    {"name": "__cuid",             "value": "0f7591d906b945a8a2bec4e64b245c15",           "domain": ".x.com", "path": "/", "secure": false, "httpOnly": false, "sameSite": "lax"}
+]

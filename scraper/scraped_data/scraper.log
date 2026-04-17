@@ -1,0 +1,17 @@
+2026-04-17 02:05:23 [+] Total: 838 dias | Pendientes: 805
+2026-04-17 02:05:30   [014/838] 2024-01-14  16 tweets
+2026-04-17 02:05:37   [015/838] 2024-01-15  10 tweets
+2026-04-17 02:05:43   [036/838] 2024-02-05  12 tweets
+2026-04-17 02:05:49   [037/838] 2024-02-06  22 tweets
+2026-04-17 02:05:55   [038/838] 2024-02-07  16 tweets
+2026-04-17 02:06:01   [039/838] 2024-02-08  14 tweets
+2026-04-17 02:06:07   [040/838] 2024-02-09  22 tweets
+2026-04-17 02:06:07 [pausa 60s -- 798 dias pendientes]
+2026-04-17 02:07:13   [041/838] 2024-02-10  6 tweets
+2026-04-17 02:07:20   [042/838] 2024-02-11  2 tweets
+2026-04-17 02:07:26   [043/838] 2024-02-12  1 tweets RATE_LIMIT?
+2026-04-17 02:07:32   [044/838] 2024-02-13  0 tweets RATE_LIMIT?
+2026-04-17 02:07:38   [probe] 0 tweets — RATE LIMIT CONFIRMADO
+2026-04-17 02:07:38 [!] Revertidos: ['2024-02-12', '2024-02-13']
+2026-04-17 02:07:38 [!] Actualiza cookies.json y vuelve a ejecutar para retomar.
+2026-04-17 02:07:38 [+] Finalizado. Datos en: C:\Users\ptole\Desktop\Pitters-Git\emergency-oracle\scraper\scraped_data/
