@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(C:/Users/ptole/miniforge3/envs/geo312/python.exe -m pip install \"twikit==2.2.2\")",
+      "Bash(C:/Users/ptole/miniforge3/envs/geo312/python.exe scraper/twitter_scraper.py --username QuintinoAlmean --email ptoledor@msn.com --password \"6DCzYisDPlR^1kF$\")",
+      "Bash(C:/Users/ptole/miniforge3/envs/geo312/python.exe scraper/twitter_scraper.py)",
+      "Bash(C:/Users/ptole/miniforge3/envs/geo312/python.exe -X utf8 scraper/twitter_scraper.py)",
+      "Bash(C:/Users/ptole/miniforge3/envs/geo312/python.exe -m pip install twscrape)",
+      "Bash(python -c \"import twscrape; import os; p = os.path.dirname\\(twscrape.__file__\\); print\\(p\\)\")",
+      "Read(//c/Users/ptole/miniforge3/envs/geo312/Lib/site-packages/twscrape/**)",
+      "Bash(C:/Users/ptole/miniforge3/envs/geo312/python.exe -X utf8 -c ' *)",
+      "Bash(taskkill /F /IM python.exe /FI \"WINDOWTITLE eq *twitter*\")",
+      "Bash(pkill -f twitter_scraper)"
+    ]
+  }
+}
