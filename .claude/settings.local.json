@@ -11,7 +11,8 @@
       "Bash(C:/Users/ptole/miniforge3/envs/geo312/python.exe -X utf8 -c ' *)",
       "Bash(taskkill /F /IM python.exe /FI \"WINDOWTITLE eq *twitter*\")",
       "Bash(pkill -f twitter_scraper)",
-      "Bash(taskkill //F //IM python.exe)"
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(powershell -Command ' *)"
     ]
   }
 }

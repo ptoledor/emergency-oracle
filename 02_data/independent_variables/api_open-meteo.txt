@@ -1,0 +1,1 @@
+https://archive-api.open-meteo.com/v1/archive?latitude=-36.731106&longitude=-73.11023&start_date=2023-12-01&end_date=2025-11-24&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,precipitation,weather_code&timezone=America%2FSantiago&format=csv

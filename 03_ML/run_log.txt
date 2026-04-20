@@ -1,0 +1,357 @@
+XGBoost disponible 3.2.0
+Imports OK
+
+=== 1. Carga de datos ===
+Rango: 2022-01-04 -> 2026-04-16
+Total registros: 8,539
+Horas totales: 37,538
+Horas con >=1 emerg: 6,433 (17.1%)
+Media emerg/hora: 0.2275
+Max emerg/hora:   10
+
+=== 2. Datos climaticos (Open-Meteo) ===
+Descargando clima: 2022-01-04 -> 2026-04-14 ...
+OK: 37,479 horas
+
+=== 3. Feriados ===
+Feriados cargados: 120 dias (expandidos por anio)
+
+=== 4. Feature Engineering ===
+NaN clima restantes: ninguno
+Features temporales y de lag creadas
+
+=== 5. EDA ===
+Guardado: eda_emergencias.html
+
+=== 6. Preparar dataset ML ===
+Features incluidas: 35
+  [TEMP]  hora                    0.0% NaN
+  [TEMP]  dia_semana              0.0% NaN
+  [TEMP]  mes                     0.0% NaN
+  [TEMP]  dia_mes                 0.0% NaN
+  [TEMP]  anio                    0.0% NaN
+  [TEMP]  trimestre               0.0% NaN
+  [TEMP]  semana_anio             0.0% NaN
+  [TEMP]  es_fin_semana           0.0% NaN
+  [TEMP]  es_verano               0.0% NaN
+  [TEMP]  es_feriado              0.0% NaN
+  [TEMP]  es_noche                0.0% NaN
+  [TEMP]  franja                  0.0% NaN
+  [TEMP]  hora_sin                0.0% NaN
+  [TEMP]  hora_cos                0.0% NaN
+  [TEMP]  dia_sem_sin             0.0% NaN
+  [TEMP]  dia_sem_cos             0.0% NaN
+  [TEMP]  mes_sin                 0.0% NaN
+  [TEMP]  mes_cos                 0.0% NaN
+  [CLIMA] temperatura             0.0% NaN
+  [CLIMA] humedad                 0.0% NaN
+  [CLIMA] viento_vel              0.0% NaN
+  [CLIMA] viento_racha            0.0% NaN
+  [CLIMA] precipitacion           0.0% NaN
+  [CLIMA] cod_clima               0.0% NaN
+  [LAG]   lag_1h                  0.0% NaN
+  [LAG]   lag_2h                  0.0% NaN
+  [LAG]   lag_3h                  0.0% NaN
+  [LAG]   lag_24h                 0.1% NaN
+  [LAG]   lag_48h                 0.1% NaN
+  [LAG]   lag_168h                0.4% NaN
+  [LAG]   roll_mean_24h           0.0% NaN
+  [LAG]   roll_mean_7d            0.1% NaN
+  [LAG]   roll_std_7d             0.1% NaN
+  [LAG]   roll_sum_24h            0.0% NaN
+  [LAG]   roll_max_24h            0.0% NaN
+
+Filas totales: 37,538  |  tras dropna: 37,370 (99.6%)
+Train: 29,896 (2022-01-11 -> 2025-06-09)
+Test:  7,474 (2025-06-09  -> 2026-04-17)
+Media emerg/h  train: 0.2342  |  test: 0.2002
+
+=== 7. Entrenamiento de modelos ===
+
+[1/3] Baseline: media historica por hora del dia...
+
+-- Baseline (media/hora) --
+  MAE:                    0.3485
+  RMSE:                   0.5374
+  Poisson deviance:       0.7608
+  R2:                     -0.0065
+  % ceros real:           84.5%  |  % ceros pred: 91.7%
+  Hit rate emergencias:   9.1%  (pred>=0.5 cuando real>0)
+
+[2/3] Random Forest...
+
+-- Random Forest --
+  MAE:                    0.3339
+  RMSE:                   0.5254
+  Poisson deviance:       0.7322
+  R2:                     0.0378
+  % ceros real:           84.5%  |  % ceros pred: 98.9%
+  Hit rate emergencias:   2.8%  (pred>=0.5 cuando real>0)
+
+  [CV] Random Forest en datos completos...
+  CV (5-fold TimeSeriesSplit):
+    MAE:  0.3545 ± 0.0183  (folds: ['0.376', '0.343', '0.362', '0.367', '0.325'])
+    RMSE: 0.5675 ± 0.0474
+    R2:   0.0409 ± 0.0372
+
+  Top-20 features mas importantes:
+    [TEMP]  hora                    0.0817  ████████████████
+    [CLIMA] viento_racha            0.0626  ████████████
+    [CLIMA] viento_vel              0.0614  ████████████
+    [TEMP]  hora_sin                0.0547  ██████████
+    [LAG]   roll_std_7d             0.0494  █████████
+    [LAG]   lag_24h                 0.0478  █████████
+    [CLIMA] temperatura             0.0465  █████████
+    [TEMP]  hora_cos                0.0434  ████████
+    [LAG]   roll_mean_7d            0.0423  ████████
+    [LAG]   lag_168h                0.0412  ████████
+    [LAG]   lag_48h                 0.0405  ████████
+    [CLIMA] humedad                 0.0385  ███████
+    [TEMP]  dia_mes                 0.0331  ██████
+    [TEMP]  franja                  0.0315  ██████
+    [LAG]   roll_mean_24h           0.0312  ██████
+    [TEMP]  semana_anio             0.0300  █████
+    [LAG]   roll_sum_24h            0.0294  █████
+    [TEMP]  anio                    0.0261  █████
+    [CLIMA] precipitacion           0.0225  ████
+    [LAG]   lag_1h                  0.0212  ████
+
+[3/3] XGBoost (Poisson)...
+
+-- XGBoost (Poisson) --
+  MAE:                    0.3300
+  RMSE:                   0.5254
+  Poisson deviance:       0.7299
+  R2:                     0.0379
+  % ceros real:           84.5%  |  % ceros pred: 99.3%
+  Hit rate emergencias:   1.8%  (pred>=0.5 cuando real>0)
+
+  [CV] XGBoost en datos completos...
+  CV (5-fold TimeSeriesSplit):
+    MAE:  0.3420 ± 0.0150  (folds: ['0.354', '0.328', '0.343', '0.362', '0.323'])
+    RMSE: 0.5716 ± 0.0510
+    R2:   0.0284 ± 0.0230
+
+  Top-20 features mas importantes:
+    [TEMP]  franja                  0.2242  ████████████████████████████████████████████
+    [LAG]   lag_24h                 0.0964  ███████████████████
+    [LAG]   lag_168h                0.0808  ████████████████
+    [TEMP]  es_noche                0.0629  ████████████
+    [LAG]   lag_48h                 0.0619  ████████████
+    [TEMP]  hora                    0.0603  ████████████
+    [TEMP]  hora_sin                0.0265  █████
+    [CLIMA] precipitacion           0.0264  █████
+    [LAG]   lag_1h                  0.0252  █████
+    [TEMP]  anio                    0.0215  ████
+    [TEMP]  hora_cos                0.0201  ████
+    [CLIMA] viento_racha            0.0170  ███
+    [TEMP]  es_fin_semana           0.0159  ███
+    [LAG]   roll_mean_24h           0.0145  ██
+    [CLIMA] viento_vel              0.0143  ██
+    [TEMP]  semana_anio             0.0137  ██
+    [LAG]   roll_std_7d             0.0133  ██
+    [TEMP]  trimestre               0.0132  ██
+    [TEMP]  mes                     0.0131  ██
+    [LAG]   roll_sum_24h            0.0129  ██
+
+=== 7b. Modelo en 2 etapas (Clasificador + Regresor) por franja horaria ===
+
+  Distribucion de emergencias por franja (train):
+    Madrugada(0-5)          7473 horas  |    566 con emerg (7.6%)  |  media=0.094
+    Mañana(6-11)            7476 horas  |   1333 con emerg (17.8%)  |  media=0.225
+    Tarde(12-17)            7473 horas  |   1559 con emerg (20.9%)  |  media=0.289
+    Noche(18-21)            4980 horas  |   1396 con emerg (28.0%)  |  media=0.390
+    Trasnoche(22-23)        2494 horas  |    390 con emerg (15.6%)  |  media=0.207
+
+  [A] Modelo 2 etapas GLOBAL ...
+    Umbral optimo (Youden J): 0.515
+
+-- 2-Etapas Global --
+  MAE:                    0.4626
+  RMSE:                   0.8027
+  Poisson deviance:       4.6363
+  R2:                     -1.2458
+  % ceros real:           84.5%  |  % ceros pred: 70.3%
+  Hit rate emergencias:   42.2%  (pred>=0.5 cuando real>0)
+
+  [CV] Modelo 2 etapas GLOBAL (5-fold TimeSeriesSplit)...
+    MAE  CV: 0.4257 ± 0.0668  (folds: ['0.312', '0.407', '0.424', '0.497', '0.488'])
+    Hit% CV: 37.7% ± 6.3%
+
+  [B] Modelos 2 etapas POR FRANJA HORARIA ...
+    Madrugada(0-5)         MAE=0.194  hit%=17.5%  umbral=0.52  (ceros: 94%)
+    Mañana(6-11)           MAE=0.328  hit%=22.9%  umbral=0.47  (ceros: 86%)
+    Tarde(12-17)           MAE=0.688  hit%=49.8%  umbral=0.49  (ceros: 78%)
+    Noche(18-21)           MAE=0.549  hit%=24.5%  umbral=0.46  (ceros: 79%)
+    Trasnoche(22-23)       MAE=0.335  hit%=11.9%  umbral=0.57  (ceros: 84%)
+
+-- 2-Etapas x Franja --
+  MAE:                    0.4221
+  RMSE:                   0.7699
+  Poisson deviance:       5.4313
+  R2:                     -1.0659
+  % ceros real:           84.5%  |  % ceros pred: 74.9%
+  Hit rate emergencias:   31.4%  (pred>=0.5 cuando real>0)
+
+  Features importantes (clasificador, promedio franjas):
+
+  Top-10 features mas importantes:
+    [LAG]   lag_24h                 0.0588  ███████████
+    [LAG]   lag_48h                 0.0564  ███████████
+    [TEMP]  hora_sin                0.0505  ██████████
+    [LAG]   lag_168h                0.0496  █████████
+    [TEMP]  anio                    0.0395  ███████
+    [TEMP]  hora                    0.0395  ███████
+    [TEMP]  es_fin_semana           0.0360  ███████
+    [TEMP]  mes_cos                 0.0303  ██████
+    [LAG]   lag_1h                  0.0294  █████
+    [LAG]   roll_std_7d             0.0294  █████
+
+=== 7c. Modelo en 2 etapas POR HORA (24 modelos individuales) ===
+  Features por hora: 30 (eliminadas 5 relacionadas con hora)
+
+  Distribucion de emergencias por hora (train):
+  hora | n_total |  n_pos |   %pos |  media
+  ---------------------------------------------
+     0 |    1243 |    158 |  12.7% |  0.165
+     1 |    1246 |    122 |   9.8% |  0.112
+     2 |    1246 |     99 |   7.9% |  0.090
+     3 |    1246 |     51 |   4.1% |  0.053
+     4 |    1246 |     76 |   6.1% |  0.079
+     5 |    1246 |     60 |   4.8% |  0.063
+     6 |    1246 |     65 |   5.2% |  0.071
+     7 |    1246 |    115 |   9.2% |  0.121
+     8 |    1246 |    193 |  15.5% |  0.197
+     9 |    1246 |    538 |  43.2% |  0.507
+    10 |    1246 |    213 |  17.1% |  0.220
+    11 |    1246 |    209 |  16.8% |  0.231
+    12 |    1246 |    246 |  19.7% |  0.268
+    13 |    1246 |    260 |  20.9% |  0.276
+    14 |    1246 |    228 |  18.3% |  0.261
+    15 |    1245 |    261 |  21.0% |  0.302
+    16 |    1245 |    250 |  20.1% |  0.279
+    17 |    1245 |    314 |  25.2% |  0.351
+    18 |    1245 |    279 |  22.4% |  0.326
+    19 |    1245 |    273 |  21.9% |  0.307
+    20 |    1245 |    595 |  47.8% |  0.654
+    21 |    1245 |    249 |  20.0% |  0.274
+    22 |    1245 |    210 |  16.9% |  0.226
+    23 |    1249 |    180 |  14.4% |  0.189
+
+  Entrenando 24 modelos...
+
+  Resultados por hora (test set):
+  hora | n_test |  %zer | umbral |   AUC |    F1 |  prec |   rec |  hit% |    MAE |  MAE_nz
+  --------------------------------------------------------------------------------
+     0 |    311 | 92.3% |  0.680 | 0.516 | 0.000 | 0.000 | 0.000 |  0.0% | 0.0995 | 1.1667
+     1 |    311 | 90.0% |  0.741 | 0.534 | 0.000 | 0.000 | 0.000 |  0.0% | 0.1189 | 1.1290
+     2 |    311 | 93.6% |  0.802 | 0.349 | 0.000 | 0.000 | 0.000 |  0.0% | 0.0836 | 1.3000
+     3 |    311 | 95.8% |  0.915 | 0.578 | 0.000 | 0.000 | 0.000 |  0.0% | 0.0643 | 1.5385
+     4 |    311 | 96.8% |  0.855 | 0.620 | 0.000 | 0.000 | 0.000 |  0.0% | 0.0450 | 1.4000
+     5 |    311 | 94.9% |  0.912 | 0.600 | 0.000 | 0.000 | 0.000 |  0.0% | 0.0579 | 1.1250
+     6 |    311 | 93.2% |  0.882 | 0.458 | 0.000 | 0.000 | 0.000 |  0.0% | 0.0772 | 1.1429
+     7 |    311 | 91.0% |  0.787 | 0.433 | 0.000 | 0.000 | 0.000 |  0.0% | 0.1167 | 1.1786
+     8 |    311 | 82.6% |  0.634 | 0.504 | 0.088 | 0.214 | 0.056 |  5.6% | 0.2490 | 1.1812
+     9 |    311 | 86.5% |  0.378 | 0.466 | 0.038 | 0.091 | 0.024 |  2.4% | 0.2084 | 1.2408
+    10 |    311 | 83.3% |  0.605 | 0.591 | 0.119 | 0.267 | 0.077 |  7.7% | 0.2361 | 1.1769
+    11 |    311 | 77.8% |  0.603 | 0.508 | 0.180 | 0.290 | 0.130 | 13.0% | 0.3268 | 1.0378
+    12 |    311 | 80.7% |  0.551 | 0.517 | 0.098 | 0.182 | 0.067 |  6.7% | 0.3063 | 1.1812
+    13 |    311 | 77.8% |  0.583 | 0.509 | 0.128 | 0.240 | 0.087 |  8.7% | 0.3752 | 1.3443
+    14 |    311 | 79.1% |  0.604 | 0.510 | 0.144 | 0.219 | 0.108 | 10.8% | 0.3578 | 1.2198
+    15 |    312 | 75.3% |  0.570 | 0.499 | 0.212 | 0.255 | 0.182 | 18.2% | 0.4386 | 1.1467
+    16 |    312 | 80.1% |  0.547 | 0.433 | 0.164 | 0.153 | 0.177 | 17.7% | 0.5294 | 1.3168
+    17 |    312 | 74.0% |  0.546 | 0.605 | 0.319 | 0.386 | 0.272 | 27.2% | 0.4168 | 1.0291
+    18 |    312 | 76.0% |  0.570 | 0.474 | 0.128 | 0.206 | 0.093 |  9.3% | 0.4487 | 1.3447
+    19 |    312 | 78.2% |  0.540 | 0.531 | 0.214 | 0.222 | 0.206 | 20.6% | 0.4954 | 1.2852
+    20 |    312 | 79.5% |  0.467 | 0.440 | 0.048 | 0.105 | 0.031 |  3.1% | 0.3564 | 1.3141
+    21 |    312 | 81.4% |  0.566 | 0.445 | 0.151 | 0.200 | 0.121 | 12.1% | 0.3457 | 1.2358
+    22 |    312 | 79.5% |  0.607 | 0.476 | 0.100 | 0.250 | 0.062 |  6.2% | 0.2809 | 1.1350
+    23 |    313 | 88.2% |  0.601 | 0.414 | 0.083 | 0.086 | 0.081 |  8.1% | 0.2459 | 1.0228
+
+  Promedios (24 horas):
+    AUC-ROC:      0.500  ±  0.065
+    F1:           0.092  ±  0.086
+    hit%:         7.4%  ±  7.5%
+    MAE:          0.2617  ±  0.1481
+    MAE_nonzero:  1.2164  ±  0.1204  (solo horas con emergencias reales)
+    Horas con modelo completo: 24/24  |  con fallback regresor: 0
+
+  Features importantes — Clasificador (promedio 24h):
+
+  Top-15 features mas importantes:
+    [LAG]   lag_48h                 0.0424  ████████
+    [TEMP]  anio                    0.0396  ███████
+    [LAG]   lag_24h                 0.0390  ███████
+    [LAG]   roll_sum_24h            0.0387  ███████
+    [TEMP]  es_fin_semana           0.0364  ███████
+    [LAG]   lag_1h                  0.0362  ███████
+    [LAG]   lag_168h                0.0357  ███████
+    [LAG]   roll_std_7d             0.0347  ██████
+    [TEMP]  mes_sin                 0.0335  ██████
+    [TEMP]  semana_anio             0.0335  ██████
+    [TEMP]  mes_cos                 0.0331  ██████
+    [CLIMA] cod_clima               0.0331  ██████
+    [CLIMA] temperatura             0.0330  ██████
+    [TEMP]  es_feriado              0.0330  ██████
+    [CLIMA] viento_racha            0.0326  ██████
+
+  Features importantes — Regresor (promedio horas con modelo):
+
+  Top-15 features mas importantes:
+    [LAG]   lag_1h                  0.0525  ██████████
+    [LAG]   roll_sum_24h            0.0521  ██████████
+    [CLIMA] precipitacion           0.0433  ████████
+    [CLIMA] viento_racha            0.0428  ████████
+    [CLIMA] viento_vel              0.0412  ████████
+    [LAG]   lag_48h                 0.0404  ████████
+    [TEMP]  dia_sem_sin             0.0393  ███████
+    [CLIMA] cod_clima               0.0368  ███████
+    [CLIMA] humedad                 0.0365  ███████
+    [LAG]   roll_mean_24h           0.0359  ███████
+    [LAG]   roll_mean_7d            0.0358  ███████
+    [LAG]   roll_std_7d             0.0344  ██████
+    [TEMP]  mes_sin                 0.0342  ██████
+    [CLIMA] temperatura             0.0341  ██████
+    [LAG]   lag_2h                  0.0334  ██████
+
+-- 2-Etapas x Hora --
+  MAE:                    0.2618
+  RMSE:                   0.6357
+  Poisson deviance:       6.5464
+  R2:                     -0.4084
+  % ceros real:           84.5%  |  % ceros pred: 92.7%
+  Hit rate emergencias:   10.2%  (pred>=0.5 cuando real>0)
+
+  [CV] Modelo 2 etapas x Hora (5-fold TimeSeriesSplit — combinado)...
+    MAE  CV: 0.3145 ± 0.0328  (folds: ['0.278', '0.287', '0.302', '0.362', '0.343'])
+    Hit% CV: 19.0% ± 4.5%
+  Guardados: modelos/ph_config.pkl  |  modelos/resultados_por_hora.csv
+  Guardado: modelos_por_hora.html
+
+=== 8. Comparacion de modelos ===
+
+======================================================================
+RESUMEN DE RESULTADOS
+======================================================================
+               modelo      MAE     RMSE  Poisson_Dev        R2  Hit_emergencias_%
+Baseline (media/hora) 0.348472 0.537413     0.760826 -0.006539                9.1
+        Random Forest 0.333881 0.525433     0.732169  0.037834                2.8
+    XGBoost (Poisson) 0.329973 0.525411     0.729930  0.037915                1.8
+      2-Etapas Global 0.462630 0.802741     4.636268 -1.245773               42.2
+    2-Etapas x Franja 0.422123 0.769925     5.431325 -1.065910               31.4
+      2-Etapas x Hora 0.261842 0.635708     6.546415 -0.408414               10.2
+
+-> Mejor modelo (menor MAE): 2-Etapas x Hora
+
+NOTA: R2 bajo es esperado con datos de conteo dispersos (82.9% ceros).
+  Usar MAE y Poisson deviance como metricas principales.
+  Mejora sobre baseline: 24.9% reduccion MAE
+Guardado: predicciones.html
+Guardado: feature_importance.html
+
+=== 9. Guardar artefactos ===
+  Todos los artefactos guardados en 03_ML/modelos/
+
+=== Pipeline completado con exito ===
+Mejor modelo: 2-Etapas x Hora
+MAE: 0.2618
