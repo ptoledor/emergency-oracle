@@ -25,7 +25,7 @@ def main():
     codigos = pd.read_excel(claves_cbt_path)
 
     codigos_clean = codigos.drop_duplicates(subset=['CODIGO_EMERGENCIA']).copy()
-    print(f"Claves CBT: {codigos.shape[0]} → {codigos_clean.shape[0]} (deduplicadas)")
+    print(f"Claves CBT: {codigos.shape[0]} -> {codigos_clean.shape[0]} (deduplicadas)")
 
     df = df_raw.copy()
     df['FECHA_DIA'] = df['Fecha'].astype(str).str[:10]
@@ -49,7 +49,7 @@ def main():
     max_date_str = df_merged['FECHA_DIA'].max()
     date_range = pd.date_range(start=min_date_str, end=max_date_str, freq='D')
     df_calendar = pd.DataFrame({'FECHA_DIA': date_range.strftime('%Y-%m-%d')})
-    print(f"Calendario continuo: {df_calendar.shape[0]} días ({min_date_str} → {max_date_str})")
+    print(f"Calendario continuo: {df_calendar.shape[0]} días ({min_date_str} -> {max_date_str})")
 
     # === CONTEO TOTAL DE EVENTOS POR DÍA ===
     df_daily_events = df_merged.groupby('FECHA_DIA').size().reset_index(name='EVENTOS')
@@ -99,33 +99,71 @@ def main():
     # 4. Datos meteorológicos
     lat, lon = -36.731106, -73.11023
     
+    rebuild_cache = True
     if os.path.exists(weather_cache_path):
-        print("Cargando clima desde caché...")
-        df_clima = pd.read_csv(weather_cache_path)
-    else:
-        print("Descargando clima desde Open-Meteo...")
+        try:
+            df_cached = pd.read_csv(weather_cache_path)
+            if 'VIENTO_SKEW' in df_cached.columns and 'HUM_SKEW' in df_cached.columns:
+                print("Cargando clima desde caché (actualizada)...")
+                df_clima = df_cached
+                rebuild_cache = False
+        except Exception:
+            pass
+
+    if rebuild_cache:
+        print("Descargando clima horario desde Open-Meteo...")
         url = (f"https://archive-api.open-meteo.com/v1/archive?"
                f"latitude={lat}&longitude={lon}&"
                f"start_date={min_date_str}&end_date={max_date_str}&"
-               f"daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,"
-               f"relative_humidity_2m_max,relative_humidity_2m_min,relative_humidity_2m_mean,"
-               f"wind_speed_10m_max,wind_speed_10m_mean,"
-               f"precipitation_sum&"
+               f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
                f"timezone=America%2FSantiago&format=json")
         response = requests.get(url)
         if response.status_code != 200:
             raise RuntimeError(f"Error Open-Meteo: {response.text}")
         data_raw = response.json()
-        df_clima = pd.DataFrame(data_raw['daily'])
-        df_clima.columns = [
-            'FECHA_DIA', 
-            'TEMP_MAX', 'TEMP_MIN', 'TEMP_MEDIA',
-            'HUM_MAX', 'HUM_MIN', 'HUM_MEDIA',
-            'VIENTO_MAX', 'VIENTO_MEDIO',
-            'LLUVIA'
-        ]
+        df_hourly = pd.DataFrame(data_raw['hourly'])
+        df_hourly['time'] = pd.to_datetime(df_hourly['time'])
+        df_hourly['FECHA_DIA'] = df_hourly['time'].dt.strftime('%Y-%m-%d')
+        
+        # Fórmulas de asimetría y curtosis
+        def get_skew(series):
+            vals = series.values
+            mean = np.mean(vals)
+            std = np.std(vals)
+            std_safe = 0.1 if std == 0 else std
+            return np.mean((vals - mean)**3) / (std_safe**3)
+
+        def get_kurt(series):
+            vals = series.values
+            mean = np.mean(vals)
+            std = np.std(vals)
+            std_safe = 0.1 if std == 0 else std
+            return np.mean((vals - mean)**4) / (std_safe**4) - 3
+
+        print("Agregando datos horarios a nivel diario...")
+        df_clima = df_hourly.groupby('FECHA_DIA').agg(
+            TEMP_MAX=('temperature_2m', 'max'),
+            TEMP_MIN=('temperature_2m', 'min'),
+            TEMP_MEDIA=('temperature_2m', 'mean'),
+            TEMP_SKEW=('temperature_2m', get_skew),
+            TEMP_KURT=('temperature_2m', get_kurt),
+            
+            HUM_MAX=('relative_humidity_2m', 'max'),
+            HUM_MIN=('relative_humidity_2m', 'min'),
+            HUM_MEDIA=('relative_humidity_2m', 'mean'),
+            HUM_SKEW=('relative_humidity_2m', get_skew),
+            HUM_KURT=('relative_humidity_2m', get_kurt),
+            
+            VIENTO_MAX=('wind_speed_10m', 'max'),
+            VIENTO_MEDIO=('wind_speed_10m', 'mean'),
+            VIENTO_SKEW=('wind_speed_10m', get_skew),
+            VIENTO_KURT=('wind_speed_10m', get_kurt),
+            
+            LLUVIA=('precipitation', 'sum')
+        ).reset_index()
+        
         df_clima.to_csv(weather_cache_path, index=False)
-        print("Clima guardado en caché.")
+        print("Clima horario agregado y guardado en caché.")
 
     df_clima['FECHA_DIA'] = df_clima['FECHA_DIA'].astype(str)
     df_daily = pd.merge(df_daily, df_clima, on='FECHA_DIA', how='left')
@@ -133,6 +171,7 @@ def main():
     # Interpolar NaN numéricos de clima
     numeric_cols = df_daily.select_dtypes(include=[np.number]).columns
     df_daily[numeric_cols] = df_daily[numeric_cols].interpolate(method='linear')
+
 
     # 5. Feature Engineering EXTENDIDO
     print("Construyendo features extendidas...")
@@ -162,13 +201,32 @@ def main():
     lluvia_shifted = df_daily['LLUVIA'].shift(1)
     df_daily['LLUVIA_rolling_mean_7d'] = lluvia_shifted.rolling(7, min_periods=1).mean()
 
+    # --- Lags de clima ---
+    df_daily['VIENTO_MEDIO_lag_1'] = df_daily['VIENTO_MEDIO'].shift(1)
+    df_daily['HUM_MEDIA_lag_1'] = df_daily['HUM_MEDIA'].shift(1)
+
     # --- Calendario y feriados ---
     chile_holidays = holidays.Chile(years=range(2022, 2027))
     df_daily['FECHA_DT'] = pd.to_datetime(df_daily['FECHA_DIA'])
     df_daily['MES'] = df_daily['FECHA_DT'].dt.month
     df_daily['DIA_SEMANA'] = df_daily['FECHA_DT'].dt.dayofweek
     df_daily['ES_FIN_SEMANA'] = df_daily['DIA_SEMANA'].isin([5, 6]).astype(int)
+    
+    # Identificar feriados irrenunciables fijos en Chile y elecciones
+    feriados_irrenunciables = {(1, 1), (5, 1), (9, 18), (9, 19), (12, 25)}
+    
+    def determinar_irrenunciable(row):
+        fecha_str = row['FECHA_DIA']
+        dt = row['FECHA_DT']
+        if (dt.month, dt.day) in feriados_irrenunciables:
+            return 1
+        name = chile_holidays.get(fecha_str)
+        if name and ("elecciones" in name.lower() or "plebiscito" in name.lower()):
+            return 1
+        return 0
+
     df_daily['ES_FERIADO'] = df_daily['FECHA_DIA'].apply(lambda x: 1 if x in chile_holidays else 0)
+    df_daily['ES_FERIADO_IRRENUNCIABLE'] = df_daily.apply(determinar_irrenunciable, axis=1)
     df_daily['DIA_DEL_ANO'] = df_daily['FECHA_DT'].dt.dayofyear
 
     # --- Codificación cíclica (captura estacionalidad sin discontinuidades) ---

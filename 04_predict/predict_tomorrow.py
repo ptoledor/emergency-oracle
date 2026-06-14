@@ -7,10 +7,12 @@ import datetime
 import holidays
 import argparse
 
-def get_event_counts_for_dates(csv_path, codes_path, dates):
+def get_events_and_categories_for_dates(csv_path, codes_path, dates):
     """
     Carga los tweets locales, los limpia deduplicando los códigos CBT y
-    retorna el conteo de eventos para cada una de las fechas especificadas.
+    retorna:
+    1. Una lista de conteos de eventos diarios correspondientes a 'dates'.
+    2. Un diccionario con los conteos de eventos por categoría para la última fecha de la lista (lag_1).
     """
     df = pd.read_csv(csv_path, sep=';', decimal=',')
     df['FECHA_DIA'] = df['Fecha'].astype(str).str[:10]
@@ -35,10 +37,29 @@ def get_event_counts_for_dates(csv_path, codes_path, dates):
     # Merge limpio
     df_merged = pd.merge(df, codigos_clean, how='left', on='CODIGO_EMERGENCIA')
     
-    # Contar por día
+    # Contar eventos diarios totales
     daily_counts = df_merged.groupby('FECHA_DIA').size().to_dict()
+    event_counts = [daily_counts.get(d, 0) for d in dates]
     
-    return [daily_counts.get(d, 0) for d in dates]
+    # Contar por categoría para lag_1 (la última fecha en 'dates')
+    lag_1_date = dates[-1]
+    df_lag1 = df_merged[df_merged['FECHA_DIA'] == lag_1_date]
+    
+    categorias_clave = {
+        'INCENDIO ESTRUCTURAL': 'N_INCENDIO_ESTR_lag_1',
+        'INCENDIO PASTIZAL O FORESTAL': 'N_INCENDIO_FOREST_lag_1',
+        'RESCATE VEHICULAR': 'N_RESCATE_VEH_lag_1',
+        'RESCATE DE PERSONAS': 'N_RESCATE_PERS_lag_1',
+        'EMANACIÓN DE GASES': 'N_GASES_lag_1',
+    }
+    
+    category_counts = {v: 0 for v in categorias_clave.values()}
+    if not df_lag1.empty:
+        df_lag1_cats = df_lag1.groupby('CATEGORIA_EMERGENCIA').size().to_dict()
+        for cat_orig, cat_new in categorias_clave.items():
+            category_counts[cat_new] = df_lag1_cats.get(cat_orig, 0)
+            
+    return event_counts, category_counts
 
 
 def main():
@@ -49,25 +70,26 @@ def main():
     claves_cbt_path = f"{base_dir}/02_data/Clave_CBT.xlsx"
     lat, lon = -36.731106, -73.11023  # Coordenadas de Talcahuano
 
-    # Cargar modelos
-    with open(f"{models_dir}/regressor.pkl", "rb") as f:
+    # Por defecto, predice el día siguiente al dataset
+    parser = argparse.ArgumentParser(description="Predictor de emergencias para Bomberos de Talcahuano")
+    parser.add_argument('--date', type=str, help="Fecha a predecir (YYYY-MM-DD). Por defecto predice el día siguiente al dataset.")
+    parser.add_argument('--real-tomorrow', action='store_true', help="Fuerza a predecir el día de mañana real.")
+    parser.add_argument('--v3', action='store_true', help="Usa el Modelo Climático (sin lags ni rollings operativos).")
+    args = parser.parse_args()
+
+    # Cargar modelos según selección de versión
+    prefix = "_agnostic_augmented_v3" if args.v3 else "_agnostic_augmented"
+    with open(f"{models_dir}/regressor{prefix}.pkl", "rb") as f:
         reg_model = pickle.load(f)
-    with open(f"{models_dir}/classifier.pkl", "rb") as f:
+    with open(f"{models_dir}/classifier{prefix}.pkl", "rb") as f:
         clf_model = pickle.load(f)
-    with open(f"{models_dir}/metadata.pkl", "rb") as f:
+    with open(f"{models_dir}/metadata{prefix}.pkl", "rb") as f:
         metadata = pickle.load(f)
 
     # Detectar última fecha disponible en el dataset
     df_raw = pd.read_csv(raw_tweets_path, sep=';', decimal=',')
     max_date_in_dataset = df_raw['Fecha'].astype(str).str[:10].max()
     max_dt = datetime.datetime.strptime(max_date_in_dataset, '%Y-%m-%d').date()
-
-    # Por defecto, si el dataset está desactualizado, ofrecemos predecir el día siguiente al dataset
-    # Pero también permitimos predecir el mañana real usando argumentos
-    parser = argparse.ArgumentParser(description="Predictor de emergencias para Bomberos de Talcahuano")
-    parser.add_argument('--date', type=str, help="Fecha a predecir (YYYY-MM-DD). Por defecto predice el día siguiente al dataset.")
-    parser.add_argument('--real-tomorrow', action='store_true', help="Fuerza a predecir el día de mañana real.")
-    args = parser.parse_args()
 
     # Definir fecha objetivo y lags
     if args.real_tomorrow:
@@ -77,111 +99,161 @@ def main():
         target_date = datetime.datetime.strptime(args.date, '%Y-%m-%d').date()
         mode = "FECHA ESPECÍFICA"
     else:
-        # Día siguiente al fin del dataset (útil para pruebas)
         target_date = max_dt + datetime.timedelta(days=1)
         mode = "PROGRESIÓN DEL DATASET"
 
     print(f"=== PASO 4: Predicción de Emergencias (Modo: {mode}) ===")
+    print(f"Modelo en uso: {'Modelo Climático (Puro)' if args.v3 else 'Modelo Climático con Inercia de Actividad'}")
     print(f"Último dato en dataset local: {max_date_in_dataset}")
     print(f"Fecha a predecir: {target_date}")
 
-    # Calcular las fechas de los lags para la fecha objetivo
-    day_lag_1 = target_date - datetime.timedelta(days=1)
-    day_lag_2 = target_date - datetime.timedelta(days=2)
-    day_lag_3 = target_date - datetime.timedelta(days=3)
+    # Calcular las fechas de los lags (necesitamos hasta lag_7)
+    lag_dates = [target_date - datetime.timedelta(days=i) for i in range(7, 0, -1)]
+    lag_dates_str = [d.strftime('%Y-%m-%d') for d in lag_dates]
+    
+    print(f"Cálculo de lags usando fechas (desde lag_7 a lag_1): {lag_dates_str}")
 
-    lag_dates_str = [d.strftime('%Y-%m-%d') for d in [day_lag_3, day_lag_2, day_lag_1]]
-    print(f"Cálculo de lags usando fechas: {lag_dates_str}")
+    # Obtener conteos de eventos y categorías
+    lag_counts, category_lags = get_events_and_categories_for_dates(raw_tweets_path, claves_cbt_path, lag_dates_str)
+    
+    # Imputar la media de entrenamiento (5.46) para las fechas de lags que son posteriores a la base de datos
+    imputed_lag_counts = [
+        val if date <= max_date_in_dataset else 5.46 
+        for val, date in zip(lag_counts, lag_dates_str)
+    ]
+    
+    eventos_lag_7 = imputed_lag_counts[0]
+    eventos_lag_3 = imputed_lag_counts[4]
+    eventos_lag_2 = imputed_lag_counts[5]
+    eventos_lag_1 = imputed_lag_counts[6]
+    
+    # Calcular estadísticas móviles de eventos (excluyendo el día de predicción)
+    eventos_rolling_mean_3d = np.mean(imputed_lag_counts[4:])  # lag_3, lag_2, lag_1
+    eventos_rolling_std_3d = np.std(imputed_lag_counts[4:])
+    eventos_rolling_max_3d = np.max(imputed_lag_counts[4:])
+    
+    eventos_rolling_mean_7d = np.mean(imputed_lag_counts)      # lag_7 a lag_1
+    eventos_rolling_std_7d = np.std(imputed_lag_counts)
+    eventos_rolling_max_7d = np.max(imputed_lag_counts)
 
-    # Obtener conteos de eventos para los lags
-    # Si las fechas exceden el max_date del dataset, notificamos que se asumen como 0 o se usan los disponibles
-    lag_counts = get_event_counts_for_dates(raw_tweets_path, claves_cbt_path, lag_dates_str)
-    eventos_lag_3, eventos_lag_2, eventos_lag_1 = lag_counts
-    eventos_rolling_mean_3d = sum(lag_counts) / 3.0
+    print(f"Conteo de eventos en lags principales:")
+    print(f"  - Hace 7 días ({lag_dates_str[0]}): {eventos_lag_7:.2f} (imputado={lag_dates_str[0] > max_date_in_dataset})")
+    print(f"  - Hace 3 días ({lag_dates_str[4]}): {eventos_lag_3:.2f} (imputado={lag_dates_str[4] > max_date_in_dataset})")
+    print(f"  - Hace 2 días ({lag_dates_str[5]}): {eventos_lag_2:.2f} (imputado={lag_dates_str[5] > max_date_in_dataset})")
+    print(f"  - Ayer/Hoy ({lag_dates_str[6]}): {eventos_lag_1:.2f} (imputado={lag_dates_str[6] > max_date_in_dataset})")
+    print(f"  - Media móvil 3 días: {eventos_rolling_mean_3d:.2f} (std={eventos_rolling_std_3d:.2f})")
+    print(f"  - Media móvil 7 días: {eventos_rolling_mean_7d:.2f} (std={eventos_rolling_std_7d:.2f})")
+    print(f"Conteo de categorías lag_1 (Ayer/Hoy): {category_lags}")
 
-    print(f"Conteo de eventos en lags:")
-    print(f"  - Hace 3 días ({lag_dates_str[0]}): {eventos_lag_3}")
-    print(f"  - Hace 2 días ({lag_dates_str[1]}): {eventos_lag_2}")
-    print(f"  - Ayer/Hoy ({lag_dates_str[2]}): {eventos_lag_1}")
-    print(f"  - Media móvil 3 días: {eventos_rolling_mean_3d:.2f}")
-
-    # Obtener clima para la fecha objetivo y los lags
-    # Si la fecha objetivo está en el futuro, usamos la API de pronóstico de Open-Meteo
-    # Si la fecha objetivo está en el pasado (histórica), usamos la API de archivo histórico de Open-Meteo
+    # Obtener clima para la fecha objetivo y los lags usando datos horarios
     target_date_str = target_date.strftime('%Y-%m-%d')
     today_date = datetime.date.today()
+
+    # Fórmulas de asimetría y curtosis
+    def get_skew(vals):
+        mean = np.mean(vals)
+        std = np.std(vals)
+        std_safe = 0.1 if std == 0 else std
+        return np.mean((vals - mean)**3) / (std_safe**3)
+
+    def get_kurt(vals):
+        mean = np.mean(vals)
+        std = np.std(vals)
+        std_safe = 0.1 if std == 0 else std
+        return np.mean((vals - mean)**4) / (std_safe**4) - 3
 
     clima_data = {}
     if target_date > today_date:
         print("Obteniendo pronóstico del clima en tiempo real desde Open-Meteo...")
         url = (f"https://api.open-meteo.com/v1/forecast?"
                f"latitude={lat}&longitude={lon}&"
-               f"daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,"
-               f"relative_humidity_2m_max,relative_humidity_2m_min,relative_humidity_2m_mean,"
-               f"wind_speed_10m_max,wind_speed_10m_mean,"
-               f"precipitation_sum&"
-               f"timezone=America%2FSantiago&past_days=3")
+               f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
+               f"timezone=America%2FSantiago&past_days=7&forecast_days=10")
         response = requests.get(url)
         if response.status_code != 200:
             raise RuntimeError(f"Error al descargar pronóstico: {response.text}")
-        data = response.json()['daily']
-        
-        # Buscar el índice de la fecha objetivo en los resultados
-        try:
-            idx = data['time'].index(target_date_str)
-        except ValueError:
-            raise ValueError(f"La fecha objetivo {target_date_str} no se encuentra en el rango del pronóstico de Open-Meteo.")
-
-        clima_data['TEMP_MAX'] = data['temperature_2m_max'][idx]
-        clima_data['TEMP_MIN'] = data['temperature_2m_min'][idx]
-        clima_data['TEMP_MEDIA'] = data['temperature_2m_mean'][idx]
-        clima_data['HUM_MAX'] = data['relative_humidity_2m_max'][idx]
-        clima_data['HUM_MIN'] = data['relative_humidity_2m_min'][idx]
-        clima_data['HUM_MEDIA'] = data['relative_humidity_2m_mean'][idx]
-        clima_data['VIENTO_MAX'] = data['wind_speed_10m_max'][idx]
-        clima_data['VIENTO_MEDIO'] = data['wind_speed_10m_mean'][idx]
-        clima_data['LLUVIA'] = data['precipitation_sum'][idx]
-
-        # Lluvia lags desde la API de clima
-        idx_lag_1 = idx - 1
-        idx_lag_2 = idx - 2
-        idx_lag_3 = idx - 3
-        clima_data['LLUVIA_lag_1'] = data['precipitation_sum'][idx_lag_1]
-        clima_data['LLUVIA_lag_2'] = data['precipitation_sum'][idx_lag_2]
-        clima_data['LLUVIA_lag_3'] = data['precipitation_sum'][idx_lag_3]
-        clima_data['LLUVIA_accum_3d'] = clima_data['LLUVIA_lag_1'] + clima_data['LLUVIA_lag_2'] + clima_data['LLUVIA_lag_3']
+        data_raw = response.json()['hourly']
     else:
         print("Obteniendo clima histórico desde Open-Meteo...")
-        # Consultamos el rango desde lag_3 hasta el target_date
+        # Consultamos el rango desde lag_7 hasta el target_date
         url = (f"https://archive-api.open-meteo.com/v1/archive?"
                f"latitude={lat}&longitude={lon}&"
-               f"start_date={lag_dates_str[0]}&end_date={target_date_str}&"
-               f"daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,"
-               f"relative_humidity_2m_max,relative_humidity_2m_min,relative_humidity_2m_mean,"
-               f"wind_speed_10m_max,wind_speed_10m_mean,"
-               f"precipitation_sum&"
+               f"start_date={(target_date - datetime.timedelta(days=7)).strftime('%Y-%m-%d')}&"
+               f"end_date={target_date_str}&"
+               f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
                f"timezone=America%2FSantiago&format=json")
         response = requests.get(url)
         if response.status_code != 200:
             raise RuntimeError(f"Error al descargar clima histórico: {response.text}")
-        data = response.json()['daily']
+        data_raw = response.json()['hourly']
         
-        # El último elemento es el target
-        clima_data['TEMP_MAX'] = data['temperature_2m_max'][-1]
-        clima_data['TEMP_MIN'] = data['temperature_2m_min'][-1]
-        clima_data['TEMP_MEDIA'] = data['temperature_2m_mean'][-1]
-        clima_data['HUM_MAX'] = data['relative_humidity_2m_max'][-1]
-        clima_data['HUM_MIN'] = data['relative_humidity_2m_min'][-1]
-        clima_data['HUM_MEDIA'] = data['relative_humidity_2m_mean'][-1]
-        clima_data['VIENTO_MAX'] = data['wind_speed_10m_max'][-1]
-        clima_data['VIENTO_MEDIO'] = data['wind_speed_10m_mean'][-1]
-        clima_data['LLUVIA'] = data['precipitation_sum'][-1]
+    df_hourly = pd.DataFrame(data_raw)
+    df_hourly['time'] = pd.to_datetime(df_hourly['time'])
+    df_hourly['FECHA_DIA'] = df_hourly['time'].dt.strftime('%Y-%m-%d')
+    
+    # Agrupar y agregar
+    df_clima = df_hourly.groupby('FECHA_DIA').agg(
+        TEMP_MAX=('temperature_2m', 'max'),
+        TEMP_MIN=('temperature_2m', 'min'),
+        TEMP_MEDIA=('temperature_2m', 'mean'),
+        TEMP_SKEW=('temperature_2m', get_skew),
+        TEMP_KURT=('temperature_2m', get_kurt),
+        
+        HUM_MAX=('relative_humidity_2m', 'max'),
+        HUM_MIN=('relative_humidity_2m', 'min'),
+        HUM_MEDIA=('relative_humidity_2m', 'mean'),
+        HUM_SKEW=('relative_humidity_2m', get_skew),
+        HUM_KURT=('relative_humidity_2m', get_kurt),
+        
+        VIENTO_MAX=('wind_speed_10m', 'max'),
+        VIENTO_MEDIO=('wind_speed_10m', 'mean'),
+        VIENTO_SKEW=('wind_speed_10m', get_skew),
+        VIENTO_KURT=('wind_speed_10m', get_kurt),
+        
+        LLUVIA=('precipitation', 'sum')
+    ).reset_index()
+    
+    df_clima = df_clima.set_index('FECHA_DIA')
+    
+    # Extraer variables del día objetivo
+    target_row = df_clima.loc[target_date_str]
+    clima_data = {
+        'TEMP_MAX': float(target_row['TEMP_MAX']),
+        'TEMP_MIN': float(target_row['TEMP_MIN']),
+        'TEMP_MEDIA': float(target_row['TEMP_MEDIA']),
+        'TEMP_SKEW': float(target_row['TEMP_SKEW']),
+        'TEMP_KURT': float(target_row['TEMP_KURT']),
+        
+        'HUM_MAX': float(target_row['HUM_MAX']),
+        'HUM_MIN': float(target_row['HUM_MIN']),
+        'HUM_MEDIA': float(target_row['HUM_MEDIA']),
+        'HUM_SKEW': float(target_row['HUM_SKEW']),
+        'HUM_KURT': float(target_row['HUM_KURT']),
+        
+        'VIENTO_MAX': float(target_row['VIENTO_MAX']),
+        'VIENTO_MEDIO': float(target_row['VIENTO_MEDIO']),
+        'VIENTO_SKEW': float(target_row['VIENTO_SKEW']),
+        'VIENTO_KURT': float(target_row['VIENTO_KURT']),
+        
+        'LLUVIA': float(target_row['LLUVIA'])
+    }
+    
+    # Lags (weather lags)
+    lag_1_str = (target_date - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+    lag_2_str = (target_date - datetime.timedelta(days=2)).strftime('%Y-%m-%d')
+    lag_3_str = (target_date - datetime.timedelta(days=3)).strftime('%Y-%m-%d')
+    
+    clima_data['LLUVIA_lag_1'] = float(df_clima.loc[lag_1_str]['LLUVIA'])
+    clima_data['LLUVIA_lag_2'] = float(df_clima.loc[lag_2_str]['LLUVIA'])
+    clima_data['LLUVIA_lag_3'] = float(df_clima.loc[lag_3_str]['LLUVIA'])
+    clima_data['LLUVIA_accum_3d'] = clima_data['LLUVIA_lag_1'] + clima_data['LLUVIA_lag_2'] + clima_data['LLUVIA_lag_3']
+    
+    lluvias_7d = [float(df_clima.loc[(target_date - datetime.timedelta(days=i)).strftime('%Y-%m-%d')]['LLUVIA']) for i in range(1, 8)]
+    clima_data['LLUVIA_rolling_mean_7d'] = np.mean(lluvias_7d)
+    
+    clima_data['VIENTO_MEDIO_lag_1'] = float(df_clima.loc[lag_1_str]['VIENTO_MEDIO'])
+    clima_data['HUM_MEDIA_lag_1'] = float(df_clima.loc[lag_1_str]['HUM_MEDIA'])
 
-        # Lluvia lags
-        clima_data['LLUVIA_lag_1'] = data['precipitation_sum'][-2]
-        clima_data['LLUVIA_lag_2'] = data['precipitation_sum'][-3]
-        clima_data['LLUVIA_lag_3'] = data['precipitation_sum'][-4]
-        clima_data['LLUVIA_accum_3d'] = clima_data['LLUVIA_lag_1'] + clima_data['LLUVIA_lag_2'] + clima_data['LLUVIA_lag_3']
 
     print(f"Condiciones climáticas para la predicción:")
     print(f"  - Temperatura (Mín/Med/Máx): {clima_data['TEMP_MIN']}°C / {clima_data['TEMP_MEDIA']}°C / {clima_data['TEMP_MAX']}°C")
@@ -189,6 +261,7 @@ def main():
     print(f"  - Viento (Medio/Máx): {clima_data['VIENTO_MEDIO']} km/h / {clima_data['VIENTO_MAX']} km/h")
     print(f"  - Precipitación estimada: {clima_data['LLUVIA']} mm")
     print(f"  - Lluvia acumulada últimos 3 días: {clima_data['LLUVIA_accum_3d']:.1f} mm")
+    print(f"  - Media móvil lluvia 7 días: {clima_data['LLUVIA_rolling_mean_7d']:.1f} mm")
 
     # Características de calendario y feriado
     chile_holidays = holidays.Chile(years=[target_date.year])
@@ -196,30 +269,76 @@ def main():
     dia_semana = target_date.weekday()
     es_fin_semana = 1 if dia_semana in [5, 6] else 0
     es_feriado = 1 if target_date_str in chile_holidays else 0
+    
+    # Identificar feriados irrenunciables fijos en Chile y elecciones
+    feriados_irrenunciables = {(1, 1), (5, 1), (9, 18), (9, 19), (12, 25)}
+    holiday_name = chile_holidays.get(target_date_str)
+    es_feriado_irrenunciable = 0
+    if (mes, target_date.day) in feriados_irrenunciables:
+        es_feriado_irrenunciable = 1
+    elif holiday_name and ("elecciones" in holiday_name.lower() or "plebiscito" in holiday_name.lower()):
+        es_feriado_irrenunciable = 1
+        
+    dia_del_ano = target_date.timetuple().tm_yday
 
-    # Crear el vector de características en el orden correcto
+    # Encodings cíclicos
+    mes_sin = np.sin(2 * np.pi * mes / 12)
+    mes_cos = np.cos(2 * np.pi * mes / 12)
+    dia_sin = np.sin(2 * np.pi * dia_semana / 7)
+    dia_cos = np.cos(2 * np.pi * dia_semana / 7)
+    dano_sin = np.sin(2 * np.pi * dia_del_ano / 365)
+    dano_cos = np.cos(2 * np.pi * dia_del_ano / 365)
+
+    # Crear el vector de características
     features = {
         'TEMP_MAX': clima_data['TEMP_MAX'],
         'TEMP_MIN': clima_data['TEMP_MIN'],
         'TEMP_MEDIA': clima_data['TEMP_MEDIA'],
+        'TEMP_SKEW': clima_data['TEMP_SKEW'],
+        'TEMP_KURT': clima_data['TEMP_KURT'],
         'HUM_MAX': clima_data['HUM_MAX'],
         'HUM_MIN': clima_data['HUM_MIN'],
         'HUM_MEDIA': clima_data['HUM_MEDIA'],
+        'HUM_SKEW': clima_data['HUM_SKEW'],
+        'HUM_KURT': clima_data['HUM_KURT'],
         'VIENTO_MAX': clima_data['VIENTO_MAX'],
         'VIENTO_MEDIO': clima_data['VIENTO_MEDIO'],
+        'VIENTO_SKEW': clima_data['VIENTO_SKEW'],
+        'VIENTO_KURT': clima_data['VIENTO_KURT'],
         'LLUVIA': clima_data['LLUVIA'],
         'EVENTOS_lag_1': eventos_lag_1,
         'EVENTOS_lag_2': eventos_lag_2,
         'EVENTOS_lag_3': eventos_lag_3,
+        'EVENTOS_lag_7': eventos_lag_7,
+        'N_INCENDIO_ESTR_lag_1': category_lags['N_INCENDIO_ESTR_lag_1'],
+        'N_INCENDIO_FOREST_lag_1': category_lags['N_INCENDIO_FOREST_lag_1'],
+        'N_RESCATE_VEH_lag_1': category_lags['N_RESCATE_VEH_lag_1'],
+        'N_RESCATE_PERS_lag_1': category_lags['N_RESCATE_PERS_lag_1'],
+        'N_GASES_lag_1': category_lags['N_GASES_lag_1'],
         'EVENTOS_rolling_mean_3d': eventos_rolling_mean_3d,
+        'EVENTOS_rolling_std_3d': eventos_rolling_std_3d,
+        'EVENTOS_rolling_max_3d': eventos_rolling_max_3d,
+        'EVENTOS_rolling_mean_7d': eventos_rolling_mean_7d,
+        'EVENTOS_rolling_std_7d': eventos_rolling_std_7d,
+        'EVENTOS_rolling_max_7d': eventos_rolling_max_7d,
         'LLUVIA_lag_1': clima_data['LLUVIA_lag_1'],
         'LLUVIA_lag_2': clima_data['LLUVIA_lag_2'],
         'LLUVIA_lag_3': clima_data['LLUVIA_lag_3'],
         'LLUVIA_accum_3d': clima_data['LLUVIA_accum_3d'],
+        'LLUVIA_rolling_mean_7d': clima_data['LLUVIA_rolling_mean_7d'],
+        'VIENTO_MEDIO_lag_1': clima_data['VIENTO_MEDIO_lag_1'],
+        'HUM_MEDIA_lag_1': clima_data['HUM_MEDIA_lag_1'],
         'MES': mes,
         'DIA_SEMANA': dia_semana,
         'ES_FIN_SEMANA': es_fin_semana,
-        'ES_FERIADO': es_feriado
+        'ES_FERIADO': es_feriado,
+        'ES_FERIADO_IRRENUNCIABLE': es_feriado_irrenunciable,
+        'MES_SIN': mes_sin,
+        'MES_COS': mes_cos,
+        'DIA_SIN': dia_sin,
+        'DIA_COS': dia_cos,
+        'DANO_SIN': dano_sin,
+        'DANO_COS': dano_cos
     }
 
     # Convertir a DataFrame asegurando el orden de columnas del metadato
@@ -228,7 +347,10 @@ def main():
     # Realizar predicciones
     pred_count = reg_model.predict(X_pred)[0]
     prob_high = clf_model.predict_proba(X_pred)[0, 1]
-    pred_high = clf_model.predict(X_pred)[0]
+    
+    # Lógica de umbral dinámico desde metadatos
+    threshold = metadata.get('classification_threshold', 0.20)
+    pred_high = 1 if prob_high >= threshold else 0
 
     # Formatear el reporte de predicción en consola
     print("\n" + "="*50)
@@ -236,10 +358,9 @@ def main():
     print(f" Fecha del reporte: {datetime.date.today()} | Fecha predicción: {target_date_str}")
     print("="*50)
     print(f" Cantidad esperada de emergencias: {pred_count:.1f} incidentes")
-    print(f" Probabilidad de día crítico (>7 eventos): {prob_high * 100:.1f}%")
+    print(f" Probabilidad de día crítico (>7 eventos): {prob_high * 100:.1f}% (Umbral Alerta: {threshold * 100:.1f}%)")
     
     # Decisión de personal basada en la predicción combinada
-    # Si la regresión es >= 8 o la clasificación dice que es alta
     se_requiere_personal = (pred_count >= 8.0) or (pred_high == 1)
 
     print("-"*50)
