@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.streamlit/secrets.toml
+
+# Local tools and credentials
+.claude/
+01_scraper/cookies.json
+01_scraper/debug.png
+01_scraper/scraped_data/*.log
+
+# Generated model experiments
+03_model/saved_models/*
+!03_model/saved_models/classifier_climatic_augmented.pkl
+!03_model/saved_models/metadata_climatic_augmented.pkl
+!03_model/saved_models/metadata_climatic_augmented_direct31.pkl
+!03_model/saved_models/regressor_climatic_augmented.pkl
+!03_model/saved_models/regressor_climatic_augmented_direct31.pkl
+!03_model/saved_models/category_model_optimization.csv
+!03_model/saved_models/feature_subset_search.csv

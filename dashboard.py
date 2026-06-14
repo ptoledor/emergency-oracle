@@ -280,24 +280,43 @@ def metric_card(label, value, delta=None, delta_type="up"):
     </div>
     """, unsafe_allow_html=True)
 
+
+def operational_decision(prediction, watch_threshold, reinforcement_threshold):
+    if prediction['Predicción'] >= 8.0 or prediction['Prob_Alta'] >= reinforcement_threshold:
+        return "REFORZAR", "Convocar dotación adicional para mañana", "delta-down"
+    if prediction['Prob_Alta'] >= watch_threshold:
+        return "PREALERTA", "Confirmar disponibilidad y mantener personal localizable", "delta-down"
+    return "GUARDIA NORMAL", "Mantener dotación ordinaria", "delta-up"
+
 # 7. Carga de datos y modelos
 @st.cache_data
 def load_data_and_predict():
     if not os.path.exists(data_path):
         return None, None, None, None, None, None, None
     df = pd.read_csv(data_path, sep=';')
+    weekday_columns = {
+        0: 'DIA_LUNES',
+        1: 'DIA_MARTES',
+        2: 'DIA_MIERCOLES',
+        3: 'DIA_JUEVES',
+        4: 'DIA_VIERNES',
+        5: 'DIA_SABADO',
+        6: 'DIA_DOMINGO',
+    }
+    for weekday, column in weekday_columns.items():
+        df[column] = (df['DIA_SEMANA'] == weekday).astype(int)
     
     # Cargar modelos y metadata
     try:
-        # 1. Cargar modelo agnóstico base
-        with open(models_dir / "regressor_agnostic.pkl", "rb") as f:
+        # 1. Modelo directo optimizado de 31 variables para comparacion
+        with open(models_dir / "regressor_climatic_augmented_direct31.pkl", "rb") as f:
             reg_model_base = pickle.load(f)
-        with open(models_dir / "metadata_agnostic.pkl", "rb") as f:
+        with open(models_dir / "metadata_climatic_augmented_direct31.pkl", "rb") as f:
             metadata_base = pickle.load(f)
         
         # Realizar predicciones históricas base
         X_base = df[metadata_base['feature_cols']]
-        df['PRED_EVENTOS_BASE'] = reg_model_base.predict(X_base)
+        df['PRED_EVENTOS_DIRECT31'] = reg_model_base.predict(X_base)
         
         # Extraer importancia base
         importances_base = reg_model_base.feature_importances_
@@ -306,15 +325,15 @@ def load_data_and_predict():
             'Importance': importances_base
         }).sort_values(by='Importance', ascending=True) # Ascendente para barra horizontal
         
-        # 2. Cargar modelo agnóstico aumentado
-        with open(models_dir / "regressor_agnostic_augmented.pkl", "rb") as f:
+        # 2. Modelo principal optimizado por categorias
+        with open(models_dir / "regressor_climatic_augmented.pkl", "rb") as f:
             reg_model_aug = pickle.load(f)
-        with open(models_dir / "metadata_agnostic_augmented.pkl", "rb") as f:
+        with open(models_dir / "metadata_climatic_augmented.pkl", "rb") as f:
             metadata_aug = pickle.load(f)
             
         # Realizar predicciones históricas aumentadas
         X_aug = df[metadata_aug['feature_cols']]
-        df['PRED_EVENTOS_AUGMENTED'] = reg_model_aug.predict(X_aug)
+        df['PRED_EVENTOS_PRUNED'] = reg_model_aug.predict(X_aug)
         
         # Extraer importancia aumentada
         importances_aug = reg_model_aug.feature_importances_
@@ -323,15 +342,15 @@ def load_data_and_predict():
             'Importance': importances_aug
         }).sort_values(by='Importance', ascending=True)
         
-        # 3. Cargar modelo agnóstico aumentado v3
-        with open(models_dir / "regressor_agnostic_augmented_v3.pkl", "rb") as f:
+        # 3. Copia canonica del modelo principal seleccionado automaticamente
+        with open(models_dir / "regressor_climatic_augmented.pkl", "rb") as f:
             reg_model_v3 = pickle.load(f)
-        with open(models_dir / "metadata_agnostic_augmented_v3.pkl", "rb") as f:
+        with open(models_dir / "metadata_climatic_augmented.pkl", "rb") as f:
             metadata_v3 = pickle.load(f)
             
-        # Realizar predicciones históricas aumentadas v3
+        # Predicciones historicas del ganador
         X_v3 = df[metadata_v3['feature_cols']]
-        df['PRED_EVENTOS_AUGMENTED_V3'] = reg_model_v3.predict(X_v3)
+        df['PRED_EVENTOS_PRIMARY'] = reg_model_v3.predict(X_v3)
         
         # Extraer importancia aumentada v3
         importances_v3 = reg_model_v3.feature_importances_
@@ -356,10 +375,10 @@ df, df_imp_base, df_imp_aug, df_imp_v3, metadata_base, metadata_aug, metadata_v3
 def get_weather_for_range(start_date, is_historical):
     lat, lon = -36.731106, -73.11023
     if is_historical:
-        # Simulation mode: target range start_date to start_date + 6 days.
-        # We need weather from start_date - 7 days to start_date + 6 days for lags
-        q_start = start_date - datetime.timedelta(days=7)
-        q_end = start_date + datetime.timedelta(days=6)
+        # Simulation mode: target range start_date to start_date + 5 days.
+        # We need weather from start_date - 30 days to start_date + 5 days for lags.
+        q_start = start_date - datetime.timedelta(days=30)
+        q_end = start_date + datetime.timedelta(days=5)
         url = (f"https://archive-api.open-meteo.com/v1/archive?"
                f"latitude={lat}&longitude={lon}&"
                f"start_date={q_start.strftime('%Y-%m-%d')}&"
@@ -368,19 +387,19 @@ def get_weather_for_range(start_date, is_historical):
                f"timezone=America%2FSantiago&format=json")
     else:
         # Real-time mode: start_date is tomorrow.
-        # We fetch forecast API with past_days=7 to automatically get past 7 days and next 7 days
+        # Se requieren 30 días previos para variables de memoria hídrica.
         url = (f"https://api.open-meteo.com/v1/forecast?"
                f"latitude={lat}&longitude={lon}&"
                f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
-               f"timezone=America%2FSantiago&past_days=7&forecast_days=10")
+               f"timezone=America%2FSantiago&past_days=30&forecast_days=10")
                
     res = requests.get(url, timeout=30)
     if res.status_code != 200:
         raise RuntimeError(f"Error al descargar clima desde Open-Meteo: {res.text}")
     return res.json()['hourly']
 
-# Recursive forecasting function for 7 days
-def predict_7_days_recursive(start_date, is_historical, prefix="_agnostic_augmented", weather_data=None):
+# Recursive forecasting function for 6 days
+def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmented", weather_data=None):
     # Load models and metadata
     try:
         with open(models_dir / f"regressor{prefix}.pkl", "rb") as f:
@@ -470,14 +489,14 @@ def predict_7_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
         }
         
     predictions = []
-    chile_holidays = holidays.Chile(years=[start_date.year, (start_date + datetime.timedelta(days=6)).year])
+    chile_holidays = holidays.Chile(years=[start_date.year, (start_date + datetime.timedelta(days=5)).year])
     
     DIAS_ES = {
         'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles',
         'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
     }
     
-    for j in range(7):
+    for j in range(6):
         d = start_date + datetime.timedelta(days=j)
         d_str = d.strftime('%Y-%m-%d')
         
@@ -529,13 +548,10 @@ def predict_7_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
         # Weather lags
         viento_medio_lag_1 = float(weather_df.loc[d - datetime.timedelta(days=1)]['VIENTO_MEDIO'])
         hum_media_lag_1 = float(weather_df.loc[d - datetime.timedelta(days=1)]['HUM_MEDIA'])
-        lluvia_lag_1 = float(weather_df.loc[d - datetime.timedelta(days=1)]['LLUVIA'])
-        lluvia_lag_2 = float(weather_df.loc[d - datetime.timedelta(days=2)]['LLUVIA'])
-        lluvia_lag_3 = float(weather_df.loc[d - datetime.timedelta(days=3)]['LLUVIA'])
-        lluvia_accum_3d = lluvia_lag_1 + lluvia_lag_2 + lluvia_lag_3
-        
-        lluvias_7d = [float(weather_df.loc[d - datetime.timedelta(days=i)]['LLUVIA']) for i in range(1, 8)]
-        lluvia_rolling_mean_7d = float(np.mean(lluvias_7d))
+        rain_history = {
+            i: float(weather_df.loc[d - datetime.timedelta(days=i)]['LLUVIA'])
+            for i in range(1, 31)
+        }
 
         # Event lags
         eventos_lag_1 = float(event_history[d - datetime.timedelta(days=1)])
@@ -585,11 +601,6 @@ def predict_7_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
             'EVENTOS_rolling_mean_7d': eventos_rolling_mean_7d,
             'EVENTOS_rolling_std_7d': eventos_rolling_std_7d,
             'EVENTOS_rolling_max_7d': eventos_rolling_max_7d,
-            'LLUVIA_lag_1': lluvia_lag_1,
-            'LLUVIA_lag_2': lluvia_lag_2,
-            'LLUVIA_lag_3': lluvia_lag_3,
-            'LLUVIA_accum_3d': lluvia_accum_3d,
-            'LLUVIA_rolling_mean_7d': lluvia_rolling_mean_7d,
             'VIENTO_MEDIO_lag_1': viento_medio_lag_1,
             'HUM_MEDIA_lag_1': hum_media_lag_1,
             'MES': mes,
@@ -604,6 +615,22 @@ def predict_7_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
             'DANO_SIN': dano_sin,
             'DANO_COS': dano_cos
         }
+        weekday_columns = [
+            'DIA_LUNES', 'DIA_MARTES', 'DIA_MIERCOLES', 'DIA_JUEVES',
+            'DIA_VIERNES', 'DIA_SABADO', 'DIA_DOMINGO'
+        ]
+        for weekday, column in enumerate(weekday_columns):
+            features[column] = int(dia_semana == weekday)
+
+        for lag in [1, 2, 3, 5, 7, 10, 14]:
+            features[f'LLUVIA_LAG_{lag}D'] = rain_history[lag]
+        for window in [3, 7, 14, 30]:
+            rain_window = np.array([rain_history[i] for i in range(1, window + 1)])
+            features[f'LLUVIA_PROMEDIO_{window}D_PREV'] = float(np.mean(rain_window))
+            features[f'LLUVIA_TOTAL_{window}D_PREV'] = float(np.sum(rain_window))
+            features[f'LLUVIA_DESV_{window}D_PREV'] = float(np.std(rain_window, ddof=1))
+            features[f'LLUVIA_MAX_{window}D_PREV'] = float(np.max(rain_window))
+            features[f'DIAS_SECOS_{window}D_PREV'] = float(np.sum(rain_window <= 0.1))
         
         # DataFrame aligned with model features
         X_pred = pd.DataFrame([features])[metadata['feature_cols']]
@@ -622,9 +649,11 @@ def predict_7_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
             'Predicción': pred_count,
             'Prob_Alta': prob_high,
             'Temp_Max': temp_max,
+            'Temp_Media': temp_media,
+            'Hum_Media': hum_media,
             'Viento_Medio': viento_medio,
             'Lluvia': lluvia,
-            'Es_Feriado': es_feriado
+            'Es_Feriado': es_feriado,
         })
         
     return predictions, float(metadata.get('classification_threshold', 0.25)), float(metadata.get('umbral_alta_actividad', 7.0))
@@ -644,22 +673,7 @@ if df is None:
     st.stop()
 
 # 9. Sección de KPIs
-mae_actual = float(metadata_aug['mae'])
-mae_baseline = float(metadata_base['mae'])
-mejora_mae = ((mae_baseline - mae_actual) / mae_baseline) * 100
-
 mean_real = df['EVENTOS'].mean()
-mean_pred = df['PRED_EVENTOS_AUGMENTED'].mean() if 'PRED_EVENTOS_AUGMENTED' in df.columns else df['EVENTOS'].mean()
-
-k1, k2, k3, k4 = st.columns(4)
-with k1:
-    metric_card("Eventos Diarios Reales (Media)", f"{mean_real:.2f}")
-with k2:
-    metric_card("Eventos Diarios Predichos (Media)", f"{mean_pred:.2f}")
-with k3:
-    metric_card("Error MAE (Clima + Inercia)", f"{mae_actual:.2f} ev", f"{mejora_mae:.1f}% vs base", "up")
-with k4:
-    metric_card("Error MAE (Modelo Base)", f"{mae_baseline:.2f} ev", "Modelo Base", "down")
 
 # 10. Configuración de tema de Plotly
 PLOT_LAYOUT = dict(
@@ -690,16 +704,6 @@ PLOT_LAYOUT = dict(
 # 11. Fragmento para aislar el re-run del slider y evitar saltos de scroll
 @st.fragment
 def render_seasonal_chart():
-    # Selector de modelo para las curvas
-    model_choice = st.radio(
-        "Enfoque del Modelo a Graficar:",
-        options=["Modelo Base", "Modelo Climático con Inercia de Actividad", "Modelo Climático"],
-        index=1,
-        horizontal=True,
-        key="curve_model_choice",
-        help="El Modelo Base excluye asimetrías/curtosis. El Modelo Climático con Inercia de Actividad incluye perfiles con lags de eventos. El Modelo Climático incluye perfiles de clima SIN lags ni rollings de eventos."
-    )
-    
     # Slider interactivo para ajustar la ventana de suavizado dinámicamente
     dias_suavizado = st.slider(
         "Ventana de Suavizado (Días de Media Móvil Centrada):",
@@ -710,14 +714,7 @@ def render_seasonal_chart():
         help="Seleccione 1 para ver los datos originales. Valores mayores suavizan más las curvas.",
         key="smoothing_slider_fragment"
     )
-    
-    if model_choice == "Modelo Climático con Inercia de Actividad":
-        y_pred_col = 'PRED_EVENTOS_AUGMENTED'
-    elif model_choice == "Modelo Climático":
-        y_pred_col = 'PRED_EVENTOS_AUGMENTED_V3'
-    else:
-        y_pred_col = 'PRED_EVENTOS_BASE'
-
+    y_pred_col = 'PRED_EVENTOS_PRIMARY'
     
     # Agrupar por día del año y restringir a 365 días (excluyendo el día bisiesto 366 si existe)
     df_grouped = df.groupby('DIA_DEL_ANO')[['EVENTOS', y_pred_col]].mean().reset_index()
@@ -837,11 +834,10 @@ def render_seasonal_chart():
     )
 
 # 12. Pestañas de navegación
-tab1, tab2, tab3, tab4 = st.tabs([
-    "🔮 Predicciones Siguientes 7 Días",
+tab1, tab2, tab3 = st.tabs([
+    "🔮 Predicciones Siguientes 6 Días",
     "⚡ Importancia de Variables",
-    "📊 Curvas de Estacionalidad (365 días)",
-    "💡 Recomendaciones de Mejora"
+    "📊 Curvas de Estacionalidad (365 días)"
 ])
 
 with tab1:
@@ -852,7 +848,7 @@ with tab1:
         </p>
     </div>
     """, unsafe_allow_html=True)
-    
+
     is_historical_pred = False
     
     # Mañana real
@@ -867,143 +863,27 @@ with tab1:
 
         if shared_weather is None:
             pred_results = pred_results_base = pred_results_v3 = None
-            clf_threshold = float(metadata_aug.get('classification_threshold', 0.25))
-            umbral_alta = float(metadata_aug.get('umbral_alta_actividad', 7.0))
+            clf_threshold = float(metadata_v3.get('classification_threshold', 0.25))
+            umbral_alta = float(metadata_v3.get('umbral_alta_actividad', 7.0))
         else:
-            pred_results, clf_threshold, umbral_alta = predict_7_days_recursive(
-                start_pred_date, is_historical_pred, prefix="_agnostic_augmented", weather_data=shared_weather
+            pred_results, clf_threshold, umbral_alta = predict_6_days_recursive(
+                start_pred_date, is_historical_pred, prefix="_climatic_augmented", weather_data=shared_weather
             )
-            pred_results_base, _, _ = predict_7_days_recursive(
-                start_pred_date, is_historical_pred, prefix="_agnostic", weather_data=shared_weather
-            )
-            pred_results_v3, _, _ = predict_7_days_recursive(
-                start_pred_date, is_historical_pred, prefix="_agnostic_augmented_v3", weather_data=shared_weather
-            )
+            pred_results_base = pred_results_v3 = pred_results
         
-    if pred_results is not None and pred_results_base is not None and pred_results_v3 is not None:
-        # Create container for card rendering
-        with st.container():
-            st.markdown('<div class="prediction-anchor"></div>', unsafe_allow_html=True)
-            st.markdown('<div class="chart-title">Curva de Tendencia de Emergencias (Próximos 7 Días - Comparación de Modelos)</div>', unsafe_allow_html=True)
-            
-            # 1. Plotly chart for 7-day trend
-            fig_7d = go.Figure()
-            
-            dates_7d = [p['Fecha'] for p in pred_results]
-            counts_7d = [p['Predicción'] for p in pred_results]
-            counts_7d_base = [p['Predicción'] for p in pred_results_base]
-            counts_7d_v3 = [p['Predicción'] for p in pred_results_v3]
-            
-            # Hover text para modelo Climático con Inercia de Actividad
-            hover_text_aug = [
-                f"<b>Modelo Climático con Inercia de Actividad</b><br>"
-                f"Fecha: {p['FechaStr']} ({p['Día']})<br>"
-                f"Predicción: {p['Predicción']:.1f} llamadas<br>"
-                f"Prob. Crítico: {p['Prob_Alta']*100:.0f}%<br>"
-                f"Clima: {p['Temp_Max']:.1f}°C, {p['Viento_Medio']:.1f} km/h"
-                for p in pred_results
-            ]
-            
-            # Hover text para Modelo Base
-            hover_text_base = [
-                f"<b>Modelo Base</b><br>"
-                f"Fecha: {p['FechaStr']} ({p['Día']})<br>"
-                f"Predicción: {p['Predicción']:.1f} llamadas<br>"
-                f"Prob. Crítico: {p['Prob_Alta']*100:.0f}%"
-                for p in pred_results_base
-            ]
-
-            # Hover text para Modelo Climático
-            hover_text_v3 = [
-                f"<b>Modelo Climático (Puro)</b><br>"
-                f"Fecha: {p['FechaStr']} ({p['Día']})<br>"
-                f"Predicción: {p['Predicción']:.1f} llamadas<br>"
-                f"Prob. Crítico: {p['Prob_Alta']*100:.0f}%"
-                for p in pred_results_v3
-            ]
-            
-            # Curva Climática con Inercia de Actividad (Esmeralda)
-            fig_7d.add_trace(go.Scatter(
-                x=dates_7d,
-                y=counts_7d,
-                mode='lines+markers',
-                name='Modelo Climático con Inercia de Actividad',
-                line=dict(color='#10b981', width=3),
-                marker=dict(size=8, color='#10b981'),
-                text=hover_text_aug,
-                hoverinfo='text'
-            ))
-            
-            # Curva Modelo Base (Azul Discontinuo)
-            fig_7d.add_trace(go.Scatter(
-                x=dates_7d,
-                y=counts_7d_base,
-                mode='lines+markers',
-                name='Modelo Base',
-                line=dict(color='#3b82f6', width=2, dash='dash'),
-                marker=dict(size=6, color='#3b82f6'),
-                text=hover_text_base,
-                hoverinfo='text'
-            ))
-
-            # Curva Modelo Climático (Violeta)
-            fig_7d.add_trace(go.Scatter(
-                x=dates_7d,
-                y=counts_7d_v3,
-                mode='lines+markers',
-                name='Modelo Climático (Puro)',
-                line=dict(color='#8b5cf6', width=2.5, dash='dashdot'),
-                marker=dict(size=7, color='#8b5cf6'),
-                text=hover_text_v3,
-                hoverinfo='text'
-            ))
-            
-            # Baseline mean trace
-            fig_7d.add_trace(go.Scatter(
-                x=[dates_7d[0], dates_7d[-1]],
-                y=[mean_real, mean_real],
-                mode='lines',
-                name=f'Media Histórica ({mean_real:.2f})',
-                line=dict(color='#ef4444', width=1.5, dash='dot'),
-                hoverinfo='skip'
-            ))
-            
-            # Format layout
-            layout_params_7d = PLOT_LAYOUT.copy()
-            layout_params_7d['margin'] = dict(l=40, r=20, t=10, b=30)
-            layout_params_7d['xaxis'] = dict(
-                **PLOT_LAYOUT['xaxis'],
-                tickformat='%d-%b',
-                dtick="D1"
-            )
-            # Ensure Y scale starts from 0 to prevent visual distortion
-            layout_params_7d['yaxis'] = dict(
-                **PLOT_LAYOUT['yaxis'],
-                range=[0.0, max(max(counts_7d) + 1.5, max(counts_7d_base) + 1.5, 9.0)]
-            )
-            
-            fig_7d.update_layout(
-                **layout_params_7d,
-                xaxis_title="Fecha de Predicción",
-                yaxis_title="Cantidad de Llamadas",
-                height=320,
-            )
-            
-            st.plotly_chart(fig_7d, use_container_width=True, config={"displayModeBar": False})
-            
-        # 2. Grid cards for daily details
-        st.markdown('<div style="margin-top: 1.5rem; margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Detalle Diario y Alertas Operativas</h5></div>', unsafe_allow_html=True)
+    if pred_results is not None:
+        reinforcement_threshold = float(
+            metadata_v3.get('operational_reinforcement_threshold', 0.50)
+        )
+        st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario</h5></div>', unsafe_allow_html=True)
         
-        cols = st.columns(7)
-        for i, p in enumerate(pred_results):
-            with cols[i]:
-                # Alert calculation (prob_alta >= clf_threshold or pred_count > umbral_alta)
-                is_alert = (p['Prob_Alta'] >= clf_threshold) or (p['Predicción'] > umbral_alta)
-                badge_class = "delta-down" if is_alert else "delta-up"
-                badge_text = "🚨 ALERTA" if is_alert else "✅ NORMAL"
-                
-                # Render daily card
-                st.markdown(f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; height: 100%;">
+        forecast_cards = []
+        for p in pred_results:
+            badge_text, _, badge_class = operational_decision(
+                p, clf_threshold, reinforcement_threshold
+            )
+            forecast_cards.append(
+                f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
                     <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Día']}</div>
                     <div style="font-size: 0.8rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem;">{p['Fecha'].strftime('%d-%b')}</div>
                     <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Predicción']:.1f}</div>
@@ -1012,26 +892,268 @@ with tab1:
                     <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.5;" />
                     <div style="font-size: 0.68rem; color: var(--text-muted); line-height: 1.4; text-align: left;">
                         🌡️ Máx: <strong>{p['Temp_Max']:.1f}°C</strong><br/>
+                        🌡️ Media: <strong>{p['Temp_Media']:.1f}°C</strong><br/>
+                        💧 Humedad: <strong>{p['Hum_Media']:.0f}%</strong><br/>
                         💨 Viento: <strong>{p['Viento_Medio']:.1f} km/h</strong><br/>
                         🌧️ Lluvia: <strong>{p['Lluvia']:.1f} mm</strong><br/>
                         🔥 Prob: <strong>{p['Prob_Alta']*100:.0f}%</strong>
                     </div>
-                </div>""", unsafe_allow_html=True)
+                </div>"""
+            )
+        st.markdown(
+            f"""<div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.75rem; width: 100%;">
+                {''.join(forecast_cards)}
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        historical_events = df['EVENTOS'].astype(float)
+        events_min = historical_events.min()
+        events_max = historical_events.max()
+        events_mean = historical_events.mean()
+        events_std = historical_events.std()
+        stats_cards = [
+            ("Mínimo histórico", f"{events_min:.0f}", "llamadas/día"),
+            ("Máximo histórico", f"{events_max:.0f}", "llamadas/día"),
+            ("Media histórica", f"{events_mean:.2f}", "llamadas/día"),
+            ("Desviación estándar", f"{events_std:.2f}", "llamadas"),
+        ]
+        stats_html = "".join(
+            f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem;">
+                <div style="font-size: .68rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">{label}</div>
+                <div style="font-size: 1.25rem; color: var(--text); font-weight: 800;">{value}</div>
+                <div style="font-size: .65rem; color: var(--text-muted);">{unit}</div>
+            </div>"""
+            for label, value, unit in stats_cards
+        )
+        st.markdown(
+            f"""<div style="margin-top: 1.25rem; margin-bottom: .5rem;">
+                <div class="chart-title">Distribución Histórica de Llamados Diarios</div>
+                <div class="chart-subtitle">Frecuencia observada y campana normal de referencia.</div>
+                <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem;">{stats_html}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        normal_x = np.linspace(
+            max(0, events_min - 1),
+            events_max + 1,
+            300,
+        )
+        normal_y = (
+            np.exp(-0.5 * ((normal_x - events_mean) / events_std) ** 2)
+            / (events_std * np.sqrt(2 * np.pi))
+        )
+        fig_distribution = go.Figure()
+        fig_distribution.add_trace(go.Histogram(
+            x=historical_events,
+            histnorm='probability density',
+            xbins=dict(start=events_min - 0.5, end=events_max + 0.5, size=1),
+            name='Frecuencia histórica',
+            marker=dict(color='#3b82f6', line=dict(color=bg, width=1)),
+            opacity=0.72,
+            hovertemplate='%{x:.0f} llamadas<br>Densidad: %{y:.3f}<extra></extra>',
+        ))
+        fig_distribution.add_trace(go.Scatter(
+            x=normal_x,
+            y=normal_y,
+            mode='lines',
+            name='Campana normal de referencia',
+            line=dict(color='#f59e0b', width=3),
+            hovertemplate='%{x:.1f} llamadas<br>Densidad normal: %{y:.3f}<extra></extra>',
+        ))
+        fig_distribution.add_vline(
+            x=events_mean,
+            line_color='#ef4444',
+            line_dash='dash',
+            line_width=1.5,
+        )
+        distribution_layout = PLOT_LAYOUT.copy()
+        distribution_layout['margin'] = dict(l=40, r=20, t=20, b=45)
+        distribution_layout['barmode'] = 'overlay'
+        fig_distribution.update_layout(
+            **distribution_layout,
+            xaxis_title='Llamados por día',
+            yaxis_title='Densidad',
+            xaxis_range=[0, 13],
+            height=330,
+        )
+        st.plotly_chart(
+            fig_distribution,
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
+
+        historical_predictions = df['PRED_EVENTOS_PRIMARY'].astype(float)
+        pred_min = historical_predictions.min()
+        pred_max = historical_predictions.max()
+        pred_mean = historical_predictions.mean()
+        pred_std = historical_predictions.std()
+        prediction_stats = [
+            ("Mínimo predicho", f"{pred_min:.2f}", "llamadas/día"),
+            ("Máximo predicho", f"{pred_max:.2f}", "llamadas/día"),
+            ("Media predicha", f"{pred_mean:.2f}", "llamadas/día"),
+            ("Desviación estándar", f"{pred_std:.2f}", "llamadas"),
+        ]
+        prediction_stats_html = "".join(
+            f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem;">
+                <div style="font-size: .68rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">{label}</div>
+                <div style="font-size: 1.25rem; color: var(--text); font-weight: 800;">{value}</div>
+                <div style="font-size: .65rem; color: var(--text-muted);">{unit}</div>
+            </div>"""
+            for label, value, unit in prediction_stats
+        )
+        st.markdown(
+            f"""<div style="margin-top: 1.25rem; margin-bottom: .5rem;">
+                <div class="chart-title">Distribución de Predicciones Históricas · Modelo Optimizado</div>
+                <div class="chart-subtitle">Predicciones generadas sobre el histórico y campana normal de referencia.</div>
+                <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem;">{prediction_stats_html}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        pred_normal_x = np.linspace(
+            max(0, pred_min - 1),
+            pred_max + 1,
+            300,
+        )
+        pred_normal_y = (
+            np.exp(-0.5 * ((pred_normal_x - pred_mean) / pred_std) ** 2)
+            / (pred_std * np.sqrt(2 * np.pi))
+        )
+        fig_prediction_distribution = go.Figure()
+        fig_prediction_distribution.add_trace(go.Histogram(
+            x=historical_predictions,
+            histnorm='probability density',
+            xbins=dict(start=0, end=np.ceil(pred_max) + 0.5, size=0.5),
+            name='Predicciones históricas',
+            marker=dict(color='#8b5cf6', line=dict(color=bg, width=1)),
+            opacity=0.72,
+            hovertemplate='%{x:.1f} llamadas<br>Densidad: %{y:.3f}<extra></extra>',
+        ))
+        fig_prediction_distribution.add_trace(go.Scatter(
+            x=pred_normal_x,
+            y=pred_normal_y,
+            mode='lines',
+            name='Campana normal de referencia',
+            line=dict(color='#f59e0b', width=3),
+            hovertemplate='%{x:.1f} llamadas<br>Densidad normal: %{y:.3f}<extra></extra>',
+        ))
+        fig_prediction_distribution.add_vline(
+            x=pred_mean,
+            line_color='#ef4444',
+            line_dash='dash',
+            line_width=1.5,
+        )
+        prediction_distribution_layout = PLOT_LAYOUT.copy()
+        prediction_distribution_layout['margin'] = dict(l=40, r=20, t=20, b=45)
+        prediction_distribution_layout['barmode'] = 'overlay'
+        fig_prediction_distribution.update_layout(
+            **prediction_distribution_layout,
+            xaxis_title='Llamados predichos por día',
+            yaxis_title='Densidad',
+            xaxis_range=[0, 13],
+            height=330,
+        )
+        st.plotly_chart(
+            fig_prediction_distribution,
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
                 
-        # Alerta general o resumen
-        alert_days = [p['Fecha'].strftime('%d-%b') for p in pred_results if (p['Prob_Alta'] >= clf_threshold or p['Predicción'] > umbral_alta)]
-        st.markdown("<br/>", unsafe_allow_html=True)
-        if alert_days:
-            st.warning(f"⚠️ **Alerta Operativa:** Se prevé alta demanda de emergencias (probabilidad $\\ge {clf_threshold*100:.0f}\\%$ o $\\ge {umbral_alta + 1:.0f}$ llamadas) para los siguientes días: **{', '.join(alert_days)}**. Se recomienda planificar guardias preventivas adicionales.")
-        else:
-            st.success("✅ **Estado de Alerta:** No se prevén días críticos con alta demanda en los siguientes 7 días. Guardia ordinaria suficiente.")
+def render_model_metrics(metadata, title, color):
+    principal = " · PRINCIPAL" if metadata.get('is_primary') else ""
+    rows = [
+        ("MAE", f"{float(metadata['mae']):.2f} llamadas"),
+        ("MSE", f"{float(metadata['mse']):.2f}"),
+        ("R²", f"{float(metadata['r2']) * 100:.1f}%"),
+        ("ROC-AUC", f"{float(metadata['roc_auc']) * 100:.1f}%"),
+        ("Accuracy", f"{float(metadata['accuracy']) * 100:.1f}%"),
+        ("Precision", f"{float(metadata['precision']) * 100:.1f}%"),
+        ("Recall", f"{float(metadata['recall']) * 100:.1f}%"),
+        ("F1-Score", f"{float(metadata['f1']) * 100:.1f}%"),
+    ]
+    table_rows = "".join(
+        f'<tr style="border-bottom: 1px solid rgba(128,128,128,.15);">'
+        f'<td style="color: var(--text-muted); padding: .3rem 0;">{label}</td>'
+        f'<td style="text-align: right; font-weight: 700; padding: .3rem 0;">{value}</td></tr>'
+        for label, value in rows
+    )
+    st.markdown(
+        f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem;">
+        <div style="font-weight: 700; border-bottom: 2px solid {color}; padding-bottom: .4rem; margin-bottom: .8rem;">{title}{principal}</div>
+        <table style="width: 100%; border-collapse: collapse; font-size: .82rem;">{table_rows}</table>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_importance_chart(df_importance, title, color):
+    shown = df_importance.tail(20)
+    fig = go.Figure(go.Bar(
+        y=shown['Feature'],
+        x=shown['Importance'] * 100,
+        orientation='h',
+        marker=dict(color=color),
+        hovertemplate='%{y}: %{x:.2f}%<extra></extra>',
+        text=[f"{value:.1f}%" for value in shown['Importance'] * 100],
+        textposition='outside',
+    ))
+    max_value = max(shown['Importance'] * 100)
+    layout = PLOT_LAYOUT.copy()
+    layout['xaxis'] = dict(**PLOT_LAYOUT['xaxis'], range=[0, max_value * 1.22])
+    fig.update_layout(
+        **layout,
+        title=dict(text=title, x=0.5, font=dict(size=14)),
+        xaxis_title="Importancia Relativa (%)",
+        yaxis_title="Variables",
+        height=620,
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
 
 with tab2:
+    st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title">Comparación de Modelos Climáticos</div>', unsafe_allow_html=True)
+    direct_weight = metadata_aug.get('blend_weight_direct', 0.53)
+    category_weight = metadata_aug.get('blend_weight_categories', 0.47)
+    st.markdown(
+        f'<div class="chart-subtitle">El principal combina {direct_weight:.0%} del modelo directo y '
+        f'{category_weight:.0%} de seis modelos por tipo de emergencia. Se compara con el modelo '
+        'directo optimizado de 31 variables.</div>',
+        unsafe_allow_html=True,
+    )
+    col_met1, col_met2 = st.columns(2)
+    with col_met1:
+        render_model_metrics(
+            metadata_aug,
+            "Optimizado por categorías · Principal",
+            "#8b5cf6",
+        )
+    with col_met2:
+        render_model_metrics(
+            metadata_base,
+            "Optimizado directo · 31 variables",
+            "#3b82f6",
+        )
+
+    col_imp1, col_imp2 = st.columns(2)
+    with col_imp1:
+        render_importance_chart(df_imp_aug, "Importancia · Optimizado por categorías", "#8b5cf6")
+    with col_imp2:
+        render_importance_chart(df_imp_base, "Importancia · Directo 31 variables", "#3b82f6")
+
+    st.info(
+        "El modelo con inercia fue retirado de la comparación activa. Sus archivos permanecen guardados para experimentos futuros."
+    )
+
+
+if False:  # Vista comparativa antigua, conservada temporalmente como referencia.
     with st.container():
 
         st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
         st.markdown('<div class="chart-title">Desempeño Comparativo e Importancia Relativa Completa de Variables</div>', unsafe_allow_html=True)
-        st.markdown('<div class="chart-subtitle">Resumen de métricas de precisión y porcentaje de influencia de cada variable explicativa para los tres modelos (Modelo Base, Modelo Climático con Inercia de Actividad y Modelo Climático).</div>', unsafe_allow_html=True)
+        st.markdown('<div class="chart-subtitle">Comparación entre Modelo Climático, Modelo Climático con Inercia y Modelo Climático Aumentado.</div>', unsafe_allow_html=True)
     col_met1, col_met2, col_met3 = st.columns(3)
     with col_met1:
         mae_base = float(metadata_base['mae'])
@@ -1043,7 +1165,7 @@ with tab2:
         rec_base = float(metadata_base['recall']) * 100
         f1_base = float(metadata_base['f1']) * 100
         st.markdown(f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); border-bottom: 2px solid #3b82f6; padding-bottom: 0.4rem; margin-bottom: 0.8rem;">Métricas Modelo Base</div>
+            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); border-bottom: 2px solid #3b82f6; padding-bottom: 0.4rem; margin-bottom: 0.8rem;">Métricas Modelo Climático</div>
             <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; line-height: 1.6;">
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Absoluto Medio (MAE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mae_base:.2f} llamadas</td></tr>
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Cuadrático Medio (MSE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mse_base:.2f}</td></tr>
@@ -1065,7 +1187,7 @@ with tab2:
         rec_aug = float(metadata_aug['recall']) * 100
         f1_aug = float(metadata_aug['f1']) * 100
         st.markdown(f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); border-bottom: 2px solid #10b981; padding-bottom: 0.4rem; margin-bottom: 0.8rem;">Métricas Modelo Climático con Inercia de Actividad</div>
+            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); border-bottom: 2px solid #10b981; padding-bottom: 0.4rem; margin-bottom: 0.8rem;">Métricas Modelo Climático con Inercia</div>
             <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; line-height: 1.6;">
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Absoluto Medio (MAE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mae_aug:.2f} llamadas</td></tr>
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Cuadrático Medio (MSE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mse_aug:.2f}</td></tr>
@@ -1087,7 +1209,7 @@ with tab2:
         rec_v3 = float(metadata_v3['recall']) * 100
         f1_v3 = float(metadata_v3['f1']) * 100
         st.markdown(f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); border-bottom: 2px solid #8b5cf6; padding-bottom: 0.4rem; margin-bottom: 0.8rem;">Métricas Modelo Climático (Puro)</div>
+            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); border-bottom: 2px solid #8b5cf6; padding-bottom: 0.4rem; margin-bottom: 0.8rem;">Métricas Climático Aumentado (Principal)</div>
             <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; line-height: 1.6;">
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Absoluto Medio (MAE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mae_v3:.2f} llamadas</td></tr>
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Cuadrático Medio (MSE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mse_v3:.2f}</td></tr>
@@ -1119,7 +1241,7 @@ with tab2:
         </div>""", unsafe_allow_html=True)
     col_imp1, col_imp2, col_imp3 = st.columns(3)
     with col_imp1:
-        st.markdown('<div style="text-align: center; margin-bottom: 0.5rem; font-weight: 700; font-size: 0.85rem; color: var(--text); margin-top: 1rem;">Importancia Relativa - Modelo Base</div>', unsafe_allow_html=True)
+        st.markdown('<div style="text-align: center; margin-bottom: 0.5rem; font-weight: 700; font-size: 0.85rem; color: var(--text); margin-top: 1rem;">Importancia Relativa - Modelo Climático</div>', unsafe_allow_html=True)
         fig_imp = go.Figure()
         fig_imp.add_trace(go.Bar(
             y=df_imp_base['Feature'],
@@ -1145,7 +1267,7 @@ with tab2:
         )
         st.plotly_chart(fig_imp, use_container_width=True, config={"displayModeBar": False})
     with col_imp2:
-        st.markdown('<div style="text-align: center; margin-bottom: 0.5rem; font-weight: 700; font-size: 0.85rem; color: var(--text); margin-top: 1rem;">Importancia Relativa - Modelo Climático con Inercia de Actividad</div>', unsafe_allow_html=True)
+        st.markdown('<div style="text-align: center; margin-bottom: 0.5rem; font-weight: 700; font-size: 0.85rem; color: var(--text); margin-top: 1rem;">Importancia Relativa - Modelo Climático con Inercia</div>', unsafe_allow_html=True)
         fig_imp_agn = go.Figure()
         fig_imp_agn.add_trace(go.Bar(
             y=df_imp_aug['Feature'],
@@ -1171,7 +1293,7 @@ with tab2:
         )
         st.plotly_chart(fig_imp_agn, use_container_width=True, config={"displayModeBar": False})
     with col_imp3:
-        st.markdown('<div style="text-align: center; margin-bottom: 0.5rem; font-weight: 700; font-size: 0.85rem; color: var(--text); margin-top: 1rem;">Importancia Relativa - Modelo Climático (Puro)</div>', unsafe_allow_html=True)
+        st.markdown('<div style="text-align: center; margin-bottom: 0.5rem; font-weight: 700; font-size: 0.85rem; color: var(--text); margin-top: 1rem;">Importancia Relativa - Climático Aumentado (Principal)</div>', unsafe_allow_html=True)
         fig_imp_v3 = go.Figure()
         fig_imp_v3.add_trace(go.Bar(
             y=df_imp_v3['Feature'],
@@ -1229,9 +1351,12 @@ with tab2:
             <ul style="margin: 0; padding-left: 1.2rem;">
                 <li style="margin-bottom: 0.4rem;"><strong>VIENTO_MEDIO_lag_1:</strong> Velocidad promedio del viento registrada el día anterior. Es el predictor individual con mayor peso en el algoritmo, debido a la persistencia del comportamiento atmosférico local.</li>
                 <li style="margin-bottom: 0.4rem;"><strong>HUM_MEDIA_lag_1:</strong> Humedad relativa promedio del día anterior, capturando la desecación acumulada del suelo y aire.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_lag_1, LLUVIA_lag_2, LLUVIA_lag_3:</strong> Precipitaciones registradas ayer, hace 2 días y hace 3 días en mm. Indican si el suelo ya está húmedo (lo que reduce la posibilidad de incendios forestales incluso si hoy hay sol).</li>
-                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_accum_3d:</strong> Sumatoria total de precipitaciones de los últimos 3 días (mm). Es un indicador directo del estado de saturación hídrica del terreno.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_rolling_mean_7d:</strong> Promedio diario de lluvia en la última semana, capturando la sequedad climática de mediano plazo.</li>
+                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_LAG_1D, LLUVIA_LAG_2D, LLUVIA_LAG_3D:</strong> Precipitación de ayer, hace 2 días y hace 3 días.</li>
+                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_TOTAL_3D_PREV:</strong> Lluvia total de los 3 días anteriores.</li>
+                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_PROMEDIO_7D_PREV:</strong> Promedio diario de lluvia durante los 7 días anteriores.</li>
+                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_MAX_30D_PREV:</strong> Mayor precipitación diaria registrada durante los 30 días anteriores.</li>
+                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_DESV_30D_PREV:</strong> Variabilidad de la precipitación diaria durante los 30 días anteriores.</li>
+                <li style="margin-bottom: 0.4rem;"><strong>DIAS_SECOS_30D_PREV:</strong> Cantidad de días con lluvia menor o igual a 0.1 mm durante los 30 días anteriores.</li>
             </ul>
             <div style="font-weight: 700; margin-top: 0.6rem; color: var(--text);">5. Factores de Calendario y Ciclos Temporales (Descartados):</div>
             <ul style="margin: 0; padding-left: 1.2rem;">
@@ -1243,9 +1368,17 @@ with tab2:
 
 with tab3:
     with st.container():
+        principal_variant = {
+            'full': 'Full',
+            'pruned': 'Optimizado',
+            'category_blend': 'Optimizado por categorías',
+        }.get(metadata_v3.get('selected_variant'), 'Principal')
         st.markdown('<div class="chart-anchor"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="chart-title">Curvas Estacionales: Eventos Reales vs. Predicciones</div>', unsafe_allow_html=True)
-        st.markdown('<div class="chart-subtitle">Promedio agrupado por día del año (1 a 365) para visualizar tendencias climáticas y estacionales en Talcahuano.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="chart-title">Curva Estacional del Modelo Principal</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="chart-subtitle">Eventos reales versus predicciones históricas del modelo {principal_variant}, seleccionado automáticamente por desempeño.</div>',
+            unsafe_allow_html=True,
+        )
         render_seasonal_chart()
     
     # Nota explicativa
@@ -1255,44 +1388,3 @@ with tab3:
     * **Invierno (Días 150-250):** Hay un incremento moderado atribuido a sistemas frontales lluviosos y heladas que provocan voladuras de techos, inundaciones y emanaciones de gases (calefacción).
     * La **Predicción Base (línea roja)** asume siempre el mismo número fijo todos los días del año ({mean_real:.2f}), ignorando completamente esta estacionalidad tan marcada.
     """.format(mean_real=mean_real))
-
-with tab4:
-    st.markdown("### ¿Qué otras fuentes de datos y técnicas podemos evaluar para mejorar la proyección?")
-    
-    st.markdown("""
-    <div class="idea-card">
-        <div class="idea-title">
-            📢 Alertas de SENAPRED (ex-ONEMI) <span class="idea-tag">Viabilidad: Alta</span>
-        </div>
-        <div class="idea-desc">
-            SENAPRED emite alertas tempranas preventivas basadas en informes de CONAF o la DMC (Dirección Meteorológica de Chile) sobre altas temperaturas y sequedad. Incorporar el historial de alertas tempranas declaradas para la provincia de Concepción serviría como un potente activador de riesgo en el modelo.
-        </div>
-    </div>
-    
-    <div class="idea-card">
-        <div class="idea-title">
-            🚗 Scraping de Cuentas de Tránsito Costero <span class="idea-tag">Viabilidad: Media</span>
-        </div>
-        <div class="idea-desc">
-            Los choques vehiculares y colisiones múltiples son incidentes recurrentes en la Autopista Concepción-Talcahuano o la ruta costera interportuaria. Scrapear la cuenta de la Unidad de Control de Tránsito del Biobío (@MTTBiobio) ayudaría a anticipar accidentes vinculados con alta congestión o neblina.
-        </div>
-    </div>
-    
-    <div class="idea-card">
-        <div class="idea-title">
-            🌊 Altura de Mareas e Inundaciones Costeras <span class="idea-tag">Viabilidad: Media</span>
-        </div>
-        <div class="idea-desc">
-            Talcahuano tiene zonas bajas portuarias altamente vulnerables a marejadas e inundaciones por lluvias intensas. Incluir las alertas marítimas de marejadas (emitidas por la Armada) o la altura teórica de la marea diaria permitiría predecir con mayor precisión despachos por inundación estructural.
-        </div>
-    </div>
-    
-    <div class="idea-card">
-        <div class="idea-title">
-            🗓️ Calendario de Actividades Locales Masivas <span class="idea-tag">Viabilidad: Alta</span>
-        </div>
-        <div class="idea-desc">
-            La Base Naval de Talcahuano y los conciertos en el Parque Bicentenario congregan a miles de personas. Agregar variables binarias específicas para los días del REC (Rock en Conce), visitas masivas al monitor Huáscar en fines de semana largos, y eventos festivos de la Municipalidad aportaría un factor correctivo humano muy valioso.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)

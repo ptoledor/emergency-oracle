@@ -193,13 +193,20 @@ def main():
     df_daily['EVENTOS_rolling_std_7d'] = eventos_shifted.rolling(7, min_periods=1).std().fillna(0)
     df_daily['EVENTOS_rolling_max_7d'] = eventos_shifted.rolling(7, min_periods=1).max()
 
-    # --- Lluvia: lags y acumulados ---
-    df_daily['LLUVIA_lag_1'] = df_daily['LLUVIA'].shift(1)
-    df_daily['LLUVIA_lag_2'] = df_daily['LLUVIA'].shift(2)
-    df_daily['LLUVIA_lag_3'] = df_daily['LLUVIA'].shift(3)
-    df_daily['LLUVIA_accum_3d'] = df_daily['LLUVIA_lag_1'] + df_daily['LLUVIA_lag_2'] + df_daily['LLUVIA_lag_3']
+    # --- Lluvia: memoria hídrica multiescala, siempre excluyendo hoy ---
+    for lag in [1, 2, 3, 5, 7, 10, 14]:
+        df_daily[f'LLUVIA_LAG_{lag}D'] = df_daily['LLUVIA'].shift(lag)
+
     lluvia_shifted = df_daily['LLUVIA'].shift(1)
-    df_daily['LLUVIA_rolling_mean_7d'] = lluvia_shifted.rolling(7, min_periods=1).mean()
+    for window in [3, 7, 14, 30]:
+        rolling = lluvia_shifted.rolling(window, min_periods=window)
+        df_daily[f'LLUVIA_PROMEDIO_{window}D_PREV'] = rolling.mean()
+        df_daily[f'LLUVIA_TOTAL_{window}D_PREV'] = rolling.sum()
+        df_daily[f'LLUVIA_DESV_{window}D_PREV'] = rolling.std().fillna(0)
+        df_daily[f'LLUVIA_MAX_{window}D_PREV'] = rolling.max()
+        df_daily[f'DIAS_SECOS_{window}D_PREV'] = (
+            lluvia_shifted.le(0.1).rolling(window, min_periods=window).sum()
+        )
 
     # --- Lags de clima ---
     df_daily['VIENTO_MEDIO_lag_1'] = df_daily['VIENTO_MEDIO'].shift(1)
@@ -240,8 +247,9 @@ def main():
     # Limpiar filas con NaN de los shifts
     df_daily = df_daily.dropna().copy()
     
-    # Eliminar columnas auxiliares que no son features
-    drop_cols = ['FECHA_DT', 'DIA_DEL_ANO'] + cols_to_keep + ['N_OTROS']
+    # Conservar los conteos por categoría como objetivos para modelos
+    # especializados. Se excluyen explícitamente de los predictores al entrenar.
+    drop_cols = ['FECHA_DT', 'DIA_DEL_ANO']
     df_daily = df_daily.drop(columns=drop_cols)
     
     df_daily.to_csv(output_data_path, index=False, sep=';')

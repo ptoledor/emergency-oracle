@@ -6,6 +6,12 @@ import pickle
 import datetime
 import holidays
 import argparse
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 def get_events_and_categories_for_dates(csv_path, codes_path, dates):
     """
@@ -74,11 +80,12 @@ def main():
     parser = argparse.ArgumentParser(description="Predictor de emergencias para Bomberos de Talcahuano")
     parser.add_argument('--date', type=str, help="Fecha a predecir (YYYY-MM-DD). Por defecto predice el día siguiente al dataset.")
     parser.add_argument('--real-tomorrow', action='store_true', help="Fuerza a predecir el día de mañana real.")
-    parser.add_argument('--v3', action='store_true', help="Usa el Modelo Climático (sin lags ni rollings operativos).")
+    parser.add_argument('--v3', action='store_true', help="Alias compatible del Modelo Climático Aumentado.")
+    parser.add_argument('--inertia', action='store_true', help="Usa el spin-off con inercia de actividad.")
     args = parser.parse_args()
 
     # Cargar modelos según selección de versión
-    prefix = "_agnostic_augmented_v3" if args.v3 else "_agnostic_augmented"
+    prefix = "_agnostic_augmented" if args.inertia else "_climatic_augmented"
     with open(f"{models_dir}/regressor{prefix}.pkl", "rb") as f:
         reg_model = pickle.load(f)
     with open(f"{models_dir}/classifier{prefix}.pkl", "rb") as f:
@@ -103,7 +110,7 @@ def main():
         mode = "PROGRESIÓN DEL DATASET"
 
     print(f"=== PASO 4: Predicción de Emergencias (Modo: {mode}) ===")
-    print(f"Modelo en uso: {'Modelo Climático (Puro)' if args.v3 else 'Modelo Climático con Inercia de Actividad'}")
+    print(f"Modelo en uso: {'Spin-off con Inercia de Actividad' if args.inertia else 'Modelo Climático Aumentado (Principal)'}")
     print(f"Último dato en dataset local: {max_date_in_dataset}")
     print(f"Fecha a predecir: {target_date}")
 
@@ -168,17 +175,17 @@ def main():
         url = (f"https://api.open-meteo.com/v1/forecast?"
                f"latitude={lat}&longitude={lon}&"
                f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
-               f"timezone=America%2FSantiago&past_days=7&forecast_days=10")
+               f"timezone=America%2FSantiago&past_days=30&forecast_days=10")
         response = requests.get(url)
         if response.status_code != 200:
             raise RuntimeError(f"Error al descargar pronóstico: {response.text}")
         data_raw = response.json()['hourly']
     else:
         print("Obteniendo clima histórico desde Open-Meteo...")
-        # Consultamos el rango desde lag_7 hasta el target_date
+        # Consultamos 30 días previos para memoria hídrica multiescala.
         url = (f"https://archive-api.open-meteo.com/v1/archive?"
                f"latitude={lat}&longitude={lon}&"
-               f"start_date={(target_date - datetime.timedelta(days=7)).strftime('%Y-%m-%d')}&"
+               f"start_date={(target_date - datetime.timedelta(days=30)).strftime('%Y-%m-%d')}&"
                f"end_date={target_date_str}&"
                f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
                f"timezone=America%2FSantiago&format=json")
@@ -243,16 +250,22 @@ def main():
     lag_2_str = (target_date - datetime.timedelta(days=2)).strftime('%Y-%m-%d')
     lag_3_str = (target_date - datetime.timedelta(days=3)).strftime('%Y-%m-%d')
     
-    clima_data['LLUVIA_lag_1'] = float(df_clima.loc[lag_1_str]['LLUVIA'])
-    clima_data['LLUVIA_lag_2'] = float(df_clima.loc[lag_2_str]['LLUVIA'])
-    clima_data['LLUVIA_lag_3'] = float(df_clima.loc[lag_3_str]['LLUVIA'])
-    clima_data['LLUVIA_accum_3d'] = clima_data['LLUVIA_lag_1'] + clima_data['LLUVIA_lag_2'] + clima_data['LLUVIA_lag_3']
-    
-    lluvias_7d = [float(df_clima.loc[(target_date - datetime.timedelta(days=i)).strftime('%Y-%m-%d')]['LLUVIA']) for i in range(1, 8)]
-    clima_data['LLUVIA_rolling_mean_7d'] = np.mean(lluvias_7d)
-    
     clima_data['VIENTO_MEDIO_lag_1'] = float(df_clima.loc[lag_1_str]['VIENTO_MEDIO'])
     clima_data['HUM_MEDIA_lag_1'] = float(df_clima.loc[lag_1_str]['HUM_MEDIA'])
+
+    rain_history = {
+        i: float(df_clima.loc[(target_date - datetime.timedelta(days=i)).strftime('%Y-%m-%d')]['LLUVIA'])
+        for i in range(1, 31)
+    }
+    for lag in [1, 2, 3, 5, 7, 10, 14]:
+        clima_data[f'LLUVIA_LAG_{lag}D'] = rain_history[lag]
+    for window in [3, 7, 14, 30]:
+        rain_window = np.array([rain_history[i] for i in range(1, window + 1)])
+        clima_data[f'LLUVIA_PROMEDIO_{window}D_PREV'] = float(np.mean(rain_window))
+        clima_data[f'LLUVIA_TOTAL_{window}D_PREV'] = float(np.sum(rain_window))
+        clima_data[f'LLUVIA_DESV_{window}D_PREV'] = float(np.std(rain_window, ddof=1))
+        clima_data[f'LLUVIA_MAX_{window}D_PREV'] = float(np.max(rain_window))
+        clima_data[f'DIAS_SECOS_{window}D_PREV'] = float(np.sum(rain_window <= 0.1))
 
 
     print(f"Condiciones climáticas para la predicción:")
@@ -260,8 +273,8 @@ def main():
     print(f"  - Humedad Media: {clima_data['HUM_MEDIA']}%")
     print(f"  - Viento (Medio/Máx): {clima_data['VIENTO_MEDIO']} km/h / {clima_data['VIENTO_MAX']} km/h")
     print(f"  - Precipitación estimada: {clima_data['LLUVIA']} mm")
-    print(f"  - Lluvia acumulada últimos 3 días: {clima_data['LLUVIA_accum_3d']:.1f} mm")
-    print(f"  - Media móvil lluvia 7 días: {clima_data['LLUVIA_rolling_mean_7d']:.1f} mm")
+    print(f"  - Lluvia acumulada últimos 3 días: {clima_data['LLUVIA_TOTAL_3D_PREV']:.1f} mm")
+    print(f"  - Promedio lluvia últimos 7 días: {clima_data['LLUVIA_PROMEDIO_7D_PREV']:.1f} mm")
 
     # Características de calendario y feriado
     chile_holidays = holidays.Chile(years=[target_date.year])
@@ -321,11 +334,6 @@ def main():
         'EVENTOS_rolling_mean_7d': eventos_rolling_mean_7d,
         'EVENTOS_rolling_std_7d': eventos_rolling_std_7d,
         'EVENTOS_rolling_max_7d': eventos_rolling_max_7d,
-        'LLUVIA_lag_1': clima_data['LLUVIA_lag_1'],
-        'LLUVIA_lag_2': clima_data['LLUVIA_lag_2'],
-        'LLUVIA_lag_3': clima_data['LLUVIA_lag_3'],
-        'LLUVIA_accum_3d': clima_data['LLUVIA_accum_3d'],
-        'LLUVIA_rolling_mean_7d': clima_data['LLUVIA_rolling_mean_7d'],
         'VIENTO_MEDIO_lag_1': clima_data['VIENTO_MEDIO_lag_1'],
         'HUM_MEDIA_lag_1': clima_data['HUM_MEDIA_lag_1'],
         'MES': mes,
@@ -340,6 +348,16 @@ def main():
         'DANO_SIN': dano_sin,
         'DANO_COS': dano_cos
     }
+    weekday_columns = [
+        'DIA_LUNES', 'DIA_MARTES', 'DIA_MIERCOLES', 'DIA_JUEVES',
+        'DIA_VIERNES', 'DIA_SABADO', 'DIA_DOMINGO'
+    ]
+    for weekday, column in enumerate(weekday_columns):
+        features[column] = int(dia_semana == weekday)
+
+    for name, value in clima_data.items():
+        if name.startswith('LLUVIA_') or name.startswith('DIAS_SECOS_'):
+            features[name] = value
 
     # Convertir a DataFrame asegurando el orden de columnas del metadato
     X_pred = pd.DataFrame([features])[metadata['feature_cols']]
@@ -350,6 +368,7 @@ def main():
     
     # Lógica de umbral dinámico desde metadatos
     threshold = metadata.get('classification_threshold', 0.20)
+    reinforcement_threshold = metadata.get('operational_reinforcement_threshold', 0.50)
     pred_high = 1 if prob_high >= threshold else 0
 
     # Formatear el reporte de predicción en consola
@@ -361,17 +380,21 @@ def main():
     print(f" Probabilidad de día crítico (>7 eventos): {prob_high * 100:.1f}% (Umbral Alerta: {threshold * 100:.1f}%)")
     
     # Decisión de personal basada en la predicción combinada
-    se_requiere_personal = (pred_count >= 8.0) or (pred_high == 1)
+    se_requiere_personal = (
+        pred_count >= 8.0 or prob_high >= reinforcement_threshold
+    )
+    prealerta = pred_high == 1 and not se_requiere_personal
 
     print("-"*50)
     if se_requiere_personal:
-        print("  ESTADO DE ALERTA: ALTA DEMANDA PREVISTA")
-        print("  RECOMENDACIÓN: SÍ, SE REQUIERE PERSONAL ADICIONAL")
-        print("  (Se aconseja reforzar la guardia nocturna y unidades de rescate)")
+        print("  ORDEN OPERATIVA: REFORZAR")
+        print("  ACCIÓN: CONVOCAR DOTACIÓN ADICIONAL PARA MAÑANA")
+    elif prealerta:
+        print("  ORDEN OPERATIVA: PREALERTA")
+        print("  ACCIÓN: CONFIRMAR DISPONIBILIDAD Y MANTENER PERSONAL LOCALIZABLE")
     else:
-        print("  ESTADO DE ALERTA: ACTIVIDAD NORMAL PREVISTA")
-        print("  RECOMENDACIÓN: NO SE REQUIERE PERSONAL ADICIONAL")
-        print("  (Guardia ordinaria suficiente)")
+        print("  ORDEN OPERATIVA: GUARDIA NORMAL")
+        print("  ACCIÓN: MANTENER DOTACIÓN ORDINARIA")
     print("="*50 + "\n")
 
 if __name__ == "__main__":
