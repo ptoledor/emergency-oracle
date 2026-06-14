@@ -719,10 +719,29 @@ def render_seasonal_chart():
     # Agrupar por día del año y restringir a 365 días (excluyendo el día bisiesto 366 si existe)
     df_grouped = df.groupby('DIA_DEL_ANO')[['EVENTOS', y_pred_col]].mean().reset_index()
     df_grouped = df_grouped[df_grouped['DIA_DEL_ANO'] <= 365].copy()
+
+    event_mean = float(df['EVENTOS'].mean())
+    event_std = float(df['EVENTOS'].std())
+    reference_levels = [
+        ("Media", event_mean, "#22c55e", "solid"),
+        ("Media + 1 DV", event_mean + event_std, "#f59e0b", "dash"),
+        ("Media - 1 DV", max(0.0, event_mean - event_std), "#f59e0b", "dash"),
+        ("Media + 2 DV", event_mean + 2 * event_std, "#ef4444", "dot"),
+        ("Media - 2 DV (mín. 0)", max(0.0, event_mean - 2 * event_std), "#ef4444", "dot"),
+    ]
     
     # Calcular límites Y fijos antes del suavizado para evitar reescalado del eje
-    y_min = min(df_grouped['EVENTOS'].min(), df_grouped[y_pred_col].min())
-    y_max = max(df_grouped['EVENTOS'].max(), df_grouped[y_pred_col].max())
+    reference_values = [level for _, level, _, _ in reference_levels]
+    y_min = min(
+        df_grouped['EVENTOS'].min(),
+        df_grouped[y_pred_col].min(),
+        min(reference_values),
+    )
+    y_max = max(
+        df_grouped['EVENTOS'].max(),
+        df_grouped[y_pred_col].max(),
+        max(reference_values),
+    )
     ymin_fixed = max(0.0, float(y_min) - 0.5)
     ymax_fixed = float(y_max) + 0.5
 
@@ -763,15 +782,21 @@ def render_seasonal_chart():
         hovertemplate='Fecha: %{x|%d-%b}<br>Predicho: %{y:.2f} eventos<extra></extra>'
     ))
     
-    # Línea horizontal del error base / baseline prediction (media general de entrenamiento)
-    fig.add_trace(go.Scatter(
-        x=[df_grouped['FECHA_EJE'].iloc[0], df_grouped['FECHA_EJE'].iloc[-1]],
-        y=[mean_real, mean_real],
-        mode='lines',
-        name=f'Predicción Base (Media: {mean_real:.2f})',
-        line=dict(color='#ef4444', width=1.5, dash='dot'),
-        hoverinfo='skip'
-    ))
+    # Referencias históricas de media y desviación estándar.
+    for label, level, color, dash in reference_levels:
+        fig.add_trace(go.Scatter(
+            x=[df_grouped['FECHA_EJE'].iloc[0], df_grouped['FECHA_EJE'].iloc[-1]],
+            y=[level, level],
+            mode='lines',
+            name=f'{label}: {level:.2f}',
+            line=dict(
+                color=color,
+                width=1.8 if label == "Media" else 1.2,
+                dash=dash,
+            ),
+            opacity=0.9 if label == "Media" else 0.75,
+            hovertemplate=f'{label}: {level:.2f} eventos<extra></extra>',
+        ))
     
     # Línea vertical indicando el día actual (Hoy)
     today = datetime.date.today()
@@ -1386,5 +1411,5 @@ with tab3:
     **Análisis de la Curva:**
     * **Verano (Días 1-90 y 330-365):** Se observa el mayor pico histórico y predicho de emergencias (picos de 6.5 a 7 eventos al día). Esto se correlaciona con la temporada seca y el incremento de incendios forestales/pastizales.
     * **Invierno (Días 150-250):** Hay un incremento moderado atribuido a sistemas frontales lluviosos y heladas que provocan voladuras de techos, inundaciones y emanaciones de gases (calefacción).
-    * La **Predicción Base (línea roja)** asume siempre el mismo número fijo todos los días del año ({mean_real:.2f}), ignorando completamente esta estacionalidad tan marcada.
-    """.format(mean_real=mean_real))
+    * Las líneas horizontales muestran la **media histórica** y los niveles de **±1 y ±2 desviaciones estándar**, útiles para reconocer períodos estacionalmente inusuales.
+    """)
