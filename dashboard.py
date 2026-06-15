@@ -1030,8 +1030,8 @@ def render_historical_chart():
 tab1, tab2, tab3, tab4 = st.tabs([
     "🔮 Predicciones Siguientes 6 Días",
     "⚡ Importancia de Variables",
-    "📊 Curvas de Estacionalidad (365 días)",
     "📈 Histórico Real vs Predicho",
+    "📊 Curvas de Estacionalidad (365 días)",
 ])
 
 with tab1:
@@ -1561,6 +1561,17 @@ if False:  # Vista comparativa antigua, conservada temporalmente como referencia
 
 
 with tab3:
+    st.markdown('<div class="chart-anchor"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title">Histórico Real versus Predicho</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="chart-subtitle">Serie cronológica del modelo principal. '
+        'Los filtros de año, mes y día de la semana pueden combinarse libremente.</div>',
+        unsafe_allow_html=True,
+    )
+    render_historical_chart()
+
+
+with tab4:
     with st.container():
         principal_variant = {
             'full': 'Full',
@@ -1578,18 +1589,8 @@ with tab3:
     # Nota explicativa
     st.info("""
     **Análisis de la Curva:**
+    * La curva de **Eventos Reales** representa la media de los eventos históricos observados para cada día del año.
     * **Verano (Días 1-90 y 330-365):** Se observa el mayor pico histórico y predicho de emergencias (picos de 6.5 a 7 eventos al día). Esto se correlaciona con la temporada seca y el incremento de incendios forestales/pastizales.
     * **Invierno (Días 150-250):** Hay un incremento moderado atribuido a sistemas frontales lluviosos y heladas que provocan voladuras de techos, inundaciones y emanaciones de gases (calefacción).
     * Las líneas horizontales muestran la **media histórica global** y los niveles de **±1 desviación estándar**.
     """)
-
-
-with tab4:
-    st.markdown('<div class="chart-anchor"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="chart-title">Histórico Real versus Predicho</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="chart-subtitle">Serie cronológica del modelo principal. '
-        'Los filtros de año, mes y día de la semana pueden combinarse libremente.</div>',
-        unsafe_allow_html=True,
-    )
-    render_historical_chart()
