@@ -923,7 +923,7 @@ def render_historical_chart():
         "Suavizado visual:",
         min_value=1,
         max_value=30,
-        value=1,
+        value=7,
         step=1,
         help="El valor 1 muestra los datos diarios sin suavizado.",
         key="historical_smoothing_slider",
