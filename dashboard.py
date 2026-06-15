@@ -1140,6 +1140,119 @@ def render_historical_chart():
     )
 
 
+def render_distribution_charts():
+    def render_distribution_section(
+        values,
+        title,
+        subtitle,
+        stats,
+        color,
+        bin_size,
+        xaxis_title,
+    ):
+        values_min = float(values.min())
+        values_max = float(values.max())
+        values_mean = float(values.mean())
+        values_std = float(values.std())
+        stats_html = "".join(
+            f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem;">
+                <div style="font-size: .68rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">{label}</div>
+                <div style="font-size: 1.25rem; color: var(--text); font-weight: 800;">{value}</div>
+                <div style="font-size: .65rem; color: var(--text-muted);">{unit}</div>
+            </div>"""
+            for label, value, unit in stats
+        )
+        st.markdown(
+            f"""<div style="margin-top: 1.25rem; margin-bottom: .5rem;">
+                <div class="chart-title">{title}</div>
+                <div class="chart-subtitle">{subtitle}</div>
+                <div class="responsive-grid responsive-grid-4">{stats_html}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        normal_x = np.linspace(max(0, values_min - 1), values_max + 1, 300)
+        normal_y = (
+            np.exp(-0.5 * ((normal_x - values_mean) / values_std) ** 2)
+            / (values_std * np.sqrt(2 * np.pi))
+        )
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(
+            x=values,
+            histnorm='probability density',
+            xbins=dict(
+                start=values_min - (bin_size / 2),
+                end=values_max + (bin_size / 2),
+                size=bin_size,
+            ),
+            name=title,
+            marker=dict(color=color, line=dict(color=bg, width=1)),
+            opacity=0.72,
+            hovertemplate='%{x:.1f} llamadas<br>Densidad: %{y:.3f}<extra></extra>',
+        ))
+        fig.add_trace(go.Scatter(
+            x=normal_x,
+            y=normal_y,
+            mode='lines',
+            name='Campana normal de referencia',
+            line=dict(color='#f59e0b', width=3),
+            hovertemplate='%{x:.1f} llamadas<br>Densidad normal: %{y:.3f}<extra></extra>',
+        ))
+        fig.add_vline(
+            x=values_mean,
+            line_color='#ef4444',
+            line_dash='dash',
+            line_width=1.5,
+        )
+        layout = PLOT_LAYOUT.copy()
+        layout['margin'] = dict(l=40, r=20, t=20, b=45)
+        layout['barmode'] = 'overlay'
+        fig.update_layout(
+            **layout,
+            xaxis_title=xaxis_title,
+            yaxis_title='Densidad',
+            xaxis_range=[0, 13],
+            height=330,
+        )
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
+
+    historical_events = df['EVENTOS'].astype(float)
+    render_distribution_section(
+        historical_events,
+        "Distribución Histórica de Llamados Diarios",
+        "Frecuencia observada y campana normal de referencia.",
+        [
+            ("Mínimo histórico", f"{historical_events.min():.0f}", "llamadas/día"),
+            ("Máximo histórico", f"{historical_events.max():.0f}", "llamadas/día"),
+            ("Media histórica", f"{historical_events.mean():.2f}", "llamadas/día"),
+            ("Desviación estándar", f"{historical_events.std():.2f}", "llamadas"),
+        ],
+        "#3b82f6",
+        1.0,
+        "Llamados por día",
+    )
+
+    historical_predictions = df['PRED_EVENTOS_PRIMARY'].astype(float)
+    render_distribution_section(
+        historical_predictions,
+        "Distribución de Predicciones Históricas · Modelo Optimizado",
+        "Predicciones generadas sobre el histórico y campana normal de referencia.",
+        [
+            ("Mínimo predicho", f"{historical_predictions.min():.2f}", "llamadas/día"),
+            ("Máximo predicho", f"{historical_predictions.max():.2f}", "llamadas/día"),
+            ("Media predicha", f"{historical_predictions.mean():.2f}", "llamadas/día"),
+            ("Desviación estándar", f"{historical_predictions.std():.2f}", "llamadas"),
+        ],
+        "#8b5cf6",
+        0.5,
+        "Llamados predichos por día",
+    )
+
+
 # 12. Pestañas de navegación
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🔮 Predicciones Siguientes 6 Días",
@@ -1150,14 +1263,6 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 with tab1:
-    st.markdown("""
-    <div style="margin-bottom: 0.5rem;">
-        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem;">
-            Predicción recursiva diaria en tiempo real para planificar guardias preventivas y dotación de personal comparando los modelos.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
     is_historical_pred = False
     
     # Día actual según la zona horaria operacional del proyecto.
@@ -1181,7 +1286,18 @@ with tab1:
             pred_results_base = pred_results_v3 = pred_results
         
     if pred_results is not None:
-        st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario</h5></div>', unsafe_allow_html=True)
+        historical_mean = float(df['EVENTOS'].astype(float).mean())
+        st.markdown(
+            f"""<div class="responsive-grid" style="grid-template-columns: minmax(0, 260px); margin-bottom: 1rem;">
+                <div class="metric-card">
+                    <div class="metric-label">Media histórica</div>
+                    <div class="metric-value">{historical_mean:.2f}</div>
+                    <div style="font-size: .68rem; color: var(--text-muted);">llamadas por día</div>
+                </div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario de Emergencias Talcahuano</h5></div>', unsafe_allow_html=True)
         
         historical_predictions = df['PRED_EVENTOS_PRIMARY'].astype(float)
         activity_low_threshold = float(historical_predictions.quantile(0.30))
@@ -1221,160 +1337,6 @@ with tab1:
                 {''.join(forecast_cards)}
             </div>""",
             unsafe_allow_html=True,
-        )
-
-        historical_events = df['EVENTOS'].astype(float)
-        events_min = historical_events.min()
-        events_max = historical_events.max()
-        events_mean = historical_events.mean()
-        events_std = historical_events.std()
-        stats_cards = [
-            ("Mínimo histórico", f"{events_min:.0f}", "llamadas/día"),
-            ("Máximo histórico", f"{events_max:.0f}", "llamadas/día"),
-            ("Media histórica", f"{events_mean:.2f}", "llamadas/día"),
-            ("Desviación estándar", f"{events_std:.2f}", "llamadas"),
-        ]
-        stats_html = "".join(
-            f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem;">
-                <div style="font-size: .68rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">{label}</div>
-                <div style="font-size: 1.25rem; color: var(--text); font-weight: 800;">{value}</div>
-                <div style="font-size: .65rem; color: var(--text-muted);">{unit}</div>
-            </div>"""
-            for label, value, unit in stats_cards
-        )
-        st.markdown(
-            f"""<div style="margin-top: 1.25rem; margin-bottom: .5rem;">
-                <div class="chart-title">Distribución Histórica de Llamados Diarios</div>
-                <div class="chart-subtitle">Frecuencia observada y campana normal de referencia.</div>
-                <div class="responsive-grid responsive-grid-4">{stats_html}</div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
-
-        normal_x = np.linspace(
-            max(0, events_min - 1),
-            events_max + 1,
-            300,
-        )
-        normal_y = (
-            np.exp(-0.5 * ((normal_x - events_mean) / events_std) ** 2)
-            / (events_std * np.sqrt(2 * np.pi))
-        )
-        fig_distribution = go.Figure()
-        fig_distribution.add_trace(go.Histogram(
-            x=historical_events,
-            histnorm='probability density',
-            xbins=dict(start=events_min - 0.5, end=events_max + 0.5, size=1),
-            name='Frecuencia histórica',
-            marker=dict(color='#3b82f6', line=dict(color=bg, width=1)),
-            opacity=0.72,
-            hovertemplate='%{x:.0f} llamadas<br>Densidad: %{y:.3f}<extra></extra>',
-        ))
-        fig_distribution.add_trace(go.Scatter(
-            x=normal_x,
-            y=normal_y,
-            mode='lines',
-            name='Campana normal de referencia',
-            line=dict(color='#f59e0b', width=3),
-            hovertemplate='%{x:.1f} llamadas<br>Densidad normal: %{y:.3f}<extra></extra>',
-        ))
-        fig_distribution.add_vline(
-            x=events_mean,
-            line_color='#ef4444',
-            line_dash='dash',
-            line_width=1.5,
-        )
-        distribution_layout = PLOT_LAYOUT.copy()
-        distribution_layout['margin'] = dict(l=40, r=20, t=20, b=45)
-        distribution_layout['barmode'] = 'overlay'
-        fig_distribution.update_layout(
-            **distribution_layout,
-            xaxis_title='Llamados por día',
-            yaxis_title='Densidad',
-            xaxis_range=[0, 13],
-            height=330,
-        )
-        st.plotly_chart(
-            fig_distribution,
-            use_container_width=True,
-            config={"displayModeBar": False},
-        )
-
-        historical_predictions = df['PRED_EVENTOS_PRIMARY'].astype(float)
-        pred_min = historical_predictions.min()
-        pred_max = historical_predictions.max()
-        pred_mean = historical_predictions.mean()
-        pred_std = historical_predictions.std()
-        prediction_stats = [
-            ("Mínimo predicho", f"{pred_min:.2f}", "llamadas/día"),
-            ("Máximo predicho", f"{pred_max:.2f}", "llamadas/día"),
-            ("Media predicha", f"{pred_mean:.2f}", "llamadas/día"),
-            ("Desviación estándar", f"{pred_std:.2f}", "llamadas"),
-        ]
-        prediction_stats_html = "".join(
-            f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem;">
-                <div style="font-size: .68rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">{label}</div>
-                <div style="font-size: 1.25rem; color: var(--text); font-weight: 800;">{value}</div>
-                <div style="font-size: .65rem; color: var(--text-muted);">{unit}</div>
-            </div>"""
-            for label, value, unit in prediction_stats
-        )
-        st.markdown(
-            f"""<div style="margin-top: 1.25rem; margin-bottom: .5rem;">
-                <div class="chart-title">Distribución de Predicciones Históricas · Modelo Optimizado</div>
-                <div class="chart-subtitle">Predicciones generadas sobre el histórico y campana normal de referencia.</div>
-                <div class="responsive-grid responsive-grid-4">{prediction_stats_html}</div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
-
-        pred_normal_x = np.linspace(
-            max(0, pred_min - 1),
-            pred_max + 1,
-            300,
-        )
-        pred_normal_y = (
-            np.exp(-0.5 * ((pred_normal_x - pred_mean) / pred_std) ** 2)
-            / (pred_std * np.sqrt(2 * np.pi))
-        )
-        fig_prediction_distribution = go.Figure()
-        fig_prediction_distribution.add_trace(go.Histogram(
-            x=historical_predictions,
-            histnorm='probability density',
-            xbins=dict(start=0, end=np.ceil(pred_max) + 0.5, size=0.5),
-            name='Predicciones históricas',
-            marker=dict(color='#8b5cf6', line=dict(color=bg, width=1)),
-            opacity=0.72,
-            hovertemplate='%{x:.1f} llamadas<br>Densidad: %{y:.3f}<extra></extra>',
-        ))
-        fig_prediction_distribution.add_trace(go.Scatter(
-            x=pred_normal_x,
-            y=pred_normal_y,
-            mode='lines',
-            name='Campana normal de referencia',
-            line=dict(color='#f59e0b', width=3),
-            hovertemplate='%{x:.1f} llamadas<br>Densidad normal: %{y:.3f}<extra></extra>',
-        ))
-        fig_prediction_distribution.add_vline(
-            x=pred_mean,
-            line_color='#ef4444',
-            line_dash='dash',
-            line_width=1.5,
-        )
-        prediction_distribution_layout = PLOT_LAYOUT.copy()
-        prediction_distribution_layout['margin'] = dict(l=40, r=20, t=20, b=45)
-        prediction_distribution_layout['barmode'] = 'overlay'
-        fig_prediction_distribution.update_layout(
-            **prediction_distribution_layout,
-            xaxis_title='Llamados predichos por día',
-            yaxis_title='Densidad',
-            xaxis_range=[0, 13],
-            height=330,
-        )
-        st.plotly_chart(
-            fig_prediction_distribution,
-            use_container_width=True,
-            config={"displayModeBar": False},
         )
                 
 def render_model_metrics(metadata, title, color):
@@ -1694,6 +1656,7 @@ with tab3:
         unsafe_allow_html=True,
     )
     render_historical_chart()
+    render_distribution_charts()
 
 
 with tab4:
