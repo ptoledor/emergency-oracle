@@ -726,8 +726,6 @@ def render_seasonal_chart():
         ("Media", event_mean, "#22c55e", "solid"),
         ("Media + 1 DV", event_mean + event_std, "#f59e0b", "dash"),
         ("Media - 1 DV", max(0.0, event_mean - event_std), "#f59e0b", "dash"),
-        ("Media + 2 DV", event_mean + 2 * event_std, "#ef4444", "dot"),
-        ("Media - 2 DV (mín. 0)", max(0.0, event_mean - 2 * event_std), "#ef4444", "dot"),
     ]
     
     # Calcular límites Y fijos antes del suavizado para evitar reescalado del eje
@@ -919,9 +917,9 @@ def render_historical_chart():
         "Suavizado visual:",
         min_value=1,
         max_value=30,
-        value=7,
+        value=1,
         step=1,
-        help="Las métricas siempre se calculan con los valores diarios sin suavizar.",
+        help="El valor 1 muestra los datos diarios sin suavizado.",
         key="historical_smoothing_slider",
     )
 
@@ -931,23 +929,12 @@ def render_historical_chart():
 
     real = historical['EVENTOS'].astype(float)
     predicted = historical['PRED_EVENTOS_PRIMARY'].astype(float)
-    residual = real - predicted
-    mae = float(np.mean(np.abs(residual)))
-    rmse = float(np.sqrt(np.mean(residual ** 2)))
-    r2_denominator = float(np.sum((real - real.mean()) ** 2))
-    r2 = (
-        1.0 - float(np.sum(residual ** 2)) / r2_denominator
-        if r2_denominator > 0
-        else 0.0
-    )
-    bias = float(predicted.mean() - real.mean())
 
     historical_metrics = [
         ("Días", f"{len(historical):,}", "observaciones"),
-        ("MAE", f"{mae:.2f}", "llamadas"),
-        ("RMSE", f"{rmse:.2f}", "llamadas"),
-        ("R²", f"{r2 * 100:.1f}%", "variación explicada"),
-        ("Sesgo", f"{bias:+.2f}", "predicho − real"),
+        ("Media real", f"{real.mean():.2f}", "llamadas/día"),
+        ("Desv. real", f"{real.std():.2f}", "llamadas"),
+        ("Media predicha", f"{predicted.mean():.2f}", "llamadas/día"),
     ]
     historical_metrics_html = "".join(
         f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem;">
@@ -958,7 +945,7 @@ def render_historical_chart():
         for label, value, unit in historical_metrics
     )
     st.markdown(
-        f"""<div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .75rem; margin-bottom: 1rem;">
+        f"""<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; margin-bottom: 1rem;">
             {historical_metrics_html}
         </div>""",
         unsafe_allow_html=True,
@@ -991,19 +978,12 @@ def render_historical_chart():
         hovertemplate='%{x|%d-%m-%Y}<br>Predicho: %{y:.2f}<extra></extra>',
     ))
 
-    filtered_mean = float(real.mean())
-    filtered_std = float(real.std()) if len(real) > 1 else 0.0
+    global_mean = float(df['EVENTOS'].mean())
+    global_std = float(df['EVENTOS'].std())
     historical_reference_levels = [
-        ("Media", filtered_mean, "#22c55e", "solid"),
-        ("Media + 1 DV", filtered_mean + filtered_std, "#f59e0b", "dash"),
-        ("Media - 1 DV", max(0.0, filtered_mean - filtered_std), "#f59e0b", "dash"),
-        ("Media + 2 DV", filtered_mean + 2 * filtered_std, "#ef4444", "dot"),
-        (
-            "Media - 2 DV (mín. 0)",
-            max(0.0, filtered_mean - 2 * filtered_std),
-            "#ef4444",
-            "dot",
-        ),
+        ("Media global", global_mean, "#22c55e", "solid"),
+        ("Media global + 1 DV", global_mean + global_std, "#f59e0b", "dash"),
+        ("Media global - 1 DV", max(0.0, global_mean - global_std), "#f59e0b", "dash"),
     ]
     for label, level, color, dash in historical_reference_levels:
         fig.add_trace(go.Scatter(
@@ -1013,10 +993,10 @@ def render_historical_chart():
             name=f'{label}: {level:.2f}',
             line=dict(
                 color=color,
-                width=1.8 if label == "Media" else 1.2,
+                width=1.8 if label == "Media global" else 1.2,
                 dash=dash,
             ),
-            opacity=0.9 if label == "Media" else 0.75,
+            opacity=0.9 if label == "Media global" else 0.75,
             hovertemplate=f'{label}: {level:.2f} llamadas<extra></extra>',
         ))
 
@@ -1600,7 +1580,7 @@ with tab3:
     **Análisis de la Curva:**
     * **Verano (Días 1-90 y 330-365):** Se observa el mayor pico histórico y predicho de emergencias (picos de 6.5 a 7 eventos al día). Esto se correlaciona con la temporada seca y el incremento de incendios forestales/pastizales.
     * **Invierno (Días 150-250):** Hay un incremento moderado atribuido a sistemas frontales lluviosos y heladas que provocan voladuras de techos, inundaciones y emanaciones de gases (calefacción).
-    * Las líneas horizontales muestran la **media histórica** y los niveles de **±1 y ±2 desviaciones estándar**, útiles para reconocer períodos estacionalmente inusuales.
+    * Las líneas horizontales muestran la **media histórica global** y los niveles de **±1 desviación estándar**.
     """)
 
 
