@@ -23,6 +23,8 @@ base_dir = Path(__file__).resolve().parent
 data_path = base_dir / "02_data" / "augmented_emergency_data.csv"
 models_dir = base_dir / "03_model" / "saved_models"
 PROJECT_TIMEZONE = ZoneInfo("America/Santiago")
+PREALERT_THRESHOLD = 0.30
+ALERT_THRESHOLD = 0.50
 
 
 def project_today():
@@ -171,6 +173,9 @@ css = f"""
     }}
     .delta-up {{ color: var(--green); background: var(--green-muted); }}
     .delta-down {{ color: var(--red); background: var(--red-muted); }}
+    .activity-low {{ color: #3b82f6; background: rgba(59, 130, 246, 0.14); }}
+    .activity-normal {{ color: var(--green); background: var(--green-muted); }}
+    .activity-high {{ color: #f59e0b; background: rgba(245, 158, 11, 0.14); }}
     
     /* Contenedores de gráficos basados en st.container */
     div[data-testid="stVerticalBlock"]:has(.chart-anchor):not(:has(div[data-testid="stVerticalBlock"])),
@@ -267,6 +272,100 @@ css = f"""
         color: var(--text-muted);
         margin-left: auto;
     }}
+
+    .responsive-grid {{
+        display: grid;
+        gap: 0.75rem;
+        width: 100%;
+    }}
+    .responsive-grid-4 {{
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }}
+    .responsive-grid-6 {{
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+    }}
+
+    @media (max-width: 768px) {{
+        .block-container {{
+            padding: 0.75rem 0.65rem 1.5rem !important;
+        }}
+
+        .header-container {{
+            margin-bottom: 0.85rem;
+            padding-bottom: 0.55rem;
+        }}
+        .brand-name {{
+            font-size: 1rem;
+            flex-wrap: wrap;
+            gap: 4px;
+        }}
+        .brand-sub {{
+            display: block;
+            width: 100%;
+            margin-left: 0;
+            font-size: 0.66rem;
+        }}
+
+        [data-baseweb="tab-list"] {{
+            display: flex !important;
+            flex-wrap: nowrap !important;
+            overflow-x: auto !important;
+            scrollbar-width: thin;
+            margin-bottom: 0.9rem !important;
+        }}
+        button[data-baseweb="tab"] {{
+            flex: 0 0 auto !important;
+            white-space: nowrap !important;
+            font-size: 0.74rem !important;
+            padding: 0.48rem 0.7rem !important;
+        }}
+
+        .responsive-grid-6,
+        .responsive-grid-4 {{
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }}
+
+        div[data-testid="stVerticalBlock"]:has(.chart-anchor):not(:has(div[data-testid="stVerticalBlock"])),
+        div[data-testid="stVerticalBlock"]:has(.prediction-anchor):not(:has(div[data-testid="stVerticalBlock"])),
+        div[data-testid="stVerticalBlock"]:has(.importance-anchor):not(:has(div[data-testid="stVerticalBlock"])) {{
+            min-height: 0 !important;
+            padding: 0.8rem !important;
+            margin-bottom: 0.8rem !important;
+        }}
+
+        [data-testid="stHorizontalBlock"] {{
+            flex-direction: column !important;
+            gap: 0.7rem !important;
+        }}
+        [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
+            width: 100% !important;
+            flex: 1 1 100% !important;
+            min-width: 0 !important;
+        }}
+
+        .chart-title {{
+            font-size: 0.88rem;
+        }}
+        .chart-subtitle {{
+            margin-bottom: 0.8rem;
+        }}
+        .modebar-container {{
+            display: none !important;
+        }}
+    }}
+
+    @media (max-width: 420px) {{
+        .responsive-grid-6 {{
+            grid-template-columns: 1fr;
+        }}
+        .metric-card {{
+            min-height: 84px;
+            padding: 0.9rem 1rem;
+        }}
+        .metric-value {{
+            font-size: 1.5rem;
+        }}
+    }}
 </style>
 """
 st.markdown(css, unsafe_allow_html=True)
@@ -287,12 +386,21 @@ def metric_card(label, value, delta=None, delta_type="up"):
     """, unsafe_allow_html=True)
 
 
-def operational_decision(prediction, watch_threshold, reinforcement_threshold):
-    if prediction['Predicción'] >= 8.0 or prediction['Prob_Alta'] >= reinforcement_threshold:
-        return "REFORZAR", "Convocar dotación adicional para hoy", "delta-down"
-    if prediction['Prob_Alta'] >= watch_threshold:
+def operational_decision(prediction):
+    if prediction['Prob_Alta'] >= ALERT_THRESHOLD:
+        return "ALERTA", "Preparar refuerzo preventivo", "delta-down"
+    if prediction['Prob_Alta'] >= PREALERT_THRESHOLD:
         return "PREALERTA", "Confirmar disponibilidad y mantener personal localizable", "delta-down"
-    return "GUARDIA NORMAL", "Mantener dotación ordinaria", "delta-up"
+    return "SIN ALERTA", "Mantener operación habitual", "delta-up"
+
+
+def activity_level(predicted_events, low_threshold, high_threshold):
+    if predicted_events < low_threshold:
+        return "ACTIVIDAD BAJA", "activity-low"
+    if predicted_events < high_threshold:
+        return "ACTIVIDAD HABITUAL", "activity-normal"
+    return "ACTIVIDAD ALTA", "activity-high"
+
 
 # 7. Carga de datos y modelos
 @st.cache_data
@@ -951,7 +1059,7 @@ def render_historical_chart():
         for label, value, unit in historical_metrics
     )
     st.markdown(
-        f"""<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; margin-bottom: 1rem;">
+        f"""<div class="responsive-grid responsive-grid-4" style="margin-bottom: 1rem;">
             {historical_metrics_html}
         </div>""",
         unsafe_allow_html=True,
@@ -1073,15 +1181,19 @@ with tab1:
             pred_results_base = pred_results_v3 = pred_results
         
     if pred_results is not None:
-        reinforcement_threshold = float(
-            metadata_v3.get('operational_reinforcement_threshold', 0.50)
-        )
         st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario</h5></div>', unsafe_allow_html=True)
         
+        historical_predictions = df['PRED_EVENTOS_PRIMARY'].astype(float)
+        activity_low_threshold = float(historical_predictions.quantile(0.30))
+        activity_high_threshold = float(historical_predictions.quantile(0.70))
+
         forecast_cards = []
         for p in pred_results:
-            badge_text, _, badge_class = operational_decision(
-                p, clf_threshold, reinforcement_threshold
+            badge_text, _, badge_class = operational_decision(p)
+            activity_text, activity_class = activity_level(
+                p['Predicción'],
+                activity_low_threshold,
+                activity_high_threshold,
             )
             forecast_cards.append(
                 f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
@@ -1089,7 +1201,10 @@ with tab1:
                     <div style="font-size: 0.8rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem;">{p['Fecha'].strftime('%d-%b')}</div>
                     <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Predicción']:.1f}</div>
                     <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.5rem;">llamadas</div>
-                    <div class="metric-delta {badge_class}" style="margin: 0 auto 0.6rem; font-size: 0.62rem; padding: 2px 6px;">{badge_text}</div>
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 0.35rem; margin-bottom: 0.6rem;">
+                        <div class="metric-delta {activity_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{activity_text}</div>
+                        <div class="metric-delta {badge_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{badge_text}</div>
+                    </div>
                     <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.5;" />
                     <div style="font-size: 0.68rem; color: var(--text-muted); line-height: 1.4; text-align: left;">
                         🌡️ Máx: <strong>{p['Temp_Max']:.1f}°C</strong><br/>
@@ -1102,7 +1217,7 @@ with tab1:
                 </div>"""
             )
         st.markdown(
-            f"""<div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.75rem; width: 100%;">
+            f"""<div class="responsive-grid responsive-grid-6">
                 {''.join(forecast_cards)}
             </div>""",
             unsafe_allow_html=True,
@@ -1131,7 +1246,7 @@ with tab1:
             f"""<div style="margin-top: 1.25rem; margin-bottom: .5rem;">
                 <div class="chart-title">Distribución Histórica de Llamados Diarios</div>
                 <div class="chart-subtitle">Frecuencia observada y campana normal de referencia.</div>
-                <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem;">{stats_html}</div>
+                <div class="responsive-grid responsive-grid-4">{stats_html}</div>
             </div>""",
             unsafe_allow_html=True,
         )
@@ -1208,7 +1323,7 @@ with tab1:
             f"""<div style="margin-top: 1.25rem; margin-bottom: .5rem;">
                 <div class="chart-title">Distribución de Predicciones Históricas · Modelo Optimizado</div>
                 <div class="chart-subtitle">Predicciones generadas sobre el histórico y campana normal de referencia.</div>
-                <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem;">{prediction_stats_html}</div>
+                <div class="responsive-grid responsive-grid-4">{prediction_stats_html}</div>
             </div>""",
             unsafe_allow_html=True,
         )
@@ -1298,16 +1413,32 @@ def render_importance_chart(df_importance, title, color):
         marker=dict(color=color),
         hovertemplate='%{y}: %{x:.2f}%<extra></extra>',
         text=[f"{value:.1f}%" for value in shown['Importance'] * 100],
-        textposition='outside',
+        textposition='auto',
+        textfont=dict(size=9),
+        cliponaxis=False,
     ))
     max_value = max(shown['Importance'] * 100)
     layout = PLOT_LAYOUT.copy()
-    layout['xaxis'] = dict(**PLOT_LAYOUT['xaxis'], range=[0, max_value * 1.22])
+    layout['xaxis'] = dict(
+        **PLOT_LAYOUT['xaxis'],
+        range=[0, max_value * 1.28],
+        automargin=True,
+    )
+    layout['yaxis'] = dict(PLOT_LAYOUT['yaxis'])
+    layout['yaxis'].update(
+        automargin=True,
+        tickfont=dict(size=9),
+    )
+    layout['margin'] = dict(l=10, r=15, t=55, b=45)
     fig.update_layout(
         **layout,
-        title=dict(text=title, x=0.5, font=dict(size=14)),
+        title=dict(
+            text=title.replace(" · ", "<br>"),
+            x=0.5,
+            xanchor="center",
+            font=dict(size=12),
+        ),
         xaxis_title="Importancia Relativa (%)",
-        yaxis_title="Variables",
         height=620,
     )
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
@@ -1420,7 +1551,7 @@ if False:  # Vista comparativa antigua, conservada temporalmente como referencia
             </ul>
             <p style="margin-top: 1rem;"><strong>2. Métricas del Modelo de Clasificación (¿Será hoy un día crítico de alta demanda &gt;7 llamadas?):</strong></p>
             <ul>
-                <li style="margin-bottom: 0.5rem;"><strong>Umbral de Clasificación Calibrado:</strong> El porcentaje mínimo de riesgo requerido para disparar el aviso de <code>🚨 ALERTA</code>. Usar el 50% por defecto ignoraría los días críticos por ser escasos (~15% de los días). Calibrar el umbral (a 0.20 y 0.15) maximiza la detección preventiva controlando las falsas alarmas.</li>
+                <li style="margin-bottom: 0.5rem;"><strong>Umbral de Clasificación Calibrado:</strong> Referencia técnica usada para evaluar el clasificador. La comunicación operacional utiliza cortes fijos: <strong>Prealerta desde 30%</strong> y <strong>Alerta desde 50%</strong>.</li>
                 <li style="margin-bottom: 0.5rem;"><strong>Exactitud (Accuracy):</strong> El porcentaje de días totales (tanto normales como críticos) en los que el clasificador del modelo acertó el estado de alerta correcto.</li>
                 <li style="margin-bottom: 0.5rem;"><strong>Precisión (Precision):</strong> De todos los días en los que el modelo emitió una alerta de día crítico, cuántos lo fueron realmente. Un 25% indica que 1 de cada 4 alertas preventivas es un día crítico real (tasa óptima y segura para logística de bomberos).</li>
                 <li style="margin-bottom: 0.5rem;"><strong>Sensibilidad (Recall):</strong> Qué porcentaje de los días críticos reales que ocurrieron logró anticipar y alertar el modelo. Un 70.4% significa que el modelo capta y advierte con éxito el 70% de las situaciones críticas reales.</li>
