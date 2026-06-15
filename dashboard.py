@@ -777,7 +777,7 @@ def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
 st.markdown(f"""
 <div class="header-container">
     <div class="brand-name">
-        🧯 Central CBT Oracle <span class="brand-sub">| Panel de Diagnóstico Estacional v2.1</span>
+        🧯 Emergencias CBT
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -1297,7 +1297,7 @@ with tab1:
             </div>""",
             unsafe_allow_html=True,
         )
-        st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario de Emergencias Talcahuano</h5></div>', unsafe_allow_html=True)
+        st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario de Llamados Talcahuano</h5></div>', unsafe_allow_html=True)
         
         historical_predictions = df['PRED_EVENTOS_PRIMARY'].astype(float)
         activity_low_threshold = float(historical_predictions.quantile(0.30))
