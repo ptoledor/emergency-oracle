@@ -858,11 +858,127 @@ def render_seasonal_chart():
         }
     )
 
+
+@st.fragment
+def render_historical_chart():
+    range_label = st.selectbox(
+        "Período histórico:",
+        ["Todo el histórico", "Últimos 24 meses", "Últimos 12 meses", "Bloque final de prueba"],
+        key="historical_range_selector",
+    )
+    smoothing_days = st.slider(
+        "Suavizado visual:",
+        min_value=1,
+        max_value=30,
+        value=7,
+        step=1,
+        help="Las métricas siempre se calculan con los valores diarios sin suavizar.",
+        key="historical_smoothing_slider",
+    )
+
+    historical = df[
+        ['FECHA_DT', 'EVENTOS', 'PRED_EVENTOS_PRIMARY']
+    ].sort_values('FECHA_DT').copy()
+    if range_label == "Últimos 24 meses":
+        historical = historical[
+            historical['FECHA_DT'] >= historical['FECHA_DT'].max() - pd.DateOffset(months=24)
+        ]
+    elif range_label == "Últimos 12 meses":
+        historical = historical[
+            historical['FECHA_DT'] >= historical['FECHA_DT'].max() - pd.DateOffset(months=12)
+        ]
+    elif range_label == "Bloque final de prueba":
+        historical = historical.iloc[int(len(historical) * 0.8):]
+
+    real = historical['EVENTOS'].astype(float)
+    predicted = historical['PRED_EVENTOS_PRIMARY'].astype(float)
+    residual = real - predicted
+    mae = float(np.mean(np.abs(residual)))
+    rmse = float(np.sqrt(np.mean(residual ** 2)))
+    r2_denominator = float(np.sum((real - real.mean()) ** 2))
+    r2 = (
+        1.0 - float(np.sum(residual ** 2)) / r2_denominator
+        if r2_denominator > 0
+        else 0.0
+    )
+    bias = float(predicted.mean() - real.mean())
+
+    historical_metrics = [
+        ("Días", f"{len(historical):,}", "observaciones"),
+        ("MAE", f"{mae:.2f}", "llamadas"),
+        ("RMSE", f"{rmse:.2f}", "llamadas"),
+        ("R²", f"{r2 * 100:.1f}%", "variación explicada"),
+        ("Sesgo", f"{bias:+.2f}", "predicho − real"),
+    ]
+    historical_metrics_html = "".join(
+        f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem;">
+            <div style="font-size: .68rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">{label}</div>
+            <div style="font-size: 1.25rem; color: var(--text); font-weight: 800;">{value}</div>
+            <div style="font-size: .65rem; color: var(--text-muted);">{unit}</div>
+        </div>"""
+        for label, value, unit in historical_metrics
+    )
+    st.markdown(
+        f"""<div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .75rem; margin-bottom: 1rem;">
+            {historical_metrics_html}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    if smoothing_days > 1:
+        real_plot = real.rolling(smoothing_days, min_periods=1, center=True).mean()
+        predicted_plot = predicted.rolling(smoothing_days, min_periods=1, center=True).mean()
+        suffix = f" · media móvil {smoothing_days}d"
+    else:
+        real_plot = real
+        predicted_plot = predicted
+        suffix = " · diario"
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=historical['FECHA_DT'],
+        y=real_plot,
+        mode='lines',
+        name=f'Real{suffix}',
+        line=dict(color='#fafafa' if IS_DARK else '#09090b', width=1.8),
+        hovertemplate='%{x|%d-%m-%Y}<br>Real: %{y:.2f}<extra></extra>',
+    ))
+    fig.add_trace(go.Scatter(
+        x=historical['FECHA_DT'],
+        y=predicted_plot,
+        mode='lines',
+        name=f'Predicho{suffix}',
+        line=dict(color='#3b82f6', width=2, dash='dash'),
+        hovertemplate='%{x|%d-%m-%Y}<br>Predicho: %{y:.2f}<extra></extra>',
+    ))
+
+    layout = PLOT_LAYOUT.copy()
+    layout['xaxis'] = dict(
+        **PLOT_LAYOUT['xaxis'],
+        rangeslider=dict(visible=True, thickness=0.08),
+        fixedrange=False,
+    )
+    layout['yaxis'] = dict(**PLOT_LAYOUT['yaxis'], range=[0, 13], fixedrange=True)
+    layout['margin'] = dict(l=45, r=20, t=20, b=55)
+    fig.update_layout(
+        **layout,
+        xaxis_title="Fecha",
+        yaxis_title="Llamados diarios",
+        height=560,
+    )
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={"displayModeBar": True, "displaylogo": False},
+    )
+
+
 # 12. Pestañas de navegación
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "🔮 Predicciones Siguientes 6 Días",
     "⚡ Importancia de Variables",
-    "📊 Curvas de Estacionalidad (365 días)"
+    "📊 Curvas de Estacionalidad (365 días)",
+    "📈 Histórico Real vs Predicho",
 ])
 
 with tab1:
@@ -1413,3 +1529,14 @@ with tab3:
     * **Invierno (Días 150-250):** Hay un incremento moderado atribuido a sistemas frontales lluviosos y heladas que provocan voladuras de techos, inundaciones y emanaciones de gases (calefacción).
     * Las líneas horizontales muestran la **media histórica** y los niveles de **±1 y ±2 desviaciones estándar**, útiles para reconocer períodos estacionalmente inusuales.
     """)
+
+
+with tab4:
+    st.markdown('<div class="chart-anchor"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title">Histórico Real versus Predicho</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="chart-subtitle">Serie cronológica del modelo principal. '
+        'El selector permite aislar períodos recientes o el bloque final usado como prueba.</div>',
+        unsafe_allow_html=True,
+    )
+    render_historical_chart()
