@@ -1027,11 +1027,12 @@ def render_historical_chart():
 
 
 # 12. Pestañas de navegación
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🔮 Predicciones Siguientes 6 Días",
     "⚡ Importancia de Variables",
     "📈 Histórico Real vs Predicho",
     "📊 Curvas de Estacionalidad (365 días)",
+    "🔬 Comparación de Modelos",
 ])
 
 with tab1:
@@ -1308,37 +1309,15 @@ def render_importance_chart(df_importance, title, color):
 
 with tab2:
     st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="chart-title">Comparación de Modelos Climáticos</div>', unsafe_allow_html=True)
-    direct_weight = metadata_aug.get('blend_weight_direct', 0.53)
-    category_weight = metadata_aug.get('blend_weight_categories', 0.47)
+    st.markdown('<div class="chart-title">Importancia de Variables · Modelo Principal</div>', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="chart-subtitle">El principal combina {direct_weight:.0%} del modelo directo y '
-        f'{category_weight:.0%} de seis modelos por tipo de emergencia. Se compara con el modelo '
-        'directo optimizado de 31 variables.</div>',
+        '<div class="chart-subtitle">Variables con mayor aporte al modelo optimizado por categorías.</div>',
         unsafe_allow_html=True,
     )
-    col_met1, col_met2 = st.columns(2)
-    with col_met1:
-        render_model_metrics(
-            metadata_aug,
-            "Optimizado por categorías · Principal",
-            "#8b5cf6",
-        )
-    with col_met2:
-        render_model_metrics(
-            metadata_base,
-            "Optimizado directo · 31 variables",
-            "#3b82f6",
-        )
-
-    col_imp1, col_imp2 = st.columns(2)
-    with col_imp1:
-        render_importance_chart(df_imp_aug, "Importancia · Optimizado por categorías", "#8b5cf6")
-    with col_imp2:
-        render_importance_chart(df_imp_base, "Importancia · Directo 31 variables", "#3b82f6")
-
-    st.info(
-        "El modelo con inercia fue retirado de la comparación activa. Sus archivos permanecen guardados para experimentos futuros."
+    render_importance_chart(
+        df_imp_aug,
+        "Importancia · Optimizado por categorías",
+        "#8b5cf6",
     )
 
 
@@ -1594,3 +1573,44 @@ with tab4:
     * **Invierno (Días 150-250):** Hay un incremento moderado atribuido a sistemas frontales lluviosos y heladas que provocan voladuras de techos, inundaciones y emanaciones de gases (calefacción).
     * Las líneas horizontales muestran la **media histórica global** y los niveles de **±1 desviación estándar**.
     """)
+
+
+with tab5:
+    st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title">Comparación de Modelos</div>', unsafe_allow_html=True)
+    direct_weight = metadata_aug.get('blend_weight_direct', 0.53)
+    category_weight = metadata_aug.get('blend_weight_categories', 0.47)
+    st.markdown(
+        f'<div class="chart-subtitle">El modelo actual combina {direct_weight:.0%} del modelo '
+        f'directo y {category_weight:.0%} de seis modelos por tipo de emergencia. '
+        'Se compara con el optimizado directo de 31 variables.</div>',
+        unsafe_allow_html=True,
+    )
+
+    col_met1, col_met2 = st.columns(2)
+    with col_met1:
+        render_model_metrics(
+            metadata_aug,
+            "Actual · Optimizado por categorías",
+            "#8b5cf6",
+        )
+    with col_met2:
+        render_model_metrics(
+            metadata_base,
+            "Comparación · Directo 31 variables",
+            "#3b82f6",
+        )
+
+    col_imp1, col_imp2 = st.columns(2)
+    with col_imp1:
+        render_importance_chart(
+            df_imp_aug,
+            "Importancia · Modelo actual",
+            "#8b5cf6",
+        )
+    with col_imp2:
+        render_importance_chart(
+            df_imp_base,
+            "Importancia · Modelo comparado",
+            "#3b82f6",
+        )
