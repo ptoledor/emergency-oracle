@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.venv/
 .streamlit/secrets.toml
 
 # Local tools and credentials

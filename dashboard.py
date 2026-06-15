@@ -8,6 +8,7 @@ import requests
 import datetime
 import holidays
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # 1. Configuración de página
 st.set_page_config(
@@ -21,6 +22,11 @@ st.set_page_config(
 base_dir = Path(__file__).resolve().parent
 data_path = base_dir / "02_data" / "augmented_emergency_data.csv"
 models_dir = base_dir / "03_model" / "saved_models"
+PROJECT_TIMEZONE = ZoneInfo("America/Santiago")
+
+
+def project_today():
+    return datetime.datetime.now(PROJECT_TIMEZONE).date()
 
 # 3. Estado de Tema (Claro / Oscuro)
 if "theme" not in st.session_state:
@@ -283,7 +289,7 @@ def metric_card(label, value, delta=None, delta_type="up"):
 
 def operational_decision(prediction, watch_threshold, reinforcement_threshold):
     if prediction['Predicción'] >= 8.0 or prediction['Prob_Alta'] >= reinforcement_threshold:
-        return "REFORZAR", "Convocar dotación adicional para mañana", "delta-down"
+        return "REFORZAR", "Convocar dotación adicional para hoy", "delta-down"
     if prediction['Prob_Alta'] >= watch_threshold:
         return "PREALERTA", "Confirmar disponibilidad y mantener personal localizable", "delta-down"
     return "GUARDIA NORMAL", "Mantener dotación ordinaria", "delta-up"
@@ -386,7 +392,7 @@ def get_weather_for_range(start_date, is_historical):
                f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
                f"timezone=America%2FSantiago&format=json")
     else:
-        # Real-time mode: start_date is tomorrow.
+        # Real-time mode: start_date is today in America/Santiago.
         # Se requieren 30 días previos para variables de memoria hídrica.
         url = (f"https://api.open-meteo.com/v1/forecast?"
                f"latitude={lat}&longitude={lon}&"
@@ -797,7 +803,7 @@ def render_seasonal_chart():
         ))
     
     # Línea vertical indicando el día actual (Hoy)
-    today = datetime.date.today()
+    today = project_today()
     try:
         today_fictional = datetime.datetime(2025, today.month, today.day)
     except ValueError:
@@ -934,7 +940,7 @@ def render_historical_chart():
         ("Días", f"{len(historical):,}", "observaciones"),
         ("Media real", f"{real.mean():.2f}", "llamadas/día"),
         ("Desv. real", f"{real.std():.2f}", "llamadas"),
-        ("Media predicha", f"{predicted.mean():.2f}", "llamadas/día"),
+        ("Media predicción", f"{predicted.mean():.2f}", "llamadas/día"),
     ]
     historical_metrics_html = "".join(
         f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem;">
@@ -973,9 +979,9 @@ def render_historical_chart():
         x=historical['FECHA_DT'],
         y=predicted_plot,
         mode='lines',
-        name=f'Predicho{suffix}',
+        name=f'Predicción{suffix}',
         line=dict(color='#3b82f6', width=2, dash='dash'),
-        hovertemplate='%{x|%d-%m-%Y}<br>Predicho: %{y:.2f}<extra></extra>',
+        hovertemplate='%{x|%d-%m-%Y}<br>Predicción: %{y:.2f}<extra></extra>',
     ))
 
     global_mean = float(df['EVENTOS'].mean())
@@ -1029,8 +1035,8 @@ def render_historical_chart():
 # 12. Pestañas de navegación
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🔮 Predicciones Siguientes 6 Días",
-    "⚡ Importancia de Variables",
-    "📈 Histórico Real vs Predicho",
+    "⚡ Estadísticas de Modelo",
+    "📈 Histórico Real vs Predicción",
     "📊 Curvas de Estacionalidad (365 días)",
     "🔬 Comparación de Modelos",
 ])
@@ -1046,8 +1052,8 @@ with tab1:
 
     is_historical_pred = False
     
-    # Mañana real
-    start_pred_date = datetime.date.today() + datetime.timedelta(days=1)
+    # Día actual según la zona horaria operacional del proyecto.
+    start_pred_date = project_today()
         
     with st.spinner("Consultando clima y simulando predicción recursiva con los modelos..."):
         try:
@@ -1309,9 +1315,18 @@ def render_importance_chart(df_importance, title, color):
 
 with tab2:
     st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="chart-title">Importancia de Variables · Modelo Principal</div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title">Estadísticas del Modelo Principal</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="chart-subtitle">Variables con mayor aporte al modelo optimizado por categorías.</div>',
+        '<div class="chart-subtitle">Métricas de evaluación e importancia de variables del modelo optimizado por categorías.</div>',
+        unsafe_allow_html=True,
+    )
+    render_model_metrics(
+        metadata_aug,
+        "Actual · Optimizado por categorías",
+        "#8b5cf6",
+    )
+    st.markdown(
+        '<div class="chart-title" style="margin-top: 1.25rem;">Importancia de Variables</div>',
         unsafe_allow_html=True,
     )
     render_importance_chart(
@@ -1541,7 +1556,7 @@ if False:  # Vista comparativa antigua, conservada temporalmente como referencia
 
 with tab3:
     st.markdown('<div class="chart-anchor"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="chart-title">Histórico Real versus Predicho</div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title">Histórico Real versus Predicción</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="chart-subtitle">Serie cronológica del modelo principal. '
         'Los filtros de año, mes y día de la semana pueden combinarse libremente.</div>',

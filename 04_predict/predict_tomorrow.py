@@ -8,10 +8,16 @@ import holidays
 import argparse
 import sys
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_TIMEZONE = ZoneInfo("America/Santiago")
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def project_today():
+    return datetime.datetime.now(PROJECT_TIMEZONE).date()
 
 def get_events_and_categories_for_dates(csv_path, codes_path, dates):
     """
@@ -100,7 +106,7 @@ def main():
 
     # Definir fecha objetivo y lags
     if args.real_tomorrow:
-        target_date = datetime.date.today() + datetime.timedelta(days=1)
+        target_date = project_today() + datetime.timedelta(days=1)
         mode = "MAÑANA REAL"
     elif args.date:
         target_date = datetime.datetime.strptime(args.date, '%Y-%m-%d').date()
@@ -154,7 +160,7 @@ def main():
 
     # Obtener clima para la fecha objetivo y los lags usando datos horarios
     target_date_str = target_date.strftime('%Y-%m-%d')
-    today_date = datetime.date.today()
+    today_date = project_today()
 
     # Fórmulas de asimetría y curtosis
     def get_skew(vals):
@@ -374,7 +380,7 @@ def main():
     # Formatear el reporte de predicción en consola
     print("\n" + "="*50)
     print(f" REPORTES DE PREDICCIÓN - BOMBEROS TALCAHUANO")
-    print(f" Fecha del reporte: {datetime.date.today()} | Fecha predicción: {target_date_str}")
+    print(f" Fecha del reporte: {project_today()} | Fecha predicción: {target_date_str}")
     print("="*50)
     print(f" Cantidad esperada de emergencias: {pred_count:.1f} incidentes")
     print(f" Probabilidad de día crítico (>7 eventos): {prob_high * 100:.1f}% (Umbral Alerta: {threshold * 100:.1f}%)")
