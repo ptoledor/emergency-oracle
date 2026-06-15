@@ -991,13 +991,47 @@ def render_historical_chart():
         hovertemplate='%{x|%d-%m-%Y}<br>Predicho: %{y:.2f}<extra></extra>',
     ))
 
+    filtered_mean = float(real.mean())
+    filtered_std = float(real.std()) if len(real) > 1 else 0.0
+    historical_reference_levels = [
+        ("Media", filtered_mean, "#22c55e", "solid"),
+        ("Media + 1 DV", filtered_mean + filtered_std, "#f59e0b", "dash"),
+        ("Media - 1 DV", max(0.0, filtered_mean - filtered_std), "#f59e0b", "dash"),
+        ("Media + 2 DV", filtered_mean + 2 * filtered_std, "#ef4444", "dot"),
+        (
+            "Media - 2 DV (mín. 0)",
+            max(0.0, filtered_mean - 2 * filtered_std),
+            "#ef4444",
+            "dot",
+        ),
+    ]
+    for label, level, color, dash in historical_reference_levels:
+        fig.add_trace(go.Scatter(
+            x=[historical['FECHA_DT'].iloc[0], historical['FECHA_DT'].iloc[-1]],
+            y=[level, level],
+            mode='lines',
+            name=f'{label}: {level:.2f}',
+            line=dict(
+                color=color,
+                width=1.8 if label == "Media" else 1.2,
+                dash=dash,
+            ),
+            opacity=0.9 if label == "Media" else 0.75,
+            hovertemplate=f'{label}: {level:.2f} llamadas<extra></extra>',
+        ))
+
+    y_max = max(
+        13.0,
+        float(real.max()) + 0.5,
+        max(level for _, level, _, _ in historical_reference_levels) + 0.5,
+    )
     layout = PLOT_LAYOUT.copy()
     layout['xaxis'] = dict(
         **PLOT_LAYOUT['xaxis'],
         rangeslider=dict(visible=True, thickness=0.08),
         fixedrange=False,
     )
-    layout['yaxis'] = dict(**PLOT_LAYOUT['yaxis'], range=[0, 13], fixedrange=True)
+    layout['yaxis'] = dict(**PLOT_LAYOUT['yaxis'], range=[0, y_max], fixedrange=True)
     layout['margin'] = dict(l=45, r=20, t=20, b=55)
     fig.update_layout(
         **layout,
