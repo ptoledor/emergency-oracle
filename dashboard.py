@@ -861,11 +861,60 @@ def render_seasonal_chart():
 
 @st.fragment
 def render_historical_chart():
-    range_label = st.selectbox(
-        "Período histórico:",
-        ["Todo el histórico", "Últimos 24 meses", "Últimos 12 meses", "Bloque final de prueba"],
-        key="historical_range_selector",
-    )
+    historical = df[
+        ['FECHA_DT', 'EVENTOS', 'PRED_EVENTOS_PRIMARY']
+    ].sort_values('FECHA_DT').copy()
+    historical['AÑO'] = historical['FECHA_DT'].dt.year
+    historical['MES_NUM'] = historical['FECHA_DT'].dt.month
+    historical['DIA_SEMANA_NUM'] = historical['FECHA_DT'].dt.dayofweek
+
+    month_names = {
+        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+        5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
+        9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
+    }
+    weekday_names = {
+        0: "Lunes", 1: "Martes", 2: "Miércoles", 3: "Jueves",
+        4: "Viernes", 5: "Sábado", 6: "Domingo",
+    }
+
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    with filter_col1:
+        selected_year = st.selectbox(
+            "Año",
+            ["Todos"] + sorted(historical['AÑO'].unique().tolist(), reverse=True),
+            key="historical_year_filter",
+        )
+    with filter_col2:
+        selected_month = st.selectbox(
+            "Mes",
+            ["Todos"] + list(month_names.values()),
+            key="historical_month_filter",
+        )
+    with filter_col3:
+        selected_weekday = st.selectbox(
+            "Día de la semana",
+            ["Todos"] + list(weekday_names.values()),
+            key="historical_weekday_filter",
+        )
+
+    if selected_year != "Todos":
+        historical = historical[historical['AÑO'] == selected_year]
+    if selected_month != "Todos":
+        selected_month_number = next(
+            number for number, name in month_names.items()
+            if name == selected_month
+        )
+        historical = historical[historical['MES_NUM'] == selected_month_number]
+    if selected_weekday != "Todos":
+        selected_weekday_number = next(
+            number for number, name in weekday_names.items()
+            if name == selected_weekday
+        )
+        historical = historical[
+            historical['DIA_SEMANA_NUM'] == selected_weekday_number
+        ]
+
     smoothing_days = st.slider(
         "Suavizado visual:",
         min_value=1,
@@ -876,19 +925,9 @@ def render_historical_chart():
         key="historical_smoothing_slider",
     )
 
-    historical = df[
-        ['FECHA_DT', 'EVENTOS', 'PRED_EVENTOS_PRIMARY']
-    ].sort_values('FECHA_DT').copy()
-    if range_label == "Últimos 24 meses":
-        historical = historical[
-            historical['FECHA_DT'] >= historical['FECHA_DT'].max() - pd.DateOffset(months=24)
-        ]
-    elif range_label == "Últimos 12 meses":
-        historical = historical[
-            historical['FECHA_DT'] >= historical['FECHA_DT'].max() - pd.DateOffset(months=12)
-        ]
-    elif range_label == "Bloque final de prueba":
-        historical = historical.iloc[int(len(historical) * 0.8):]
+    if historical.empty:
+        st.warning("No existen observaciones para la combinación seleccionada.")
+        return
 
     real = historical['EVENTOS'].astype(float)
     predicted = historical['PRED_EVENTOS_PRIMARY'].astype(float)
@@ -1536,7 +1575,7 @@ with tab4:
     st.markdown('<div class="chart-title">Histórico Real versus Predicho</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="chart-subtitle">Serie cronológica del modelo principal. '
-        'El selector permite aislar períodos recientes o el bloque final usado como prueba.</div>',
+        'Los filtros de año, mes y día de la semana pueden combinarse libremente.</div>',
         unsafe_allow_html=True,
     )
     render_historical_chart()
