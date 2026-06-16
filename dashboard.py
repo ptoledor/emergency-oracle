@@ -390,8 +390,8 @@ def metric_card(label, value, delta=None, delta_type="up"):
     """, unsafe_allow_html=True)
 
 
-def operational_decision(prediction):
-    if prediction['Prob_Alta'] >= ALERT_THRESHOLD:
+def operational_decision(prediction, projection_alert_threshold):
+    if prediction['PredicciÃ³n'] >= projection_alert_threshold:
         return "ALERTA", "Preparar refuerzo preventivo", "delta-down"
     if prediction['Prob_Alta'] >= PREALERT_THRESHOLD:
         return "PREALERTA", "Confirmar disponibilidad y mantener personal localizable", "delta-down"
@@ -469,6 +469,12 @@ def load_data_and_predict():
         # Predicciones historicas del ganador
         X_v3 = df[metadata_v3['feature_cols']]
         df['PRED_EVENTOS_PRIMARY'] = reg_model_v3.predict(X_v3)
+        try:
+            with open(models_dir / "classifier_climatic_augmented.pkl", "rb") as f:
+                clf_model_v3 = pickle.load(f)
+            df['PROB_ALTA_PRIMARY'] = clf_model_v3.predict_proba(X_v3)[:, 1]
+        except Exception:
+            df['PROB_ALTA_PRIMARY'] = np.nan
         
         # Extraer importancia aumentada v3
         importances_v3 = reg_model_v3.feature_importances_
@@ -1348,8 +1354,27 @@ with tab1:
         
     if pred_results is not None:
         historical_mean = float(df['EVENTOS'].astype(float).mean())
+        historical_predictions = df['PRED_EVENTOS_PRIMARY'].astype(float)
+        projection_mean = float(historical_predictions.mean())
+        projection_std = float(historical_predictions.std())
+        projection_alert_threshold = projection_mean + projection_std
+        historical_model_alerts = historical_predictions >= projection_alert_threshold
+        historical_alert_rate = float(historical_model_alerts.mean())
+        historical_alert_count = int(historical_model_alerts.sum())
+        historical_alert_probabilities = pd.to_numeric(
+            df.get('PROB_ALTA_PRIMARY', pd.Series(dtype=float)),
+            errors='coerce',
+        ).dropna()
+        if historical_alert_probabilities.empty:
+            historical_alert_probability_mean = historical_alert_rate
+            historical_alert_probability_p50 = historical_alert_rate
+            probability_source = "frecuencia real historica"
+        else:
+            historical_alert_probability_mean = float(historical_alert_probabilities.mean())
+            historical_alert_probability_p50 = float(historical_alert_probabilities.quantile(0.50))
+            probability_source = "probabilidad historica del modelo"
         st.markdown(
-            f"""<div class="responsive-grid" style="grid-template-columns: minmax(0, 260px); margin-bottom: 1rem;">
+            f"""<div class="responsive-grid responsive-grid-4" style="margin-bottom: 1rem;">
                 <div class="metric-card">
                     <div class="metric-label">Media histórica</div>
                     <div class="metric-value">{historical_mean:.2f}</div>
@@ -1358,15 +1383,47 @@ with tab1:
             </div>""",
             unsafe_allow_html=True,
         )
+        st.markdown(
+            f"""<div class="responsive-grid responsive-grid-4" style="margin-bottom: 1rem;">
+                <div class="metric-card">
+                    <div class="metric-label">Alerta historica</div>
+                    <div class="metric-value">{historical_alert_rate*100:.1f}%</div>
+                    <div style="font-size: .68rem; color: var(--text-muted);">{historical_alert_count} dias proyectados sobre umbral</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Prob. alerta promedio</div>
+                    <div class="metric-value">{historical_alert_probability_mean*100:.1f}%</div>
+                    <div style="font-size: .68rem; color: var(--text-muted);">{probability_source}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Percentil 50 prob. alerta</div>
+                    <div class="metric-value">{historical_alert_probability_p50*100:.1f}%</div>
+                    <div style="font-size: .68rem; color: var(--text-muted);">mediana historica del modelo</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Umbral critico</div>
+                    <div class="metric-value">{projection_alert_threshold:.2f}</div>
+                    <div style="font-size: .68rem; color: var(--text-muted);">media proyectada + 1 DV</div>
+                </div>
+            </div>
+            <div class="chart-subtitle" style="margin-top: -0.35rem;">
+                <strong>Umbral critico:</strong> proyeccion diaria mayor o igual a {projection_alert_threshold:.2f} llamados.
+                Calculo: media historica proyectada {projection_mean:.2f} + 1 DV {projection_std:.2f}.
+                Operativamente, prealerta desde {PREALERT_THRESHOLD*100:.0f}% de probabilidad; alerta cuando la proyeccion supera este umbral critico.
+            </div>""",
+            unsafe_allow_html=True,
+        )
         st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario de Llamados Talcahuano</h5></div>', unsafe_allow_html=True)
         
-        historical_predictions = df['PRED_EVENTOS_PRIMARY'].astype(float)
         activity_low_threshold = float(historical_predictions.quantile(0.30))
         activity_high_threshold = float(historical_predictions.quantile(0.70))
 
         forecast_cards = []
         for p in pred_results:
-            badge_text, _, badge_class = operational_decision(p)
+            badge_text, _, badge_class = operational_decision(
+                p,
+                projection_alert_threshold,
+            )
             activity_text, activity_class = activity_level(
                 p['Predicción'],
                 activity_low_threshold,
@@ -1574,7 +1631,7 @@ if False:  # Vista comparativa antigua, conservada temporalmente como referencia
                 <li style="margin-bottom: 0.5rem;"><strong>Coeficiente R² (Regresión):</strong> Mide la mejora del modelo en comparación con usar un promedio histórico fijo.
                 <br/><em>¿Por qué es negativo o cercano a cero?</em> La demanda de emergencias de bomberos diaria posee una aleatoriedad intrínseca extrema. Un R² ligeramente negativo o muy bajo (-0.7% o -0.3%) en la evaluación indica que predecir el número puntual exacto tiene tanto "ruido" que el promedio histórico comete un error similar, lo que demuestra la dificultad de acertar el número exacto, aunque el modelo sea excelente en capturar tendencias y días críticos.</li>
             </ul>
-            <p style="margin-top: 1rem;"><strong>2. Métricas del Modelo de Clasificación (¿Será hoy un día crítico de alta demanda &gt;7 llamadas?):</strong></p>
+            <p style="margin-top: 1rem;"><strong>2. Métricas del Modelo de Clasificación (¿Será hoy un día crítico de alta demanda: proyeccion sobre media historica + 1 DV?):</strong></p>
             <ul>
                 <li style="margin-bottom: 0.5rem;"><strong>Umbral de Clasificación Calibrado:</strong> Referencia técnica usada para evaluar el clasificador. La comunicación operacional utiliza cortes fijos: <strong>Prealerta desde 30%</strong> y <strong>Alerta desde 50%</strong>.</li>
                 <li style="margin-bottom: 0.5rem;"><strong>Exactitud (Accuracy):</strong> El porcentaje de días totales (tanto normales como críticos) en los que el clasificador del modelo acertó el estado de alerta correcto.</li>
