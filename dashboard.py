@@ -27,8 +27,6 @@ blend_results_dir = (
     base_dir / "05_research" / "results" / "category_blend_calibration"
 )
 PROJECT_TIMEZONE = ZoneInfo("America/Santiago")
-PREALERT_THRESHOLD = 0.30
-ALERT_THRESHOLD = 0.50
 
 
 def project_today():
@@ -390,10 +388,10 @@ def metric_card(label, value, delta=None, delta_type="up"):
     """, unsafe_allow_html=True)
 
 
-def operational_decision(prediction, projection_alert_threshold):
-    if prediction['PredicciÃ³n'] >= projection_alert_threshold:
+def operational_decision(prediction, prealert_probability_threshold, alert_probability_threshold):
+    if prediction['Prob_Alta'] > alert_probability_threshold:
         return "ALERTA", "Preparar refuerzo preventivo", "delta-down"
-    if prediction['Prob_Alta'] >= PREALERT_THRESHOLD:
+    if prediction['Prob_Alta'] > prealert_probability_threshold:
         return "PREALERTA", "Confirmar disponibilidad y mantener personal localizable", "delta-down"
     return "SIN ALERTA", "Mantener operación habitual", "delta-up"
 
@@ -826,8 +824,8 @@ def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
         predictions.append({
             'Fecha': d,
             'FechaStr': d_str,
-            'Día': DIAS_ES[d.strftime('%A')],
-            'Predicción': pred_count,
+            'Dia': DIAS_ES[d.strftime('%A')],
+            'Prediccion': pred_count,
             'Prob_Alta': prob_high,
             'Temp_Max': temp_max,
             'Temp_Media': temp_media,
@@ -1355,64 +1353,25 @@ with tab1:
     if pred_results is not None:
         historical_mean = float(df['EVENTOS'].astype(float).mean())
         historical_predictions = df['PRED_EVENTOS_PRIMARY'].astype(float)
-        projection_mean = float(historical_predictions.mean())
-        projection_std = float(historical_predictions.std())
-        projection_alert_threshold = projection_mean + projection_std
-        historical_model_alerts = historical_predictions >= projection_alert_threshold
-        historical_alert_rate = float(historical_model_alerts.mean())
-        historical_alert_count = int(historical_model_alerts.sum())
         historical_alert_probabilities = pd.to_numeric(
             df.get('PROB_ALTA_PRIMARY', pd.Series(dtype=float)),
             errors='coerce',
         ).dropna()
         if historical_alert_probabilities.empty:
-            historical_alert_probability_mean = historical_alert_rate
-            historical_alert_probability_p50 = historical_alert_rate
+            historical_alert_probability_mean = 0.0
+            historical_alert_probability_p50 = 0.0
+            historical_alert_probability_p80 = 0.0
+            historical_alert_rate = 0.0
+            historical_alert_count = 0
             probability_source = "frecuencia real historica"
         else:
             historical_alert_probability_mean = float(historical_alert_probabilities.mean())
             historical_alert_probability_p50 = float(historical_alert_probabilities.quantile(0.50))
+            historical_alert_probability_p80 = float(historical_alert_probabilities.quantile(0.80))
+            historical_probability_alerts = historical_alert_probabilities > historical_alert_probability_p80
+            historical_alert_rate = float(historical_probability_alerts.mean())
+            historical_alert_count = int(historical_probability_alerts.sum())
             probability_source = "probabilidad historica del modelo"
-        st.markdown(
-            f"""<div class="responsive-grid responsive-grid-4" style="margin-bottom: 1rem;">
-                <div class="metric-card">
-                    <div class="metric-label">Media histórica</div>
-                    <div class="metric-value">{historical_mean:.2f}</div>
-                    <div style="font-size: .68rem; color: var(--text-muted);">llamadas por día</div>
-                </div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f"""<div class="responsive-grid responsive-grid-4" style="margin-bottom: 1rem;">
-                <div class="metric-card">
-                    <div class="metric-label">Alerta historica</div>
-                    <div class="metric-value">{historical_alert_rate*100:.1f}%</div>
-                    <div style="font-size: .68rem; color: var(--text-muted);">{historical_alert_count} dias proyectados sobre umbral</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-label">Prob. alerta promedio</div>
-                    <div class="metric-value">{historical_alert_probability_mean*100:.1f}%</div>
-                    <div style="font-size: .68rem; color: var(--text-muted);">{probability_source}</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-label">Percentil 50 prob. alerta</div>
-                    <div class="metric-value">{historical_alert_probability_p50*100:.1f}%</div>
-                    <div style="font-size: .68rem; color: var(--text-muted);">mediana historica del modelo</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-label">Umbral critico</div>
-                    <div class="metric-value">{projection_alert_threshold:.2f}</div>
-                    <div style="font-size: .68rem; color: var(--text-muted);">media proyectada + 1 DV</div>
-                </div>
-            </div>
-            <div class="chart-subtitle" style="margin-top: -0.35rem;">
-                <strong>Umbral critico:</strong> proyeccion diaria mayor o igual a {projection_alert_threshold:.2f} llamados.
-                Calculo: media historica proyectada {projection_mean:.2f} + 1 DV {projection_std:.2f}.
-                Operativamente, prealerta desde {PREALERT_THRESHOLD*100:.0f}% de probabilidad; alerta cuando la proyeccion supera este umbral critico.
-            </div>""",
-            unsafe_allow_html=True,
-        )
         st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario de Llamados Talcahuano</h5></div>', unsafe_allow_html=True)
         
         activity_low_threshold = float(historical_predictions.quantile(0.30))
@@ -1422,18 +1381,19 @@ with tab1:
         for p in pred_results:
             badge_text, _, badge_class = operational_decision(
                 p,
-                projection_alert_threshold,
+                historical_alert_probability_p50,
+                historical_alert_probability_p80,
             )
             activity_text, activity_class = activity_level(
-                p['Predicción'],
+                p['Prediccion'],
                 activity_low_threshold,
                 activity_high_threshold,
             )
             forecast_cards.append(
                 f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
-                    <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Día']}</div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Dia']}</div>
                     <div style="font-size: 0.8rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem;">{p['Fecha'].strftime('%d-%b')}</div>
-                    <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Predicción']:.1f}</div>
+                    <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Prediccion']:.1f}</div>
                     <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.5rem;">llamadas</div>
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 0.35rem; margin-bottom: 0.6rem;">
                         <div class="metric-delta {activity_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{activity_text}</div>
@@ -1453,6 +1413,40 @@ with tab1:
         st.markdown(
             f"""<div class="responsive-grid responsive-grid-6">
                 {''.join(forecast_cards)}
+            </div>""",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"""<div class="responsive-grid responsive-grid-4" style="margin-top: 1rem; margin-bottom: 1rem;">
+                <div class="metric-card">
+                    <div class="metric-label">Media historica</div>
+                    <div class="metric-value">{historical_mean:.2f}</div>
+                    <div style="font-size: .68rem; color: var(--text-muted);">llamadas por dia</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Frecuencia historica de alerta</div>
+                    <div class="metric-value">{historical_alert_rate*100:.1f}%</div>
+                    <div style="font-size: .68rem; color: var(--text-muted);">{historical_alert_count} dias sobre p80 de probabilidad</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Prob. alerta promedio</div>
+                    <div class="metric-value">{historical_alert_probability_mean*100:.1f}%</div>
+                    <div style="font-size: .68rem; color: var(--text-muted);">{probability_source}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Percentil 50 prob. alerta</div>
+                    <div class="metric-value">{historical_alert_probability_p50*100:.1f}%</div>
+                    <div style="font-size: .68rem; color: var(--text-muted);">mediana historica del modelo</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Percentil 80 prob. alerta</div>
+                    <div class="metric-value">{historical_alert_probability_p80*100:.1f}%</div>
+                    <div style="font-size: .68rem; color: var(--text-muted);">top 20% historico del modelo</div>
+                </div>
+            </div>
+            <div class="chart-subtitle" style="margin-top: -0.35rem;">
+                <strong>Frecuencia historica de alerta</strong> es el porcentaje de dias historicos cuya probabilidad estuvo sobre el p80 del modelo.
+                Prealerta cuando la probabilidad supera la mediana historica ({historical_alert_probability_p50*100:.1f}%); alerta cuando supera el p80 historico ({historical_alert_probability_p80*100:.1f}%).
             </div>""",
             unsafe_allow_html=True,
         )
@@ -1631,9 +1625,9 @@ if False:  # Vista comparativa antigua, conservada temporalmente como referencia
                 <li style="margin-bottom: 0.5rem;"><strong>Coeficiente R² (Regresión):</strong> Mide la mejora del modelo en comparación con usar un promedio histórico fijo.
                 <br/><em>¿Por qué es negativo o cercano a cero?</em> La demanda de emergencias de bomberos diaria posee una aleatoriedad intrínseca extrema. Un R² ligeramente negativo o muy bajo (-0.7% o -0.3%) en la evaluación indica que predecir el número puntual exacto tiene tanto "ruido" que el promedio histórico comete un error similar, lo que demuestra la dificultad de acertar el número exacto, aunque el modelo sea excelente en capturar tendencias y días críticos.</li>
             </ul>
-            <p style="margin-top: 1rem;"><strong>2. Métricas del Modelo de Clasificación (¿Será hoy un día crítico de alta demanda: proyeccion sobre media historica + 1 DV?):</strong></p>
+            <p style="margin-top: 1rem;"><strong>2. Metricas del Modelo de Clasificacion (probabilidad de alerta por percentiles historicos):</strong></p>
             <ul>
-                <li style="margin-bottom: 0.5rem;"><strong>Umbral de Clasificación Calibrado:</strong> Referencia técnica usada para evaluar el clasificador. La comunicación operacional utiliza cortes fijos: <strong>Prealerta desde 30%</strong> y <strong>Alerta desde 50%</strong>.</li>
+                <li style="margin-bottom: 0.5rem;"><strong>Umbral de Clasificacion Calibrado:</strong> La comunicacion operacional usa percentiles historicos de probabilidad: <strong>Prealerta sobre p50</strong> y <strong>Alerta sobre p80</strong>.</li>
                 <li style="margin-bottom: 0.5rem;"><strong>Exactitud (Accuracy):</strong> El porcentaje de días totales (tanto normales como críticos) en los que el clasificador del modelo acertó el estado de alerta correcto.</li>
                 <li style="margin-bottom: 0.5rem;"><strong>Precisión (Precision):</strong> De todos los días en los que el modelo emitió una alerta de día crítico, cuántos lo fueron realmente. Un 25% indica que 1 de cada 4 alertas preventivas es un día crítico real (tasa óptima y segura para logística de bomberos).</li>
                 <li style="margin-bottom: 0.5rem;"><strong>Sensibilidad (Recall):</strong> Qué porcentaje de los días críticos reales que ocurrieron logró anticipar y alertar el modelo. Un 70.4% significa que el modelo capta y advierte con éxito el 70% de las situaciones críticas reales.</li>
