@@ -1,0 +1,29 @@
+{
+  "best_count": {
+    "model": "direct",
+    "mae": 2.5522896439354277
+  },
+  "best_risk": {
+    "model": "direct_raw",
+    "roc_auc": 0.5796501515301123,
+    "brier": 0.17480209152484977,
+    "precision": 0.3277310924369748,
+    "recall": 0.42700729927007297,
+    "f1": 0.37083993660855785,
+    "mean_fold_roc_auc": 0.5948525889501164,
+    "mean_fold_brier": 0.17480209152484977
+  },
+  "best_fold_ranking": {
+    "model": "direct_isotonic",
+    "roc_auc": 0.5465470882672399,
+    "brier": 0.17799979725826862,
+    "precision": 0.2475,
+    "recall": 0.3613138686131387,
+    "f1": 0.29376854599406527,
+    "mean_fold_roc_auc": 0.6023012536263519,
+    "mean_fold_brier": 0.17799979725826862
+  },
+  "mean_weight_direct": 0.8,
+  "folds_blend_beats_direct": 2,
+  "rows_used": 1485
+}

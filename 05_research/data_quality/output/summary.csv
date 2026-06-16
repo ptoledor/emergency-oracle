@@ -1,0 +1,17 @@
+﻿metric,value
+timezone,America/Santiago
+duplicate_window_minutes,30
+trust_empty_files,False
+source_days,1721
+source_days_usable,1659
+source_days_missing_completed,8
+source_days_empty_unverified,54
+messages_loaded,9210
+operational_messages,820
+incident_like_messages,8053
+duplicate_candidate_messages,2246
+message_parse_errors,0
+compiled_invalid_timestamps,0
+days_observed_zero,24
+days_observed_nonzero,1581
+days_coverage_unknown,143

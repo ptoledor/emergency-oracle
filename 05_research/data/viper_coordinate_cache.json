@@ -1,0 +1,182 @@
+{
+  "https://t.co/01iJOUC8NX": {
+    "original_url": "https://t.co/01iJOUC8NX",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /01iJOUC8NX (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/02Ij8oRhxg": {
+    "original_url": "https://t.co/02Ij8oRhxg",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /02Ij8oRhxg (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/02M3gfGnYL": {
+    "original_url": "https://t.co/02M3gfGnYL",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /02M3gfGnYL (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/02ijdkSTKq": {
+    "original_url": "https://t.co/02ijdkSTKq",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /02ijdkSTKq (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/04Xp0X00iC": {
+    "original_url": "https://t.co/04Xp0X00iC",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /04Xp0X00iC (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/07WBKfhe5r": {
+    "original_url": "https://t.co/07WBKfhe5r",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /07WBKfhe5r (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/08PFYdozsc": {
+    "original_url": "https://t.co/08PFYdozsc",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /08PFYdozsc (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0BofcugqNn": {
+    "original_url": "https://t.co/0BofcugqNn",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0BofcugqNn (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0CjHBjCKEA": {
+    "original_url": "https://t.co/0CjHBjCKEA",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0CjHBjCKEA (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0CjHBjDiu8": {
+    "original_url": "https://t.co/0CjHBjDiu8",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0CjHBjDiu8 (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0ErChFcWKG": {
+    "original_url": "https://t.co/0ErChFcWKG",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0ErChFcWKG (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0Fp98umIxk": {
+    "original_url": "https://t.co/0Fp98umIxk",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0Fp98umIxk (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0GfBgTeb8s": {
+    "original_url": "https://t.co/0GfBgTeb8s",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0GfBgTeb8s (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0HgxXz7kbN": {
+    "original_url": "https://t.co/0HgxXz7kbN",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0HgxXz7kbN (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0Hv32bVp3W": {
+    "original_url": "https://t.co/0Hv32bVp3W",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0Hv32bVp3W (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0Jh4G3EyCG": {
+    "original_url": "https://t.co/0Jh4G3EyCG",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0Jh4G3EyCG (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0Okc0eQAOX": {
+    "original_url": "https://t.co/0Okc0eQAOX",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0Okc0eQAOX (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0PoEYGdIj6": {
+    "original_url": "https://t.co/0PoEYGdIj6",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0PoEYGdIj6 (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0QA5QkWCvM": {
+    "original_url": "https://t.co/0QA5QkWCvM",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0QA5QkWCvM (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  },
+  "https://t.co/0Tv4W9NBZ1": {
+    "original_url": "https://t.co/0Tv4W9NBZ1",
+    "final_url": null,
+    "x": null,
+    "y": null,
+    "coordinate_kind": null,
+    "status": "error",
+    "error": "HTTPSConnectionPool(host='t.co', port=443): Max retries exceeded with url: /0Tv4W9NBZ1 (Caused by SSLError(SSLError(1, '[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] ssl/tls alert handshake failure (_ssl.c:1010)')))"
+  }
+}

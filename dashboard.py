@@ -22,6 +22,10 @@ st.set_page_config(
 base_dir = Path(__file__).resolve().parent
 data_path = base_dir / "02_data" / "augmented_emergency_data.csv"
 models_dir = base_dir / "03_model" / "saved_models"
+research_results_dir = base_dir / "05_research" / "results" / "weather_ablation"
+blend_results_dir = (
+    base_dir / "05_research" / "results" / "category_blend_calibration"
+)
 PROJECT_TIMEZONE = ZoneInfo("America/Santiago")
 PREALERT_THRESHOLD = 0.30
 ALERT_THRESHOLD = 0.50
@@ -483,6 +487,63 @@ def load_data_and_predict():
         return None, None, None, None, None, None, None
 
 df, df_imp_base, df_imp_aug, df_imp_v3, metadata_base, metadata_aug, metadata_v3 = load_data_and_predict()
+
+
+@st.cache_data
+def load_experimental_model_metrics():
+    import json
+
+    summary_path = research_results_dir / "experiment_summary.json"
+    if not summary_path.exists():
+        return None
+    with summary_path.open("r", encoding="utf-8") as stream:
+        summary = json.load(stream)
+    winner = summary["winner"]
+    baseline = summary["baseline"]
+    config_path = research_results_dir / winner["name"] / "run_config.json"
+    with config_path.open("r", encoding="utf-8") as stream:
+        rows_used = int(json.load(stream).get("rows_used", 0))
+
+    return {
+        "mae": float(winner["mae"]),
+        "mse": float(winner["rmse"]) ** 2,
+        "r2": float(winner["r2"]),
+        "roc_auc": float(winner["roc_auc"]),
+        "brier": float(winner["brier"]),
+        "accuracy": float(winner["accuracy"]),
+        "precision": float(winner["precision"]),
+        "recall": float(winner["recall"]),
+        "f1": float(winner["f1"]),
+        "classification_threshold": 0.30,
+        "rows_used": rows_used,
+        "experiment_name": winner["name"],
+        "count_model": winner["count_model"],
+        "classification_model": winner["classification_model"],
+        "folds_improved": int(winner["folds_improved"]),
+        "promoted": bool(winner["promoted"]),
+        "mae_improvement": float(winner["mae_improvement"]),
+        "roc_auc_improvement": float(winner["roc_auc_improvement"]),
+        "baseline_mae": float(baseline["mae"]),
+        "baseline_roc_auc": float(baseline["roc_auc"]),
+        "is_primary": False,
+    }
+
+
+experimental_metadata = load_experimental_model_metrics()
+
+
+@st.cache_data
+def load_blend_calibration_summary():
+    import json
+
+    path = blend_results_dir / "summary.json"
+    if not path.exists():
+        return None
+    with path.open("r", encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+blend_calibration_summary = load_blend_calibration_summary()
 
 # Helper to fetch weather series from Open-Meteo
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -1351,6 +1412,8 @@ def render_model_metrics(metadata, title, color):
         ("Recall", f"{float(metadata['recall']) * 100:.1f}%"),
         ("F1-Score", f"{float(metadata['f1']) * 100:.1f}%"),
     ]
+    if "brier" in metadata:
+        rows.insert(4, ("Brier", f"{float(metadata['brier']):.3f}"))
     table_rows = "".join(
         f'<tr style="border-bottom: 1px solid rgba(128,128,128,.15);">'
         f'<td style="color: var(--text-muted); padding: .3rem 0;">{label}</td>'
@@ -1692,11 +1755,12 @@ with tab5:
     st.markdown(
         f'<div class="chart-subtitle">El modelo actual combina {direct_weight:.0%} del modelo '
         f'directo y {category_weight:.0%} de seis modelos por tipo de emergencia. '
-        'Se compara con el optimizado directo de 31 variables.</div>',
+        'Se compara con el optimizado directo y el candidato experimental sin ceros agregados.</div>',
         unsafe_allow_html=True,
     )
 
-    col_met1, col_met2 = st.columns(2)
+    metric_columns = st.columns(3 if experimental_metadata else 2)
+    col_met1, col_met2 = metric_columns[:2]
     with col_met1:
         render_model_metrics(
             metadata_aug,
@@ -1709,6 +1773,41 @@ with tab5:
             "Comparación · Directo 31 variables",
             "#3b82f6",
         )
+
+    if experimental_metadata:
+        with metric_columns[2]:
+            render_model_metrics(
+                experimental_metadata,
+                "Experimental - Clima ampliado",
+                "#f59e0b",
+            )
+        promotion_text = (
+            "Cumple criterio de promoción."
+            if experimental_metadata["promoted"]
+            else "No cumple criterio de promoción; no pasa al modelo mixto."
+        )
+        st.info(
+            f"Ablación ganadora: {experimental_metadata['experiment_name']}. "
+            f"MAE {experimental_metadata['baseline_mae']:.3f} → "
+            f"{experimental_metadata['mae']:.3f}; ROC-AUC "
+            f"{experimental_metadata['baseline_roc_auc']:.3f} → "
+            f"{experimental_metadata['roc_auc']:.3f}. "
+            f"Mejora MAE en {experimental_metadata['folds_improved']}/5 folds. "
+            f"{promotion_text}"
+        )
+        if blend_calibration_summary:
+            best_risk = blend_calibration_summary["best_risk"]
+            best_ranking = blend_calibration_summary["best_fold_ranking"]
+            st.warning(
+                f"Optimización directo/categorías: peso directo medio "
+                f"{blend_calibration_summary['mean_weight_direct']:.0%}; la mezcla "
+                f"superó al directo en "
+                f"{blend_calibration_summary['folds_blend_beats_direct']}/5 folds. "
+                f"Mejor Brier: {best_risk['brier']:.3f} "
+                f"({best_risk['model']}). Mejor ROC-AUC medio por periodo: "
+                f"{best_ranking['mean_fold_roc_auc']:.3f} "
+                f"({best_ranking['model']}). Sin promoción."
+            )
 
     col_imp1, col_imp2 = st.columns(2)
     with col_imp1:
