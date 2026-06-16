@@ -404,9 +404,16 @@ def activity_level(predicted_events, low_threshold, high_threshold):
     return "ACTIVIDAD ALTA", "activity-high"
 
 
+def force_single_thread_model(model):
+    if hasattr(model, "n_jobs"):
+        model.n_jobs = 1
+    return model
+
+
 # 7. Carga de datos y modelos
 @st.cache_data
 def load_data_and_predict():
+    cache_version = "model-data-v2-single-thread-category-risk"
     if not os.path.exists(data_path):
         return None, None, None, None, None, None, None
     df = pd.read_csv(data_path, sep=';')
@@ -470,9 +477,21 @@ def load_data_and_predict():
         try:
             with open(models_dir / "classifier_climatic_augmented.pkl", "rb") as f:
                 clf_model_v3 = pickle.load(f)
+            clf_model_v3 = force_single_thread_model(clf_model_v3)
             df['PROB_ALTA_PRIMARY'] = clf_model_v3.predict_proba(X_v3)[:, 1]
         except Exception:
             df['PROB_ALTA_PRIMARY'] = np.nan
+
+        try:
+            with open(models_dir / "category_risk_models.pkl", "rb") as f:
+                category_risk_artifact = pickle.load(f)
+            for group_name, details in category_risk_artifact.get("models", {}).items():
+                group_model = force_single_thread_model(details["model"])
+                group_features = details.get("feature_cols", metadata_v3['feature_cols'])
+                df[f'PROB_{group_name.upper()}_ALTO'] = group_model.predict_proba(df[group_features])[:, 1]
+        except Exception:
+            df['PROB_RESCATE_ALTO'] = np.nan
+            df['PROB_INCENDIO_ALTO'] = np.nan
         
         # Extraer importancia aumentada v3
         importances_v3 = reg_model_v3.feature_importances_
@@ -549,7 +568,103 @@ def load_blend_calibration_summary():
 
 blend_calibration_summary = load_blend_calibration_summary()
 
+
+@st.cache_resource
+def load_category_risk_artifact():
+    path = models_dir / "category_risk_models.pkl"
+    if not path.exists():
+        return None
+    with path.open("rb") as stream:
+        artifact = pickle.load(stream)
+    for details in artifact.get("models", {}).values():
+        details["model"] = force_single_thread_model(details["model"])
+    return artifact
+
+
+category_risk_artifact = load_category_risk_artifact()
+
+
+def category_risk_label(probability, details):
+    if details is None or probability is None or np.isnan(probability):
+        return "Sin modelo", "activity-low"
+    if probability > float(details.get("probability_p80", 1.0)):
+        return "Alerta", "delta-down"
+    if probability > float(details.get("probability_p50", 1.0)):
+        return "Prealerta", "activity-high"
+    return "Normal", "activity-normal"
+
+
 # Helper to fetch weather series from Open-Meteo
+@st.cache_data(ttl=3600, show_spinner=False)
+def build_local_weather_fallback(start_date, is_historical):
+    if is_historical:
+        q_start = start_date - datetime.timedelta(days=30)
+        q_end = start_date + datetime.timedelta(days=5)
+    else:
+        q_start = start_date - datetime.timedelta(days=30)
+        q_end = start_date + datetime.timedelta(days=9)
+
+    weather_archive_path = base_dir / "02_data" / "weather_archive_talcahuano.csv"
+    archive = pd.read_csv(weather_archive_path)
+    archive['FECHA_DIA'] = pd.to_datetime(archive['FECHA_DIA']).dt.date
+    archive['MONTH_DAY'] = archive['FECHA_DIA'].apply(lambda value: (value.month, value.day))
+    archive['MONTH'] = archive['FECHA_DIA'].apply(lambda value: value.month)
+    numeric_cols = [
+        'TEMP_MAX', 'TEMP_MIN', 'TEMP_MEDIA',
+        'HUM_MAX', 'HUM_MIN', 'HUM_MEDIA',
+        'VIENTO_MAX', 'VIENTO_MEDIO', 'LLUVIA',
+    ]
+    global_medians = archive[numeric_cols].median(numeric_only=True)
+
+    rows = []
+    for offset in range((q_end - q_start).days + 1):
+        target_date = q_start + datetime.timedelta(days=offset)
+        exact = archive[archive['FECHA_DIA'] == target_date]
+        if not exact.empty:
+            source_row = exact.iloc[0]
+        else:
+            same_day = archive[archive['MONTH_DAY'] == (target_date.month, target_date.day)]
+            if not same_day.empty:
+                source_row = same_day[numeric_cols].median(numeric_only=True)
+            else:
+                same_month = archive[archive['MONTH'] == target_date.month]
+                source_row = (
+                    same_month[numeric_cols].median(numeric_only=True)
+                    if not same_month.empty
+                    else global_medians
+                )
+
+        temp_mean = float(source_row.get('TEMP_MEDIA', global_medians['TEMP_MEDIA']))
+        temp_amp = max(
+            0.1,
+            (float(source_row.get('TEMP_MAX', temp_mean)) - float(source_row.get('TEMP_MIN', temp_mean))) / 2,
+        )
+        hum_mean = float(source_row.get('HUM_MEDIA', global_medians['HUM_MEDIA']))
+        wind_mean = float(source_row.get('VIENTO_MEDIO', global_medians['VIENTO_MEDIO']))
+        rain_daily = max(0.0, float(source_row.get('LLUVIA', global_medians['LLUVIA'])))
+
+        for hour in range(24):
+            angle = 2 * np.pi * (hour - 15) / 24
+            temp = temp_mean + temp_amp * np.cos(angle)
+            humidity = float(np.clip(hum_mean - 8 * np.cos(angle), 0, 100))
+            rows.append({
+                'time': f"{target_date.strftime('%Y-%m-%d')}T{hour:02d}:00",
+                'temperature_2m': temp,
+                'relative_humidity_2m': humidity,
+                'wind_speed_10m': wind_mean,
+                'precipitation': rain_daily / 24,
+            })
+
+    return {
+        'time': [row['time'] for row in rows],
+        'temperature_2m': [row['temperature_2m'] for row in rows],
+        'relative_humidity_2m': [row['relative_humidity_2m'] for row in rows],
+        'wind_speed_10m': [row['wind_speed_10m'] for row in rows],
+        'precipitation': [row['precipitation'] for row in rows],
+        '_source': ['local_fallback'] * len(rows),
+    }
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_weather_for_range(start_date, is_historical):
     lat, lon = -36.731106, -73.11023
@@ -572,10 +687,17 @@ def get_weather_for_range(start_date, is_historical):
                f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
                f"timezone=America%2FSantiago&past_days=30&forecast_days=10")
                
-    res = requests.get(url, timeout=30)
-    if res.status_code != 200:
-        raise RuntimeError(f"Error al descargar clima desde Open-Meteo: {res.text}")
-    return res.json()['hourly']
+    try:
+        session = requests.Session()
+        session.trust_env = False
+        res = session.get(url, timeout=30)
+        if res.status_code != 200:
+            raise RuntimeError(f"Error al descargar clima desde Open-Meteo: {res.text}")
+        hourly = res.json()['hourly']
+        hourly['_source'] = ['open_meteo'] * len(hourly.get('time', []))
+        return hourly
+    except Exception:
+        return build_local_weather_fallback(start_date, is_historical)
 
 # Recursive forecasting function for 6 days
 def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmented", weather_data=None):
@@ -585,6 +707,7 @@ def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
             reg_model = pickle.load(f)
         with open(models_dir / f"classifier{prefix}.pkl", "rb") as f:
             clf_model = pickle.load(f)
+        clf_model = force_single_thread_model(clf_model)
         with open(models_dir / f"metadata{prefix}.pkl", "rb") as f:
             metadata = pickle.load(f)
     except Exception as e:
@@ -817,6 +940,12 @@ def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
         # Predict
         pred_count = float(reg_model.predict(X_pred)[0])
         prob_high = float(clf_model.predict_proba(X_pred)[0, 1])
+        category_risk_probs = {}
+        if category_risk_artifact:
+            for group_name, details in category_risk_artifact.get("models", {}).items():
+                group_features = details.get("feature_cols", metadata['feature_cols'])
+                group_X = pd.DataFrame([features])[group_features]
+                category_risk_probs[group_name] = float(details["model"].predict_proba(group_X)[0, 1])
         
         # Update event history for subsequent recursive days
         event_history[d] = pred_count
@@ -827,6 +956,8 @@ def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
             'Dia': DIAS_ES[d.strftime('%A')],
             'Prediccion': pred_count,
             'Prob_Alta': prob_high,
+            'Prob_Rescate_Alto': category_risk_probs.get("rescate", np.nan),
+            'Prob_Incendio_Alto': category_risk_probs.get("incendio", np.nan),
             'Temp_Max': temp_max,
             'Temp_Media': temp_media,
             'Hum_Media': hum_media,
@@ -1339,6 +1470,10 @@ with tab1:
         except Exception as e:
             st.error(f"Error al descargar pronóstico del clima: {e}")
             shared_weather = None
+        weather_uses_local_fallback = (
+            shared_weather is not None
+            and shared_weather.get('_source', [''])[0] == 'local_fallback'
+        )
 
         if shared_weather is None:
             pred_results = pred_results_base = pred_results_v3 = None
@@ -1351,6 +1486,11 @@ with tab1:
             pred_results_base = pred_results_v3 = pred_results
         
     if pred_results is not None:
+        if weather_uses_local_fallback:
+            st.warning(
+                "Open-Meteo no esta disponible desde este equipo. "
+                "El pronostico usa clima estimado desde el historico local."
+            )
         historical_mean = float(df['EVENTOS'].astype(float).mean())
         historical_predictions = df['PRED_EVENTOS_PRIMARY'].astype(float)
         historical_alert_probabilities = pd.to_numeric(
@@ -1372,12 +1512,51 @@ with tab1:
             historical_alert_rate = float(historical_probability_alerts.mean())
             historical_alert_count = int(historical_probability_alerts.sum())
             probability_source = "probabilidad historica del modelo"
+        historical_rescue_probabilities = pd.to_numeric(
+            df.get('PROB_RESCATE_ALTO', pd.Series(dtype=float)),
+            errors='coerce',
+        ).dropna()
+        historical_fire_probabilities = pd.to_numeric(
+            df.get('PROB_INCENDIO_ALTO', pd.Series(dtype=float)),
+            errors='coerce',
+        ).dropna()
+        rescue_probability_p50 = (
+            float(historical_rescue_probabilities.quantile(0.50))
+            if not historical_rescue_probabilities.empty
+            else 0.0
+        )
+        rescue_probability_p80 = (
+            float(historical_rescue_probabilities.quantile(0.80))
+            if not historical_rescue_probabilities.empty
+            else 0.0
+        )
+        fire_probability_p50 = (
+            float(historical_fire_probabilities.quantile(0.50))
+            if not historical_fire_probabilities.empty
+            else 0.0
+        )
+        fire_probability_p80 = (
+            float(historical_fire_probabilities.quantile(0.80))
+            if not historical_fire_probabilities.empty
+            else 0.0
+        )
+        rescue_alert_rate = (
+            float((historical_rescue_probabilities > rescue_probability_p80).mean())
+            if not historical_rescue_probabilities.empty
+            else 0.0
+        )
+        fire_alert_rate = (
+            float((historical_fire_probabilities > fire_probability_p80).mean())
+            if not historical_fire_probabilities.empty
+            else 0.0
+        )
         st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario de Llamados Talcahuano</h5></div>', unsafe_allow_html=True)
         
         activity_low_threshold = float(historical_predictions.quantile(0.30))
         activity_high_threshold = float(historical_predictions.quantile(0.70))
 
         forecast_cards = []
+        category_risk_models = category_risk_artifact.get("models", {}) if category_risk_artifact else {}
         for p in pred_results:
             badge_text, _, badge_class = operational_decision(
                 p,
@@ -1389,6 +1568,14 @@ with tab1:
                 activity_low_threshold,
                 activity_high_threshold,
             )
+            rescue_label, rescue_class = category_risk_label(
+                p.get('Prob_Rescate_Alto', np.nan),
+                category_risk_models.get("rescate"),
+            )
+            fire_label, fire_class = category_risk_label(
+                p.get('Prob_Incendio_Alto', np.nan),
+                category_risk_models.get("incendio"),
+            )
             forecast_cards.append(
                 f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
                     <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Dia']}</div>
@@ -1397,16 +1584,18 @@ with tab1:
                     <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.5rem;">llamadas</div>
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 0.35rem; margin-bottom: 0.6rem;">
                         <div class="metric-delta {activity_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{activity_text}</div>
-                        <div class="metric-delta {badge_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{badge_text}</div>
                     </div>
                     <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.5;" />
-                    <div style="font-size: 0.68rem; color: var(--text-muted); line-height: 1.4; text-align: left;">
-                        🌡️ Máx: <strong>{p['Temp_Max']:.1f}°C</strong><br/>
-                        🌡️ Media: <strong>{p['Temp_Media']:.1f}°C</strong><br/>
-                        💧 Humedad: <strong>{p['Hum_Media']:.0f}%</strong><br/>
-                        💨 Viento: <strong>{p['Viento_Medio']:.1f} km/h</strong><br/>
-                        🌧️ Lluvia: <strong>{p['Lluvia']:.1f} mm</strong><br/>
-                        🔥 Prob: <strong>{p['Prob_Alta']*100:.0f}%</strong>
+                    <div style="font-size: 0.68rem; color: var(--text-muted); line-height: 1.45; text-align: left;">
+                        &#128680; Sobredemanda: <strong>{p['Prob_Alta']*100:.0f}%</strong> <span class="metric-delta {badge_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{badge_text}</span><br/>
+                        &#128663; Rescate: <strong>{p.get('Prob_Rescate_Alto', np.nan)*100:.0f}%</strong> <span class="metric-delta {rescue_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{rescue_label}</span><br/>
+                        &#128293; Incendio: <strong>{p.get('Prob_Incendio_Alto', np.nan)*100:.0f}%</strong> <span class="metric-delta {fire_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{fire_label}</span>
+                        <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.35;" />
+                        &#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong><br/>
+                        &#127777;&#65039; Media: <strong>{p['Temp_Media']:.1f}&deg;C</strong><br/>
+                        &#128167; Humedad: <strong>{p['Hum_Media']:.0f}%</strong><br/>
+                        &#128168; Viento: <strong>{p['Viento_Medio']:.1f} km/h</strong><br/>
+                        &#127783;&#65039; Lluvia: <strong>{p['Lluvia']:.1f} mm</strong>
                     </div>
                 </div>"""
             )
@@ -1424,29 +1613,20 @@ with tab1:
                     <div style="font-size: .68rem; color: var(--text-muted);">llamadas por dia</div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-label">Frecuencia historica de alerta</div>
-                    <div class="metric-value">{historical_alert_rate*100:.1f}%</div>
-                    <div style="font-size: .68rem; color: var(--text-muted);">{historical_alert_count} dias sobre p80 de probabilidad</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-label">Prob. alerta promedio</div>
+                    <div class="metric-label">Prob. sobredemanda promedio</div>
                     <div class="metric-value">{historical_alert_probability_mean*100:.1f}%</div>
                     <div style="font-size: .68rem; color: var(--text-muted);">{probability_source}</div>
                 </div>
-                <div class="metric-card">
-                    <div class="metric-label">Percentil 50 prob. alerta</div>
-                    <div class="metric-value">{historical_alert_probability_p50*100:.1f}%</div>
-                    <div style="font-size: .68rem; color: var(--text-muted);">mediana historica del modelo</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-label">Percentil 80 prob. alerta</div>
-                    <div class="metric-value">{historical_alert_probability_p80*100:.1f}%</div>
-                    <div style="font-size: .68rem; color: var(--text-muted);">top 20% historico del modelo</div>
-                </div>
             </div>
             <div class="chart-subtitle" style="margin-top: -0.35rem;">
-                <strong>Frecuencia historica de alerta</strong> es el porcentaje de dias historicos cuya probabilidad estuvo sobre el p80 del modelo.
-                Prealerta cuando la probabilidad supera la mediana historica ({historical_alert_probability_p50*100:.1f}%); alerta cuando supera el p80 historico ({historical_alert_probability_p80*100:.1f}%).
+                <strong>Frecuencia historica de sobredemanda:</strong> {historical_alert_rate*100:.1f}% de los dias historicos estuvo sobre el p80 de probabilidad del modelo.
+                Prealerta sobre p50 ({historical_alert_probability_p50*100:.1f}%) y alerta sobre p80 ({historical_alert_probability_p80*100:.1f}%).
+                <br/>
+                <strong>Frecuencia historica de rescate:</strong> {rescue_alert_rate*100:.1f}% de los dias historicos estuvo sobre el p80 de probabilidad de rescate.
+                Prealerta sobre p50 ({rescue_probability_p50*100:.1f}%) y alerta sobre p80 ({rescue_probability_p80*100:.1f}%).
+                <br/>
+                <strong>Frecuencia historica de incendio:</strong> {fire_alert_rate*100:.1f}% de los dias historicos estuvo sobre el p80 de probabilidad de incendio.
+                Prealerta sobre p50 ({fire_probability_p50*100:.1f}%) y alerta sobre p80 ({fire_probability_p80*100:.1f}%).
             </div>""",
             unsafe_allow_html=True,
         )

@@ -18,4 +18,6 @@ __pycache__/
 !03_model/saved_models/regressor_climatic_augmented.pkl
 !03_model/saved_models/regressor_climatic_augmented_direct31.pkl
 !03_model/saved_models/category_model_optimization.csv
+!03_model/saved_models/category_risk_models.pkl
+!03_model/saved_models/category_risk_models_summary.csv
 !03_model/saved_models/feature_subset_search.csv

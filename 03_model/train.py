@@ -637,6 +637,12 @@ def main():
 
         optimize_category_models()
 
+    if os.getenv("TRAIN_CATEGORY_RISK", "1") == "1":
+        print("\nEntrenando clasificadores de riesgo por grupo operacional...")
+        from train_category_risk_models import main as train_category_risk_models
+
+        train_category_risk_models()
+
 
 if __name__ == "__main__":
     main()
