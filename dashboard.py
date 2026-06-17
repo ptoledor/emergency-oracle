@@ -178,6 +178,12 @@ css = f"""
     .activity-low {{ color: #3b82f6; background: rgba(59, 130, 246, 0.14); }}
     .activity-normal {{ color: var(--green); background: var(--green-muted); }}
     .activity-high {{ color: #f59e0b; background: rgba(245, 158, 11, 0.14); }}
+    .activity-alert {{ color: var(--red); background: var(--red-muted); }}
+    .percentile-change {{ background: rgba(245, 158, 11, 0.16); color: var(--text); font-weight: 700; }}
+    .percentile-table {{ width: 100%; border-collapse: collapse; font-size: 0.72rem; margin-top: 0.4rem; }}
+    .percentile-table th, .percentile-table td {{ border: 1px solid var(--border); padding: 0.35rem 0.45rem; text-align: right; }}
+    .percentile-table th:first-child, .percentile-table td:first-child {{ text-align: left; font-weight: 700; color: var(--text); }}
+    .percentile-table th {{ color: var(--text-muted); background: var(--bg-subtle); }}
     
     /* Contenedores de gráficos basados en st.container */
     div[data-testid="stVerticalBlock"]:has(.chart-anchor):not(:has(div[data-testid="stVerticalBlock"])),
@@ -388,20 +394,28 @@ def metric_card(label, value, delta=None, delta_type="up"):
     """, unsafe_allow_html=True)
 
 
-def operational_decision(prediction, prealert_probability_threshold, alert_probability_threshold):
-    if prediction['Prob_Alta'] > alert_probability_threshold:
-        return "ALERTA", "Preparar refuerzo preventivo", "delta-down"
-    if prediction['Prob_Alta'] > prealert_probability_threshold:
-        return "PREALERTA", "Confirmar disponibilidad y mantener personal localizable", "delta-down"
-    return "SIN ALERTA", "Mantener operación habitual", "delta-up"
+def secondary_level(probability, p33_threshold, p66_threshold, p80_threshold):
+    if probability > p80_threshold:
+        return "Alerta", "activity-alert"
+    if probability > p66_threshold:
+        return "Alto", "activity-high"
+    if probability >= p33_threshold:
+        return "Normal", "activity-normal"
+    return "Bajo", "activity-low"
 
 
-def activity_level(predicted_events, low_threshold, high_threshold):
-    if predicted_events < low_threshold:
+def operational_decision(prediction, p33_threshold, p66_threshold, p80_threshold):
+    return secondary_level(prediction['Prob_Alta'], p33_threshold, p66_threshold, p80_threshold)
+
+
+def activity_level(predicted_events, p33_threshold, p66_threshold, p80_threshold):
+    if predicted_events < p33_threshold:
         return "ACTIVIDAD BAJA", "activity-low"
-    if predicted_events < high_threshold:
-        return "ACTIVIDAD HABITUAL", "activity-normal"
-    return "ACTIVIDAD ALTA", "activity-high"
+    if predicted_events < p66_threshold:
+        return "ACTIVIDAD NORMAL", "activity-normal"
+    if predicted_events < p80_threshold:
+        return "ACTIVIDAD ALTA", "activity-high"
+    return "ACTIVIDAD MUY ALTA", "activity-alert"
 
 
 def force_single_thread_model(model):
@@ -584,14 +598,49 @@ def load_category_risk_artifact():
 category_risk_artifact = load_category_risk_artifact()
 
 
-def category_risk_label(probability, details):
-    if details is None or probability is None or np.isnan(probability):
+def category_risk_label(probability, p33_threshold, p66_threshold, p80_threshold):
+    if probability is None or np.isnan(probability):
         return "Sin modelo", "activity-low"
-    if probability > float(details.get("probability_p80", 1.0)):
-        return "Alerta", "delta-down"
-    if probability > float(details.get("probability_p50", 1.0)):
-        return "Prealerta", "activity-high"
-    return "Normal", "activity-normal"
+    return secondary_level(probability, p33_threshold, p66_threshold, p80_threshold)
+
+
+PERCENTILE_COLUMNS = [0, 10, 20, 30, 33, 40, 50, 60, 66, 70, 80, 90, 100]
+
+
+def build_percentile_row(metric_name, values, as_probability=False):
+    series = pd.to_numeric(values, errors='coerce').dropna()
+    row = {"Metrica": metric_name}
+    for percentile in PERCENTILE_COLUMNS:
+        value = float(series.quantile(percentile / 100)) if not series.empty else 0.0
+        row[f"p{percentile}"] = f"{value * 100:.1f}%" if as_probability else f"{value:.2f}"
+    mean_value = float(series.mean()) if not series.empty else 0.0
+    std_value = float(series.std()) if not series.empty else 0.0
+    row["Media"] = f"{mean_value * 100:.1f}%" if as_probability else f"{mean_value:.2f}"
+    row["Desvest"] = f"{std_value * 100:.1f}%" if as_probability else f"{std_value:.2f}"
+    return row
+
+
+def render_percentile_table(rows):
+    columns = ["Metrica"] + [f"p{p}" for p in PERCENTILE_COLUMNS] + ["Media", "Desvest"]
+    header_cells = []
+    for column in columns:
+        cell_class = ' class="percentile-change"' if column in ["p33", "p66", "p80"] else ""
+        header_cells.append(f"<th{cell_class}>{column}</th>")
+
+    body_rows = []
+    for row in rows:
+        cells = []
+        for column in columns:
+            cell_class = ' class="percentile-change"' if column in ["p33", "p66", "p80"] else ""
+            cells.append(f"<td{cell_class}>{row[column]}</td>")
+        body_rows.append(f"<tr>{''.join(cells)}</tr>")
+
+    return (
+        '<table class="percentile-table">'
+        f"<thead><tr>{''.join(header_cells)}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody>"
+        "</table>"
+    )
 
 
 # Helper to fetch weather series from Open-Meteo
@@ -1499,14 +1548,16 @@ with tab1:
         ).dropna()
         if historical_alert_probabilities.empty:
             historical_alert_probability_mean = 0.0
-            historical_alert_probability_p50 = 0.0
+            historical_alert_probability_p33 = 0.0
+            historical_alert_probability_p66 = 0.0
             historical_alert_probability_p80 = 0.0
             historical_alert_rate = 0.0
             historical_alert_count = 0
             probability_source = "frecuencia real historica"
         else:
             historical_alert_probability_mean = float(historical_alert_probabilities.mean())
-            historical_alert_probability_p50 = float(historical_alert_probabilities.quantile(0.50))
+            historical_alert_probability_p33 = float(historical_alert_probabilities.quantile(0.33))
+            historical_alert_probability_p66 = float(historical_alert_probabilities.quantile(0.66))
             historical_alert_probability_p80 = float(historical_alert_probabilities.quantile(0.80))
             historical_probability_alerts = historical_alert_probabilities > historical_alert_probability_p80
             historical_alert_rate = float(historical_probability_alerts.mean())
@@ -1520,8 +1571,13 @@ with tab1:
             df.get('PROB_INCENDIO_ALTO', pd.Series(dtype=float)),
             errors='coerce',
         ).dropna()
-        rescue_probability_p50 = (
-            float(historical_rescue_probabilities.quantile(0.50))
+        rescue_probability_p33 = (
+            float(historical_rescue_probabilities.quantile(0.33))
+            if not historical_rescue_probabilities.empty
+            else 0.0
+        )
+        rescue_probability_p66 = (
+            float(historical_rescue_probabilities.quantile(0.66))
             if not historical_rescue_probabilities.empty
             else 0.0
         )
@@ -1530,8 +1586,13 @@ with tab1:
             if not historical_rescue_probabilities.empty
             else 0.0
         )
-        fire_probability_p50 = (
-            float(historical_fire_probabilities.quantile(0.50))
+        fire_probability_p33 = (
+            float(historical_fire_probabilities.quantile(0.33))
+            if not historical_fire_probabilities.empty
+            else 0.0
+        )
+        fire_probability_p66 = (
+            float(historical_fire_probabilities.quantile(0.66))
             if not historical_fire_probabilities.empty
             else 0.0
         )
@@ -1552,29 +1613,35 @@ with tab1:
         )
         st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario de Llamados Talcahuano</h5></div>', unsafe_allow_html=True)
         
-        activity_low_threshold = float(historical_predictions.quantile(0.30))
-        activity_high_threshold = float(historical_predictions.quantile(0.70))
+        activity_p33_threshold = float(historical_predictions.quantile(0.33))
+        activity_p66_threshold = float(historical_predictions.quantile(0.66))
+        activity_p80_threshold = float(historical_predictions.quantile(0.80))
 
         forecast_cards = []
-        category_risk_models = category_risk_artifact.get("models", {}) if category_risk_artifact else {}
         for p in pred_results:
-            badge_text, _, badge_class = operational_decision(
+            badge_text, badge_class = operational_decision(
                 p,
-                historical_alert_probability_p50,
+                historical_alert_probability_p33,
+                historical_alert_probability_p66,
                 historical_alert_probability_p80,
             )
             activity_text, activity_class = activity_level(
                 p['Prediccion'],
-                activity_low_threshold,
-                activity_high_threshold,
+                activity_p33_threshold,
+                activity_p66_threshold,
+                activity_p80_threshold,
             )
             rescue_label, rescue_class = category_risk_label(
                 p.get('Prob_Rescate_Alto', np.nan),
-                category_risk_models.get("rescate"),
+                rescue_probability_p33,
+                rescue_probability_p66,
+                rescue_probability_p80,
             )
             fire_label, fire_class = category_risk_label(
                 p.get('Prob_Incendio_Alto', np.nan),
-                category_risk_models.get("incendio"),
+                fire_probability_p33,
+                fire_probability_p66,
+                fire_probability_p80,
             )
             forecast_cards.append(
                 f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
@@ -1605,6 +1672,12 @@ with tab1:
             </div>""",
             unsafe_allow_html=True,
         )
+        percentile_summary_html = render_percentile_table([
+            build_percentile_row("Nivel de actividad", historical_predictions, as_probability=False),
+            build_percentile_row("Probabilidad de sobredemanda", historical_alert_probabilities, as_probability=True),
+            build_percentile_row("Probabilidad de rescate", historical_rescue_probabilities, as_probability=True),
+            build_percentile_row("Probabilidad de incendio", historical_fire_probabilities, as_probability=True),
+        ])
         st.markdown(
             f"""<div class="responsive-grid responsive-grid-4" style="margin-top: 1rem; margin-bottom: 1rem;">
                 <div class="metric-card">
@@ -1619,14 +1692,9 @@ with tab1:
                 </div>
             </div>
             <div class="chart-subtitle" style="margin-top: -0.35rem;">
-                <strong>Frecuencia historica de sobredemanda:</strong> {historical_alert_rate*100:.1f}% de los dias historicos estuvo sobre el p80 de probabilidad del modelo.
-                Prealerta sobre p50 ({historical_alert_probability_p50*100:.1f}%) y alerta sobre p80 ({historical_alert_probability_p80*100:.1f}%).
-                <br/>
-                <strong>Frecuencia historica de rescate:</strong> {rescue_alert_rate*100:.1f}% de los dias historicos estuvo sobre el p80 de probabilidad de rescate.
-                Prealerta sobre p50 ({rescue_probability_p50*100:.1f}%) y alerta sobre p80 ({rescue_probability_p80*100:.1f}%).
-                <br/>
-                <strong>Frecuencia historica de incendio:</strong> {fire_alert_rate*100:.1f}% de los dias historicos estuvo sobre el p80 de probabilidad de incendio.
-                Prealerta sobre p50 ({fire_probability_p50*100:.1f}%) y alerta sobre p80 ({fire_probability_p80*100:.1f}%).
+                Cambios de etiqueta: Bajo menor a p33, Normal entre p33 y p66, Alto sobre p66 y Alerta sobre p80.
+                Para actividad principal: baja menor a p33, normal p33-p66, alta p66-p80 y muy alta p80+.
+                {percentile_summary_html}
             </div>""",
             unsafe_allow_html=True,
         )
@@ -1807,7 +1875,7 @@ if False:  # Vista comparativa antigua, conservada temporalmente como referencia
             </ul>
             <p style="margin-top: 1rem;"><strong>2. Metricas del Modelo de Clasificacion (probabilidad de alerta por percentiles historicos):</strong></p>
             <ul>
-                <li style="margin-bottom: 0.5rem;"><strong>Umbral de Clasificacion Calibrado:</strong> La comunicacion operacional usa percentiles historicos de probabilidad: <strong>Prealerta sobre p50</strong> y <strong>Alerta sobre p80</strong>.</li>
+                <li style="margin-bottom: 0.5rem;"><strong>Umbral de Clasificacion Calibrado:</strong> La comunicacion operacional usa percentiles historicos de probabilidad: <strong>Bajo bajo p33</strong>, <strong>Normal p33-p66</strong>, <strong>Alto sobre p66</strong> y <strong>Alerta sobre p80</strong>.</li>
                 <li style="margin-bottom: 0.5rem;"><strong>Exactitud (Accuracy):</strong> El porcentaje de días totales (tanto normales como críticos) en los que el clasificador del modelo acertó el estado de alerta correcto.</li>
                 <li style="margin-bottom: 0.5rem;"><strong>Precisión (Precision):</strong> De todos los días en los que el modelo emitió una alerta de día crítico, cuántos lo fueron realmente. Un 25% indica que 1 de cada 4 alertas preventivas es un día crítico real (tasa óptima y segura para logística de bomberos).</li>
                 <li style="margin-bottom: 0.5rem;"><strong>Sensibilidad (Recall):</strong> Qué porcentaje de los días críticos reales que ocurrieron logró anticipar y alertar el modelo. Un 70.4% significa que el modelo capta y advierte con éxito el 70% de las situaciones críticas reales.</li>
