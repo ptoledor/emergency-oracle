@@ -14,6 +14,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PROJECT_TIMEZONE = ZoneInfo("America/Santiago")
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if str(PROJECT_ROOT / "02_data") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "02_data"))
+
+from dedup import mark_duplicates, assign_local_date, DEFAULT_TIMEZONE
 
 
 def project_today():
@@ -21,19 +25,16 @@ def project_today():
 
 def get_events_and_categories_for_dates(csv_path, codes_path, dates):
     """
-    Carga los tweets locales, los limpia deduplicando los códigos CBT y
-    retorna:
-    1. Una lista de conteos de eventos diarios correspondientes a 'dates'.
-    2. Un diccionario con los conteos de eventos por categoría para la última fecha de la lista (lag_1).
+    Carga los tweets locales, deduplica incident-like, excluye operacionales,
+    y retorna conteos consistentes con clean_and_augment.py.
     """
     df = pd.read_csv(csv_path, sep=';', decimal=',')
-    df['FECHA_DIA'] = df['Fecha'].astype(str).str[:10]
-    
-    # Extraer código de emergencia usando el mismo regex
+    df['FECHA_DIA'] = df['Fecha'].apply(
+        lambda ts: assign_local_date(pd.to_datetime(ts, utc=True), DEFAULT_TIMEZONE)
+    )
+
     patron = r"\b(10-\d+(?:-\d+)?)\b"
     df['CODIGO_EMERGENCIA'] = df['Texto'].str.extract(patron)
-
-    # Imputar códigos
     mask_pastizal = df['Texto'].str.contains(r'PASTIZAL|FORESTAL', case=False, na=False)
     mask_incendio = df['Texto'].str.contains(r'INCENDIO', case=False, na=False)
     df['CODIGO_EMERGENCIA'] = np.where(
@@ -42,21 +43,22 @@ def get_events_and_categories_for_dates(csv_path, codes_path, dates):
         np.where(mask_incendio, '10-0-6', '0-0-0'))
     )
 
-    # Cargar y deduplicar claves CBT
     codigos = pd.read_excel(codes_path)
     codigos_clean = codigos.drop_duplicates(subset=['CODIGO_EMERGENCIA']).copy()
-
-    # Merge limpio
     df_merged = pd.merge(df, codigos_clean, how='left', on='CODIGO_EMERGENCIA')
-    
-    # Contar eventos diarios totales
-    daily_counts = df_merged.groupby('FECHA_DIA').size().to_dict()
+
+    # Deduplicar y filtrar solo incident-like únicos (consistente con clean_and_augment.py)
+    dup_flags, incident_flags = mark_duplicates(df_merged, 'Fecha', 'Texto')
+    df_merged['_IS_DUPLICATE'] = df_merged.index.map(lambda i: dup_flags.get(i, False))
+    df_merged['_IS_INCIDENT_LIKE'] = df_merged.index.map(lambda i: incident_flags.get(i, False))
+    df_incidents = df_merged[df_merged['_IS_INCIDENT_LIKE'] & ~df_merged['_IS_DUPLICATE']].copy()
+
+    daily_counts = df_incidents.groupby('FECHA_DIA').size().to_dict()
     event_counts = [daily_counts.get(d, 0) for d in dates]
-    
-    # Contar por categoría para lag_1 (la última fecha en 'dates')
+
     lag_1_date = dates[-1]
-    df_lag1 = df_merged[df_merged['FECHA_DIA'] == lag_1_date]
-    
+    df_lag1 = df_incidents[df_incidents['FECHA_DIA'] == lag_1_date]
+
     categorias_clave = {
         'INCENDIO ESTRUCTURAL': 'N_INCENDIO_ESTR_lag_1',
         'INCENDIO PASTIZAL O FORESTAL': 'N_INCENDIO_FOREST_lag_1',
@@ -64,22 +66,23 @@ def get_events_and_categories_for_dates(csv_path, codes_path, dates):
         'RESCATE DE PERSONAS': 'N_RESCATE_PERS_lag_1',
         'EMANACIÓN DE GASES': 'N_GASES_lag_1',
     }
-    
+
     category_counts = {v: 0 for v in categorias_clave.values()}
     if not df_lag1.empty:
+        df_lag1['CATEGORIA_EMERGENCIA'] = df_lag1['CATEGORIA_EMERGENCIA'].fillna('OTROS')
         df_lag1_cats = df_lag1.groupby('CATEGORIA_EMERGENCIA').size().to_dict()
         for cat_orig, cat_new in categorias_clave.items():
             category_counts[cat_new] = df_lag1_cats.get(cat_orig, 0)
-            
+
     return event_counts, category_counts
 
 
 def main():
     # Parámetros y directorios base
-    base_dir = "c:/Users/ptole/Desktop/Pitters-Git/emergency-oracle"
-    models_dir = f"{base_dir}/03_model/saved_models"
-    raw_tweets_path = f"{base_dir}/02_data/compiled_scraped_data.csv"
-    claves_cbt_path = f"{base_dir}/02_data/Clave_CBT.xlsx"
+    base_dir = PROJECT_ROOT
+    models_dir = base_dir / "03_model" / "saved_models"
+    raw_tweets_path = base_dir / "02_data" / "compiled_scraped_data.csv"
+    claves_cbt_path = base_dir / "02_data" / "Clave_CBT.xlsx"
     lat, lon = -36.731106, -73.11023  # Coordenadas de Talcahuano
 
     # Por defecto, predice el día siguiente al dataset
@@ -182,7 +185,7 @@ def main():
                f"latitude={lat}&longitude={lon}&"
                f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
                f"timezone=America%2FSantiago&past_days=30&forecast_days=10")
-        response = requests.get(url)
+        response = requests.get(url, timeout=30)
         if response.status_code != 200:
             raise RuntimeError(f"Error al descargar pronóstico: {response.text}")
         data_raw = response.json()['hourly']
@@ -195,7 +198,7 @@ def main():
                f"end_date={target_date_str}&"
                f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
                f"timezone=America%2FSantiago&format=json")
-        response = requests.get(url)
+        response = requests.get(url, timeout=30)
         if response.status_code != 200:
             raise RuntimeError(f"Error al descargar clima histórico: {response.text}")
         data_raw = response.json()['hourly']
@@ -369,20 +372,28 @@ def main():
     X_pred = pd.DataFrame([features])[metadata['feature_cols']]
 
     # Realizar predicciones
-    pred_count = reg_model.predict(X_pred)[0]
-    prob_high = clf_model.predict_proba(X_pred)[0, 1]
+    pred_count = float(np.clip(reg_model.predict(X_pred)[0], 0, None))
+    prob_high = float(clf_model.predict_proba(X_pred)[0, 1])
+    
+    # Intervalo predictivo 80% via Negative Binomial
+    nb_alpha = float(metadata.get('negative_binomial_alpha', 0.3))
+    nb_var = pred_count + nb_alpha * pred_count ** 2
+    nb_std = float(np.sqrt(max(nb_var, 0.01)))
+    pred_low = max(0.0, pred_count - 1.2816 * nb_std)
+    pred_high_bound = pred_count + 1.2816 * nb_std
     
     # Lógica de umbral dinámico desde metadatos
     threshold = metadata.get('classification_threshold', 0.20)
     reinforcement_threshold = metadata.get('operational_reinforcement_threshold', 0.50)
     pred_high = 1 if prob_high >= threshold else 0
-
+    
     # Formatear el reporte de predicción en consola
     print("\n" + "="*50)
     print(f" REPORTES DE PREDICCIÓN - BOMBEROS TALCAHUANO")
     print(f" Fecha del reporte: {project_today()} | Fecha predicción: {target_date_str}")
     print("="*50)
     print(f" Cantidad esperada de emergencias: {pred_count:.1f} incidentes")
+    print(f" Intervalo 80% (NB): [{pred_low:.1f}, {pred_high_bound:.1f}]")
     print(f" Probabilidad de día crítico (>7 eventos): {prob_high * 100:.1f}% (Umbral Alerta: {threshold * 100:.1f}%)")
     
     # Decisión de personal basada en la predicción combinada

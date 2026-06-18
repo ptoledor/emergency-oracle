@@ -3,16 +3,28 @@ import numpy as np
 import requests
 import os
 import holidays
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import sys
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from dedup import mark_duplicates, assign_local_date, DEFAULT_TIMEZONE
+
+PROJECT_TIMEZONE = DEFAULT_TIMEZONE
+
 
 def main():
     print("=== Paso 2: Limpieza y Aumentación de Datos (v2) ===")
 
     # 1. Rutas de archivos
-    base_dir = "c:/Users/ptole/Desktop/Pitters-Git/emergency-oracle"
-    raw_tweets_path = f"{base_dir}/02_data/compiled_scraped_data.csv"
-    claves_cbt_path = f"{base_dir}/02_data/Clave_CBT.xlsx"
-    weather_cache_path = f"{base_dir}/02_data/weather_archive_talcahuano.csv"
-    output_data_path = f"{base_dir}/02_data/augmented_emergency_data.csv"
+    base_dir = Path(__file__).resolve().parent.parent
+    raw_tweets_path = base_dir / "02_data" / "compiled_scraped_data.csv"
+    claves_cbt_path = base_dir / "02_data" / "Clave_CBT.xlsx"
+    weather_cache_path = base_dir / "02_data" / "weather_archive_talcahuano.csv"
+    output_data_path = base_dir / "02_data" / "augmented_emergency_data.csv"
+    audit_target_path = base_dir / "05_research" / "data_quality" / "output" / "daily_target_audit.csv"
 
     if not os.path.exists(raw_tweets_path):
         raise FileNotFoundError(f"No se encontró el archivo de tweets: {raw_tweets_path}")
@@ -28,7 +40,9 @@ def main():
     print(f"Claves CBT: {codigos.shape[0]} -> {codigos_clean.shape[0]} (deduplicadas)")
 
     df = df_raw.copy()
-    df['FECHA_DIA'] = df['Fecha'].astype(str).str[:10]
+    df['FECHA_DIA'] = df['Fecha'].apply(
+        lambda ts: assign_local_date(pd.to_datetime(ts, utc=True), PROJECT_TIMEZONE)
+    )
     
     patron = r"\b(10-\d+(?:-\d+)?)\b"
     df['CODIGO_EMERGENCIA'] = df['Texto'].str.extract(patron)
@@ -44,6 +58,16 @@ def main():
     df_merged = pd.merge(df, codigos_clean, how='left', on='CODIGO_EMERGENCIA')
     print(f"Tweets tras unión limpia: {df_merged.shape[0]} filas")
 
+    # --- Deduplicación DESACTIVADA: cada tweet = un evento ---
+    print("Deduplicación desactivada: cada tweet cuenta como evento.")
+    df_merged['_IS_DUPLICATE'] = False
+    df_merged['_IS_INCIDENT_LIKE'] = True
+    n_total = len(df_merged)
+    n_incident = n_total
+    n_dup = 0
+    print(f"Mensajes: {n_total} total -> {n_incident} incident-like -> "
+          f"{n_incident - n_dup} únicos ({n_dup} duplicados removidos)")
+
     # 3. Serie temporal continua
     min_date_str = df_merged['FECHA_DIA'].min()
     max_date_str = df_merged['FECHA_DIA'].max()
@@ -51,8 +75,9 @@ def main():
     df_calendar = pd.DataFrame({'FECHA_DIA': date_range.strftime('%Y-%m-%d')})
     print(f"Calendario continuo: {df_calendar.shape[0]} días ({min_date_str} -> {max_date_str})")
 
-    # === CONTEO TOTAL DE EVENTOS POR DÍA ===
-    df_daily_events = df_merged.groupby('FECHA_DIA').size().reset_index(name='EVENTOS')
+    # === CONTEO TOTAL DE EVENTOS POR DÍA (solo incident-like únicos) ===
+    df_incidents = df_merged[df_merged['_IS_INCIDENT_LIKE'] & ~df_merged['_IS_DUPLICATE']].copy()
+    df_daily_events = df_incidents.groupby('FECHA_DIA').size().reset_index(name='EVENTOS')
     
     # === CONTEOS POR CATEGORÍA DE EMERGENCIA POR DÍA ===
     # Definir las categorías principales que pueden tener efecto predictivo
@@ -61,14 +86,15 @@ def main():
         'INCENDIO PASTIZAL O FORESTAL': 'N_INCENDIO_FOREST',
         'RESCATE VEHICULAR': 'N_RESCATE_VEH',
         'RESCATE DE PERSONAS': 'N_RESCATE_PERS',
+        'EMERGENCIAS CLIMATICAS': 'N_EMERGENCIAS_CLIMATICAS',
         'EMANACIÓN DE GASES': 'N_GASES',
     }
     
     # Llenar NaN en CATEGORIA_EMERGENCIA con 'OTROS'
-    df_merged['CATEGORIA_EMERGENCIA'] = df_merged['CATEGORIA_EMERGENCIA'].fillna('OTROS')
+    df_incidents['CATEGORIA_EMERGENCIA'] = df_incidents['CATEGORIA_EMERGENCIA'].fillna('OTROS')
     
     # Crear un pivot de conteos por categoría y día
-    df_cat_counts = df_merged.groupby(['FECHA_DIA', 'CATEGORIA_EMERGENCIA']).size().unstack(fill_value=0)
+    df_cat_counts = df_incidents.groupby(['FECHA_DIA', 'CATEGORIA_EMERGENCIA']).size().unstack(fill_value=0)
     
     # Renombrar columnas a las que nos interesan y agrupar el resto en "OTROS"
     cat_columns_present = {}
@@ -87,37 +113,65 @@ def main():
 
     # Unir eventos totales y por categoría al calendario
     df_daily = pd.merge(df_calendar, df_daily_events, on='FECHA_DIA', how='left')
-    df_daily['EVENTOS'] = df_daily['EVENTOS'].fillna(0).astype(int)
+    df_daily['DAY_STATE'] = 'observed'
+    df_daily.loc[df_daily['EVENTOS'].isna(), 'DAY_STATE'] = 'no_data'
+
+    # --- Marcar coverage_unknown desde el audit si está disponible ---
+    if os.path.exists(audit_target_path):
+        print(f"Cargando audit de cobertura desde: {audit_target_path}")
+        df_audit = pd.read_csv(audit_target_path)
+        coverage_map = dict(zip(
+            df_audit['local_date'],
+            df_audit['day_state'],
+        ))
+        audit_states = df_daily['FECHA_DIA'].map(coverage_map)
+        n_unknown = int((audit_states == 'coverage_unknown').sum())
+        if n_unknown > 0:
+            print(f"Marcando {n_unknown} días con coverage_unknown (sin observación confiable)")
+        df_daily.loc[audit_states == 'coverage_unknown', 'DAY_STATE'] = 'coverage_unknown'
+
+    # coverage_unknown y no_data -> NaN (no se rellenan con 0)
+    df_daily['EVENTOS'] = df_daily['EVENTOS'].where(df_daily['DAY_STATE'] == 'observed', np.nan)
     
     df_daily = pd.merge(df_daily, df_cat_final, on='FECHA_DIA', how='left')
     for col in cols_to_keep + ['N_OTROS']:
-        df_daily[col] = df_daily[col].fillna(0).astype(int)
+        df_daily[col] = df_daily[col].where(df_daily['DAY_STATE'] == 'observed', np.nan)
 
-    print(f"Distribución de eventos diarios:")
-    print(df_daily['EVENTOS'].describe())
+    n_observed = int((df_daily['DAY_STATE'] == 'observed').sum())
+    n_unknown = int((df_daily['DAY_STATE'] == 'coverage_unknown').sum())
+    print(f"Distribución de eventos diarios ({n_observed} observados, {n_unknown} coverage_unknown):")
+    print(df_daily.loc[df_daily['DAY_STATE'] == 'observed', 'EVENTOS'].describe())
 
-    # 4. Datos meteorológicos
+    # 4. Datos meteorológicos (Historical Forecast API — pronósticos emitidos, no observados)
     lat, lon = -36.731106, -73.11023
-    
+    WEATHER_CACHE_VERSION = "forecast_v1"
+    cache_version_path = weather_cache_path.parent / ".weather_cache_version"
+
     rebuild_cache = True
     if os.path.exists(weather_cache_path):
         try:
             df_cached = pd.read_csv(weather_cache_path)
+            cached_version = ""
+            if os.path.exists(cache_version_path):
+                cached_version = Path(cache_version_path).read_text(encoding="utf-8").strip()
             if 'VIENTO_SKEW' in df_cached.columns and 'HUM_SKEW' in df_cached.columns:
-                print("Cargando clima desde caché (actualizada)...")
-                df_clima = df_cached
-                rebuild_cache = False
+                if cached_version == WEATHER_CACHE_VERSION:
+                    print(f"Cargando clima desde caché (versión={cached_version})...")
+                    df_clima = df_cached
+                    rebuild_cache = False
+                else:
+                    print(f"Cache versión '{cached_version}' obsoleta. Re-descargando...")
         except Exception:
             pass
 
     if rebuild_cache:
-        print("Descargando clima horario desde Open-Meteo...")
-        url = (f"https://archive-api.open-meteo.com/v1/archive?"
+        print("Descargando clima horario (Historical Forecast API) desde Open-Meteo...")
+        url = (f"https://historical-forecast-api.open-meteo.com/v1/forecast?"
                f"latitude={lat}&longitude={lon}&"
                f"start_date={min_date_str}&end_date={max_date_str}&"
                f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
                f"timezone=America%2FSantiago&format=json")
-        response = requests.get(url)
+        response = requests.get(url, timeout=30)
         if response.status_code != 200:
             raise RuntimeError(f"Error Open-Meteo: {response.text}")
         data_raw = response.json()
@@ -163,29 +217,38 @@ def main():
         ).reset_index()
         
         df_clima.to_csv(weather_cache_path, index=False)
-        print("Clima horario agregado y guardado en caché.")
+        Path(cache_version_path).write_text(WEATHER_CACHE_VERSION, encoding="utf-8")
+        print("Clima horario agregado y guardado en caché (Historical Forecast API).")
 
     df_clima['FECHA_DIA'] = df_clima['FECHA_DIA'].astype(str)
     df_daily = pd.merge(df_daily, df_clima, on='FECHA_DIA', how='left')
     
-    # Interpolar NaN numéricos de clima
-    numeric_cols = df_daily.select_dtypes(include=[np.number]).columns
-    df_daily[numeric_cols] = df_daily[numeric_cols].interpolate(method='linear')
+    # Interpolar NaN de clima solo hacia adelante (forward-fill) para evitar fuga de información futura
+    weather_numeric = [
+        c for c in df_daily.select_dtypes(include=[np.number]).columns
+        if c not in ['EVENTOS'] + cols_to_keep + ['N_OTROS']
+    ]
+    df_daily[weather_numeric] = df_daily[weather_numeric].ffill()
 
 
     # 5. Feature Engineering EXTENDIDO
     print("Construyendo features extendidas...")
     
+    # Para lag features usamos una versión forward-fill de EVENTOS y categorías
+    # (conservando NaN en el target para días coverage_unknown).
+    eventos_ff = df_daily['EVENTOS'].ffill()
+    cat_ff = {col: df_daily[col].ffill() for col in cols_to_keep + ['N_OTROS']}
+    
     # --- Lags de eventos totales ---
     for lag in [1, 2, 3, 7]:
-        df_daily[f'EVENTOS_lag_{lag}'] = df_daily['EVENTOS'].shift(lag)
+        df_daily[f'EVENTOS_lag_{lag}'] = eventos_ff.shift(lag)
     
     # --- Lags de categorías clave (solo lag_1) ---
     for col in cols_to_keep:
-        df_daily[f'{col}_lag_1'] = df_daily[col].shift(1)
+        df_daily[f'{col}_lag_1'] = cat_ff[col].shift(1)
     
     # --- Rolling stats de eventos (ventanas de 3 y 7 días, excluyendo hoy) ---
-    eventos_shifted = df_daily['EVENTOS'].shift(1)
+    eventos_shifted = eventos_ff.shift(1)
     df_daily['EVENTOS_rolling_mean_3d'] = eventos_shifted.rolling(3, min_periods=1).mean()
     df_daily['EVENTOS_rolling_std_3d'] = eventos_shifted.rolling(3, min_periods=1).std().fillna(0)
     df_daily['EVENTOS_rolling_max_3d'] = eventos_shifted.rolling(3, min_periods=1).max()
@@ -244,13 +307,18 @@ def main():
     df_daily['DANO_SIN'] = np.sin(2 * np.pi * df_daily['DIA_DEL_ANO'] / 365)
     df_daily['DANO_COS'] = np.cos(2 * np.pi * df_daily['DIA_DEL_ANO'] / 365)
 
-    # Limpiar filas con NaN de los shifts
-    df_daily = df_daily.dropna().copy()
+    # Limpiar filas con NaN de los shifts, coverage_unknown o clima faltante
+    df_daily = df_daily.sort_values('FECHA_DIA').reset_index(drop=True)
+    df_daily = df_daily.dropna(subset=['EVENTOS']).copy()
+    # Rellenar cualquier NaN restante en features de clima con forward-fill + back-fill del primer valor
+    numeric_cols = df_daily.select_dtypes(include=[np.number]).columns.tolist()
+    numeric_cols = [c for c in numeric_cols if c not in ['EVENTOS']]
+    df_daily[numeric_cols] = df_daily[numeric_cols].ffill().bfill()
     
     # Conservar los conteos por categoría como objetivos para modelos
     # especializados. Se excluyen explícitamente de los predictores al entrenar.
-    drop_cols = ['FECHA_DT', 'DIA_DEL_ANO']
-    df_daily = df_daily.drop(columns=drop_cols)
+    drop_cols = ['FECHA_DT', 'DIA_DEL_ANO', 'DAY_STATE']
+    df_daily = df_daily.drop(columns=[c for c in drop_cols if c in df_daily.columns])
     
     df_daily.to_csv(output_data_path, index=False, sep=';')
     feature_cols = [c for c in df_daily.columns if c not in ['FECHA_DIA', 'EVENTOS']]

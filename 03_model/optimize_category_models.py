@@ -136,15 +136,30 @@ def main():
         base_dir / "02_data" / "augmented_emergency_data.csv",
         sep=";",
     )
+    df = df.sort_values("FECHA_DIA").reset_index(drop=True)
     with open(models_dir / "metadata_climatic_augmented.pkl", "rb") as file:
         metadata = pickle.load(file)
 
     feature_cols = metadata["feature_cols"]
+
+    # Pool completo de candidatos climáticos (no solo las 31 del modelo total)
+    # Excluir lags de eventos/categorías (target leakage) pero permitir lags de clima
+    category_target_cols = CATEGORIES
+    event_lag_cols = [c for c in df.columns if c.startswith('EVENTOS_') or c.startswith('N_') and c.endswith('_lag_1')]
+    exclude_cols = ['FECHA_DIA', 'EVENTOS'] + category_target_cols + event_lag_cols
+    climatic_candidates = [
+        c for c in df.columns if c not in exclude_cols
+        and c not in ('MES', 'DIA_SEMANA', 'ES_FIN_SEMANA', 'ES_FERIADO',
+                       'ES_FERIADO_IRRENUNCIABLE', 'MES_SIN', 'MES_COS',
+                       'DIA_SIN', 'DIA_COS', 'DANO_SIN', 'DANO_COS')
+    ]
+
     split_idx = int(len(df) * 0.8)
     X = df[feature_cols]
     y_categories = df[CATEGORIES].astype(float)
     y_total = df["EVENTOS"].astype(float)
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+    X_candidates_train = df[climatic_candidates].iloc[:split_idx]
     y_train = y_categories.iloc[:split_idx]
     y_total_train, y_total_test = y_total.iloc[:split_idx], y_total.iloc[split_idx:]
 
@@ -152,7 +167,7 @@ def main():
     all_results = []
     for category in CATEGORIES:
         print(f"Optimizando {category}...", flush=True)
-        name, selected, results = optimize_category(category, X_train, y_train)
+        name, selected, results = optimize_category(category, X_candidates_train, y_train)
         optimized.append((name, selected))
         for result in results:
             all_results.append({
@@ -178,18 +193,19 @@ def main():
     valid_positions = np.flatnonzero(valid)
     direct_oof = np.full(len(X_train), np.nan)
     direct_params = {
-        "n_estimators": 150,
-        "max_depth": 4,
-        "min_samples_leaf": 5,
+        "loss": "poisson",
+        "max_iter": 300,
         "learning_rate": 0.05,
-        "subsample": 0.8,
+        "max_leaf_nodes": 15,
+        "min_samples_leaf": 12,
+        "l2_regularization": 1.0,
         "random_state": RANDOM_STATE,
     }
     for train_idx, validation_idx in TimeSeriesSplit(n_splits=5).split(X_train):
-        direct_fold = GradientBoostingRegressor(**direct_params)
+        direct_fold = HistGradientBoostingRegressor(**direct_params)
         direct_fold.fit(X_train.iloc[train_idx], y_total_train.iloc[train_idx])
-        direct_oof[validation_idx] = direct_fold.predict(
-            X_train.iloc[validation_idx]
+        direct_oof[validation_idx] = np.clip(
+            direct_fold.predict(X_train.iloc[validation_idx]), 0, None
         )
     blend_candidates = []
     for weight_direct in np.arange(0, 1.001, 0.01):
@@ -231,10 +247,12 @@ def main():
 
     test_predictions = {}
     saved_models = {}
+    X_all_train = df[climatic_candidates].iloc[:split_idx]
+    X_all_test = df[climatic_candidates].iloc[split_idx:]
     for category, selected in optimized:
         model = build_model(selected["family"])
-        model.fit(X_train[selected["features"]], y_train[category])
-        prediction = np.clip(model.predict(X_test[selected["features"]]), 0, None)
+        model.fit(X_all_train[selected["features"]], y_train[category])
+        prediction = np.clip(model.predict(X_all_test[selected["features"]]), 0, None)
         test_predictions[category] = prediction
         saved_models[category] = {
             "model": model,
@@ -244,9 +262,9 @@ def main():
         }
 
     test_total = sum(test_predictions.values())
-    direct_model = GradientBoostingRegressor(**direct_params)
-    direct_model.fit(X_train, y_total_train)
-    direct_test = np.clip(direct_model.predict(X_test), 0, None)
+    direct_model = HistGradientBoostingRegressor(**direct_params)
+    direct_model.fit(X_all_train[feature_cols], y_total_train)
+    direct_test = np.clip(direct_model.predict(X_all_test[feature_cols]), 0, None)
     blended_test = (
         weight_direct * direct_test
         + (1.0 - weight_direct) * test_total
@@ -328,7 +346,7 @@ def main():
         "mae": summary["direct_test_mae"],
         "mse": summary["direct_test_mse"],
         "r2": summary["direct_test_r2"],
-        "regressor_type": "GradientBoostingRegressor",
+        "regressor_type": "HistGradientBoostingRegressor",
         "selected_variant": "pruned",
         "is_primary": False,
     })

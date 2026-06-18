@@ -3,17 +3,36 @@ import numpy as np
 import os
 import pickle
 import shutil
+import tempfile
 from itertools import combinations
 from pathlib import Path
 from joblib import Parallel, delayed
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestClassifier
+from sklearn.ensemble import (
+    GradientBoostingRegressor,
+    HistGradientBoostingRegressor,
+    RandomForestClassifier,
+)
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import (
     mean_absolute_error, mean_squared_error, r2_score,
-    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
+    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
+    confusion_matrix, brier_score_loss,
 )
 
 RANDOM_STATE = 42
+
+# Modelo de producción: Poisson loss (no-negativo, apropiado para conteos)
+FINAL_MODEL_PARAMS = {
+    'loss': 'poisson',
+    'max_iter': 300,
+    'learning_rate': 0.05,
+    'max_leaf_nodes': 15,
+    'min_samples_leaf': 12,
+    'l2_regularization': 1.0,
+    'random_state': RANDOM_STATE,
+}
+
+# GBR para feature selection (necesita feature_importances_)
 MODEL_PARAMS = {
     'n_estimators': 150,
     'max_depth': 4,
@@ -276,8 +295,9 @@ def train_model_pipeline(
     pruned_cols = list(set(initial_feature_cols) - set(feature_cols))
     print(f"Features podadas ({len(pruned_cols)}): {pruned_cols}")
     
-    # Umbral para Alta Actividad (más de 7 eventos diarios)
-    UMBRAL_ALTA_ACTIVIDAD = 7
+    # Umbral para Alta Actividad: P80 del target de entrenamiento (data-driven, consistente con category risk)
+    UMBRAL_ALTA_ACTIVIDAD = float(df['EVENTOS'].iloc[:split_idx].quantile(0.80))
+    print(f"Umbral de Alta Actividad (P80 train): {UMBRAL_ALTA_ACTIVIDAD:.1f} eventos")
 
     X = df[feature_cols]
     y_reg = df['EVENTOS']
@@ -362,23 +382,40 @@ def train_model_pipeline(
         f"(precision OOF={operational_precision:.3f}, recall OOF={operational_recall:.3f})"
     )
 
-    reg_model = GradientBoostingRegressor(**MODEL_PARAMS)
+    reg_model = HistGradientBoostingRegressor(**FINAL_MODEL_PARAMS)
     reg_model.fit(X_train, y_reg_train)
-    
-    y_reg_pred = reg_model.predict(X_test)
+
+    y_reg_pred = np.clip(reg_model.predict(X_test), 0, None)
     
     mae = mean_absolute_error(y_reg_test, y_reg_pred)
     mse = mean_squared_error(y_reg_test, y_reg_pred)
     r2 = r2_score(y_reg_test, y_reg_pred)
     train_mean = float(y_reg_train.mean())
+    train_median = float(y_reg_train.median())
     baseline_pred = np.full(len(y_reg_test), train_mean)
     baseline_mae = mean_absolute_error(y_reg_test, baseline_pred)
     baseline_mse = mean_squared_error(y_reg_test, baseline_pred)
-    
+
+    # --- Baseline gate: mediana histórica y media móvil 28d ---
+    median_baseline_pred = np.full(len(y_reg_test), train_median)
+    median_baseline_mae = mean_absolute_error(y_reg_test, median_baseline_pred)
+    rolling_28d_pred = y_reg_train.rolling(28, min_periods=1).mean().iloc[-1]
+    rolling_baseline_pred = np.full(len(y_reg_test), rolling_28d_pred)
+    rolling_baseline_mae = mean_absolute_error(y_reg_test, rolling_baseline_pred)
+
     print("\n--- Métricas del Modelo de Regresión (Set de Prueba) ---")
     print(f"Error Absoluto Medio (MAE): {mae:.3f} eventos")
     print(f"Error Cuadrático Medio (MSE): {mse:.3f}")
     print(f"Coeficiente de Determinación R²: {r2:.3f}")
+    print(f"Baseline media train:     MAE={baseline_mae:.3f}")
+    print(f"Baseline mediana train:   MAE={median_baseline_mae:.3f}")
+    print(f"Baseline media móvil 28d: MAE={rolling_baseline_mae:.3f}")
+    if mae > min(median_baseline_mae, rolling_baseline_mae):
+        print("=" * 60)
+        print("ADVERTENCIA: El modelo NO supera al baseline naive.")
+        print(f"  Modelo MAE={mae:.3f} vs mejor baseline MAE={min(median_baseline_mae, rolling_baseline_mae):.3f}")
+        print("  Considere no promover este modelo.")
+        print("=" * 60)
 
     # Entrenar Modelo de Clasificación Final
     print("\nEntrenando modelo final de Clasificación...")
@@ -394,6 +431,7 @@ def train_model_pipeline(
     rec = recall_score(y_clf_test, y_clf_pred, zero_division=0)
     f1 = f1_score(y_clf_test, y_clf_pred, zero_division=0)
     roc_auc = roc_auc_score(y_clf_test, y_clf_prob)
+    brier = brier_score_loss(y_clf_test, y_clf_prob)
     cm = confusion_matrix(y_clf_test, y_clf_pred)
     operational_test_precision = precision_score(
         y_clf_test, y_operational_pred, zero_division=0
@@ -408,12 +446,18 @@ def train_model_pipeline(
     print(f"Precisión (Precision): {prec:.3f}")
     print(f"Sensibilidad (Recall): {rec:.3f}")
     print(f"F1-Score: {f1:.3f}")
+    print(f"Brier score: {brier:.3f}")
     print(f"Área bajo la curva ROC (ROC-AUC): {roc_auc:.3f}")
     print("Matriz de Confusión:")
     print(cm)
     
-    # Importancia de las Características
-    importances_final = reg_model.feature_importances_
+    # Importancia de las Características (HistGBR no tiene feature_importances_, usar GBR fallback)
+    importances_final = getattr(reg_model, 'feature_importances_', None)
+    if importances_final is None:
+        # Entrenar un GBR auxiliar solo para importancia de features
+        imp_model = GradientBoostingRegressor(**MODEL_PARAMS)
+        imp_model.fit(X_train, y_reg_train)
+        importances_final = imp_model.feature_importances_
     df_importance = pd.DataFrame({
         'Característica': feature_cols,
         'Importancia': importances_final
@@ -439,7 +483,7 @@ def train_model_pipeline(
         'threshold_metric': 'youden_j_temporal_oof',
         'threshold_score': best_youden,
         'negative_binomial_alpha': negative_binomial_alpha,
-        'regressor_type': 'GradientBoostingRegressor',
+        'regressor_type': 'HistGradientBoostingRegressor',
         'classifier_type': 'RandomForestClassifier',
         'train_end_date': str(df['FECHA_DIA'].iloc[split_idx - 1]),
         'test_start_date': str(df['FECHA_DIA'].iloc[split_idx]),
@@ -448,6 +492,9 @@ def train_model_pipeline(
         'test_samples': int(len(X_test)),
         'train_target_mean': train_mean,
         'baseline_mae': baseline_mae,
+        'median_baseline_mae': median_baseline_mae,
+        'rolling_28d_baseline_mae': rolling_baseline_mae,
+        'beats_baseline': bool(mae <= min(median_baseline_mae, rolling_baseline_mae)),
         'baseline_mse': baseline_mse,
         'mae': mae,
         'mse': mse,
@@ -456,22 +503,125 @@ def train_model_pipeline(
         'precision': prec,
         'recall': rec,
         'f1': f1,
-        'roc_auc': roc_auc
+        'roc_auc': roc_auc,
+        'brier': brier,
     }
     if selection_metadata:
         metadata.update(selection_metadata)
-    
-    with open(f"{models_dir}/regressor{prefix}.pkl", "wb") as f:
-        pickle.dump(reg_model, f)
-        
-    with open(f"{models_dir}/classifier{prefix}.pkl", "wb") as f:
-        pickle.dump(clf_model, f)
-        
-    with open(f"{models_dir}/metadata{prefix}.pkl", "wb") as f:
-        pickle.dump(metadata, f)
+
+    atomic_pickle_dump(reg_model, f"{models_dir}/regressor{prefix}.pkl")
+    atomic_pickle_dump(clf_model, f"{models_dir}/classifier{prefix}.pkl")
+    atomic_pickle_dump(metadata, f"{models_dir}/metadata{prefix}.pkl")
 
     print(f"¡Modelos y metadatos guardados con éxito en {models_dir} con prefijo '{prefix}'!")
     return metadata
+
+
+def walk_forward_evaluation(df, feature_cols, models_dir, output_csv,
+                            min_train_size=365, test_window=60, step=60,
+                            umbral_alta=7):
+    print("\n==================================================")
+    print(" Evaluación Walk-Forward (Rolling-Origin CV)")
+    print("==================================================")
+    X = df[feature_cols].values
+    y_reg = df['EVENTOS'].values
+    y_clf = (df['EVENTOS'] > umbral_alta).astype(int).values
+    n = len(df)
+    fold_results = []
+    cutoff = min_train_size
+    fold = 0
+    while cutoff + test_window <= n:
+        fold += 1
+        train_end = cutoff
+        test_end = min(cutoff + test_window, n)
+        X_tr, X_te = X[:train_end], X[train_end:test_end]
+        y_tr_reg, y_te_reg = y_reg[:train_end], y_reg[train_end:test_end]
+        y_tr_clf, y_te_clf = y_clf[:train_end], y_clf[train_end:test_end]
+
+        reg = GradientBoostingRegressor(**MODEL_PARAMS)
+        reg.fit(X_tr, y_tr_reg)
+        reg_pred = reg.predict(X_te)
+
+        clf = RandomForestClassifier(**CLASSIFIER_PARAMS)
+        if y_tr_clf.sum() > 0 and (len(y_tr_clf) - y_tr_clf.sum()) > 0:
+            clf.fit(X_tr, y_tr_clf)
+            clf_prob = clf.predict_proba(X_te)[:, 1]
+            roc = roc_auc_score(y_te_clf, clf_prob) if y_te_clf.sum() > 0 else np.nan
+            f1 = f1_score(y_te_clf, clf_prob >= 0.25, zero_division=0)
+        else:
+            clf_prob = np.zeros(len(y_te_clf))
+            roc = np.nan
+            f1 = np.nan
+
+        mae = mean_absolute_error(y_te_reg, reg_pred)
+        r2 = r2_score(y_te_reg, reg_pred)
+        fold_results.append({
+            'fold': fold,
+            'train_end_date': str(df['FECHA_DIA'].iloc[train_end - 1]),
+            'test_start_date': str(df['FECHA_DIA'].iloc[train_end]),
+            'test_end_date': str(df['FECHA_DIA'].iloc[test_end - 1]),
+            'train_samples': int(train_end),
+            'test_samples': int(test_end - train_end),
+            'mae': float(mae),
+            'r2': float(r2),
+            'roc_auc': float(roc) if not np.isnan(roc) else None,
+            'f1': float(f1) if not np.isnan(f1) else None,
+        })
+        print(f"  Fold {fold}: {df['FECHA_DIA'].iloc[train_end]} -> "
+              f"{df['FECHA_DIA'].iloc[test_end-1]} | "
+              f"MAE={mae:.3f} R²={r2:.3f} ROC-AUC={roc:.3f} F1={f1:.3f}")
+        cutoff += step
+
+    if not fold_results:
+        print("  No hay suficientes datos para walk-forward CV.")
+        return None
+
+    summary_df = pd.DataFrame(fold_results)
+    summary_df.to_csv(output_csv, sep=';', index=False)
+    print(f"\n  Resumen Walk-Forward ({len(fold_results)} folds):")
+    print(f"  MAE  medio={summary_df['mae'].mean():.3f} (±{summary_df['mae'].std():.3f})")
+    print(f"  R²   medio={summary_df['r2'].mean():.3f} (±{summary_df['r2'].std():.3f})")
+    valid_roc = summary_df['roc_auc'].dropna()
+    valid_f1 = summary_df['f1'].dropna()
+    if not valid_roc.empty:
+        print(f"  AUC  medio={valid_roc.mean():.3f} (±{valid_roc.std():.3f})")
+    if not valid_f1.empty:
+        print(f"  F1   medio={valid_f1.mean():.3f} (±{valid_f1.std():.3f})")
+    print(f"  Resultados guardados en: {output_csv}")
+    return summary_df
+
+
+def atomic_pickle_dump(obj, path):
+    """Escribe un pickle de forma atómica: temp + os.replace para evitar archivos a medio escribir."""
+    path = str(path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            pickle.dump(obj, f)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def atomic_copy2(src, dst):
+    """Copia un archivo de forma atómica vía temp + os.replace."""
+    dst = str(dst)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), suffix='.tmp')
+    os.close(fd)
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
 
 def main():
     print("=== Paso 3: Modelos climaticos aumentados Full vs. Pruneado ===")
@@ -487,6 +637,9 @@ def main():
 
     # 2. Cargar datos
     df = pd.read_csv(data_path, sep=';')
+    df = df.sort_values('FECHA_DIA').reset_index(drop=True)
+    _dates = pd.to_datetime(df['FECHA_DIA'])
+    assert _dates.is_monotonic_increasing, "FECHA_DIA no está ordenada cronológicamente tras el sort"
     weekday_columns = {
         0: 'DIA_LUNES',
         1: 'DIA_MARTES',
@@ -511,13 +664,13 @@ def main():
     operational_event_cols = [
         'EVENTOS_lag_1', 'EVENTOS_lag_2', 'EVENTOS_lag_3', 'EVENTOS_lag_7',
         'N_INCENDIO_ESTR_lag_1', 'N_INCENDIO_FOREST_lag_1', 'N_RESCATE_VEH_lag_1',
-        'N_RESCATE_PERS_lag_1', 'N_GASES_lag_1',
+        'N_RESCATE_PERS_lag_1', 'N_EMERGENCIAS_CLIMATICAS_lag_1', 'N_GASES_lag_1',
         'EVENTOS_rolling_mean_3d', 'EVENTOS_rolling_std_3d', 'EVENTOS_rolling_max_3d',
         'EVENTOS_rolling_mean_7d', 'EVENTOS_rolling_std_7d', 'EVENTOS_rolling_max_7d'
     ]
     category_target_cols = [
         'N_INCENDIO_ESTR', 'N_INCENDIO_FOREST', 'N_RESCATE_VEH',
-        'N_RESCATE_PERS', 'N_GASES', 'N_OTROS',
+        'N_RESCATE_PERS', 'N_EMERGENCIAS_CLIMATICAS', 'N_GASES', 'N_OTROS',
     ]
     exclude_cols_climatic_augmented = (
         calendar_cols + operational_event_cols + category_target_cols
@@ -607,22 +760,20 @@ def main():
     for name, metadata in candidates.items():
         metadata['is_primary'] = name == winner
         metadata['selection_rule'] = selection_rule
-        with open(models_dir / f"metadata_climatic_augmented_{name}.pkl", "wb") as f:
-            pickle.dump(metadata, f)
+        atomic_pickle_dump(metadata, models_dir / f"metadata_climatic_augmented_{name}.pkl")
 
     winner_prefix = f"_climatic_augmented_{winner}"
-    shutil.copy2(
+    atomic_copy2(
         models_dir / f"regressor{winner_prefix}.pkl",
         models_dir / "regressor_climatic_augmented.pkl",
     )
-    shutil.copy2(
+    atomic_copy2(
         models_dir / f"classifier{winner_prefix}.pkl",
         models_dir / "classifier_climatic_augmented.pkl",
     )
     primary_metadata = candidates[winner].copy()
     primary_metadata['selected_variant'] = winner
-    with open(models_dir / "metadata_climatic_augmented.pkl", "wb") as f:
-        pickle.dump(primary_metadata, f)
+    atomic_pickle_dump(primary_metadata, models_dir / "metadata_climatic_augmented.pkl")
 
     print(
         f"Modelo principal: {winner.upper()} "
@@ -642,6 +793,15 @@ def main():
         from train_category_risk_models import main as train_category_risk_models
 
         train_category_risk_models()
+
+    if os.getenv("WALK_FORWARD_EVAL", "1") == "1":
+        wf_output = models_dir / "walk_forward_evaluation.csv"
+        walk_forward_evaluation(
+            df,
+            climatic_selected_features,
+            models_dir,
+            wf_output,
+        )
 
 
 if __name__ == "__main__":

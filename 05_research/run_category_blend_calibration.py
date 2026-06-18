@@ -192,6 +192,8 @@ def main() -> int:
     with ABLATION_SUMMARY.open("r", encoding="utf-8") as stream:
         features = json.load(stream)["winner"]["features"]
     X = frame[features]
+    # Rellenar NaN en features de clima con forward-fill + back-fill
+    X = X.ffill().bfill()
     y_total = frame["EVENTOS"].astype(float)
     y_categories = frame[CATEGORIES].astype(float)
 

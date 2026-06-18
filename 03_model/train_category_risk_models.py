@@ -27,8 +27,9 @@ CLASSIFIER_PARAMS = {
 }
 
 RISK_GROUPS = {
-    "rescate": ["N_RESCATE_VEH", "N_RESCATE_PERS"],
+    "rescate_vehicular": ["N_RESCATE_VEH"],
     "incendio": ["N_INCENDIO_ESTR", "N_INCENDIO_FOREST"],
+    "climaticas": ["N_EMERGENCIAS_CLIMATICAS"],
 }
 
 
@@ -57,46 +58,61 @@ def main():
     models_dir.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_csv(data_path, sep=";")
+    df = df.sort_values("FECHA_DIA").reset_index(drop=True)
     with open(models_dir / "metadata_climatic_augmented.pkl", "rb") as file:
         primary_metadata = pickle.load(file)
 
     feature_cols = list(primary_metadata["feature_cols"])
     X = df[feature_cols]
+    split_idx = int(len(df) * 0.8)
+    X_train = X.iloc[:split_idx]
+    X_test = X.iloc[split_idx:]
 
     models = {}
     summary_rows = []
 
     for group_name, columns in RISK_GROUPS.items():
         total = df[columns].sum(axis=1).astype(float)
-        high_threshold = float(total.quantile(0.80))
+        train_total = total.iloc[:split_idx]
+        high_threshold = float(train_total.quantile(0.80))
         y = (total > high_threshold).astype(int)
+        y_train = y.iloc[:split_idx]
+        y_test = y.iloc[split_idx:]
 
-        oof_prob = temporal_oof_probs(X, y)
+        oof_prob = temporal_oof_probs(X_train, y_train)
         valid = ~np.isnan(oof_prob)
         if not valid.any():
             raise RuntimeError(f"No OOF probabilities for {group_name}")
 
-        y_valid = y.iloc[np.flatnonzero(valid)]
+        y_valid = y_train.iloc[np.flatnonzero(valid)]
         prob_valid = oof_prob[valid]
+        prob_p33 = float(np.quantile(prob_valid, 0.33))
         prob_p50 = float(np.quantile(prob_valid, 0.50))
+        prob_p66 = float(np.quantile(prob_valid, 0.66))
         prob_p80 = float(np.quantile(prob_valid, 0.80))
         pred_alert = (prob_valid > prob_p80).astype(int)
 
         model = RandomForestClassifier(**CLASSIFIER_PARAMS)
-        model.fit(X, y)
-        in_sample_prob = model.predict_proba(X)[:, 1]
+        model.fit(X_train, y_train)
+
+        test_prob = model.predict_proba(X_test)[:, 1]
+        test_pred_alert = (test_prob > prob_p80).astype(int)
 
         models[group_name] = {
             "model": model,
             "source_cols": columns,
             "feature_cols": feature_cols,
             "count_threshold_p80": high_threshold,
+            "probability_p33": prob_p33,
             "probability_p50": prob_p50,
+            "probability_p66": prob_p66,
             "probability_p80": prob_p80,
-            "historical_probability_mean": float(np.mean(in_sample_prob)),
-            "historical_probability_p50": float(np.quantile(in_sample_prob, 0.50)),
-            "historical_probability_p80": float(np.quantile(in_sample_prob, 0.80)),
-            "historical_alert_rate": float(np.mean(in_sample_prob > np.quantile(in_sample_prob, 0.80))),
+            "oof_probability_mean": float(np.mean(prob_valid)),
+            "oof_probability_p33": prob_p33,
+            "oof_probability_p50": prob_p50,
+            "oof_probability_p66": prob_p66,
+            "oof_probability_p80": prob_p80,
+            "oof_alert_rate": float(np.mean(prob_valid > prob_p80)),
             "oof_metrics": {
                 "accuracy_at_p80": float(accuracy_score(y_valid, pred_alert)),
                 "precision_at_p80": float(precision_score(y_valid, pred_alert, zero_division=0)),
@@ -104,27 +120,48 @@ def main():
                 "f1_at_p80": float(f1_score(y_valid, pred_alert, zero_division=0)),
                 "roc_auc": float(safe_auc(y_valid, prob_valid)),
                 "brier": float(brier_score_loss(y_valid, prob_valid)),
-                "positive_rate": float(y.mean()),
+                "positive_rate": float(y_train.mean()),
+                "oof_probability_p33": prob_p33,
                 "oof_probability_p50": prob_p50,
+                "oof_probability_p66": prob_p66,
                 "oof_probability_p80": prob_p80,
             },
+            "test_metrics": {
+                "accuracy_at_p80": float(accuracy_score(y_test, test_pred_alert)),
+                "precision_at_p80": float(precision_score(y_test, test_pred_alert, zero_division=0)),
+                "recall_at_p80": float(recall_score(y_test, test_pred_alert, zero_division=0)),
+                "f1_at_p80": float(f1_score(y_test, test_pred_alert, zero_division=0)),
+                "roc_auc": float(safe_auc(y_test, test_prob)),
+                "brier": float(brier_score_loss(y_test, test_prob)),
+                "positive_rate": float(y_test.mean()),
+            },
+            "train_end_date": str(df["FECHA_DIA"].iloc[split_idx - 1]),
+            "test_start_date": str(df["FECHA_DIA"].iloc[split_idx]),
+            "test_end_date": str(df["FECHA_DIA"].iloc[-1]),
+            "train_samples": int(len(X_train)),
+            "test_samples": int(len(X_test)),
         }
 
         row = {
             "group": group_name,
             "source_cols": "|".join(columns),
             "count_threshold_p80": high_threshold,
-            "positive_rate": float(y.mean()),
+            "positive_rate": float(y_train.mean()),
             **models[group_name]["oof_metrics"],
+            "test_roc_auc": models[group_name]["test_metrics"]["roc_auc"],
+            "test_brier": models[group_name]["test_metrics"]["brier"],
+            "test_f1_at_p80": models[group_name]["test_metrics"]["f1_at_p80"],
         }
         summary_rows.append(row)
 
     artifact = {
         "models": models,
         "feature_cols": feature_cols,
-        "target_rule": "group_total_gt_historical_p80",
-        "probability_rule": "prealert_gt_p50_alert_gt_p80",
+        "target_rule": "group_total_gt_train_p80",
+        "probability_rule": "prealert_gt_oof_p50_alert_gt_oof_p80",
         "model_type": "RandomForestClassifier",
+        "threshold_source": "oof_train_only",
+        "split_ratio": 0.8,
     }
 
     with open(models_dir / "category_risk_models.pkl", "wb") as file:

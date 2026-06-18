@@ -157,6 +157,7 @@ def main():
         base_dir / "02_data" / "augmented_emergency_data.csv",
         sep=";",
     )
+    df = df.sort_values("FECHA_DIA").reset_index(drop=True)
     with open(models_dir / "metadata_climatic_augmented.pkl", "rb") as file:
         metadata = pickle.load(file)
 

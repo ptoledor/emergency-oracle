@@ -45,3 +45,21 @@ streamlit run dashboard.py --server.port 8502
 ```
 
 `train.py` ejecuta la selección de variables y, al final, la optimización por categorías y de los pesos de mezcla.
+
+## Modelo estructural KFold
+
+`03_model/train_kfold_model.py` entrena un modelo paralelo validado con KFold
+aleatorio de 5 pliegues. Este modelo no reemplaza al operacional: sirve para
+comparar la estabilidad estructural del set de variables cuando las fechas se
+tratan como anonimas y los rezagos ya vienen calculados como contexto previo.
+
+Artefactos generados:
+
+- `regressor_climatic_augmented_kfold.pkl`
+- `classifier_climatic_augmented_kfold.pkl`
+- `metadata_climatic_augmented_kfold.pkl`
+- `kfold_evaluation.csv`
+- `kfold_oof_predictions.csv`
+
+La pestana "Comparacion de Modelos" muestra este modelo junto al operacional
+cuando los artefactos existen.

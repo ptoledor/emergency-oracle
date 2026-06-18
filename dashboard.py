@@ -7,8 +7,10 @@ import os
 import requests
 import datetime
 import holidays
+import model_components
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from sklearn.metrics import brier_score_loss
 
 # 1. Configuración de página
 st.set_page_config(
@@ -424,13 +426,29 @@ def force_single_thread_model(model):
     return model
 
 
+def add_brier_if_missing(metadata, events, probabilities):
+    if metadata is None or "brier" in metadata:
+        return metadata
+    probs = pd.to_numeric(probabilities, errors='coerce')
+    valid = probs.notna() & events.notna()
+    if not valid.any():
+        return metadata
+    threshold = float(metadata.get('umbral_alta_actividad', events[valid].quantile(0.80)))
+    target = (events.astype(float) > threshold).astype(int)
+    if target[valid].nunique() < 2:
+        return metadata
+    metadata["brier"] = float(brier_score_loss(target[valid], probs[valid]))
+    return metadata
+
+
 # 7. Carga de datos y modelos
 @st.cache_data
 def load_data_and_predict():
     cache_version = "model-data-v2-single-thread-category-risk"
     if not os.path.exists(data_path):
-        return None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None
     df = pd.read_csv(data_path, sep=';')
+    df = df.sort_values('FECHA_DIA').reset_index(drop=True)
     weekday_columns = {
         0: 'DIA_LUNES',
         1: 'DIA_MARTES',
@@ -446,53 +464,99 @@ def load_data_and_predict():
     # Cargar modelos y metadata
     try:
         # 1. Modelo directo optimizado de 31 variables para comparacion
-        with open(models_dir / "regressor_climatic_augmented_direct31.pkl", "rb") as f:
-            reg_model_base = pickle.load(f)
-        with open(models_dir / "metadata_climatic_augmented_direct31.pkl", "rb") as f:
-            metadata_base = pickle.load(f)
+        reg_model_base = None
+        metadata_base = None
+        try:
+            with open(models_dir / "regressor_climatic_augmented_direct31.pkl", "rb") as f:
+                reg_model_base = pickle.load(f)
+            reg_model_base = force_single_thread_model(reg_model_base)
+            with open(models_dir / "metadata_climatic_augmented_direct31.pkl", "rb") as f:
+                metadata_base = pickle.load(f)
+            
+            # Realizar predicciones históricas base (alineando features)
+            base_features = [c for c in metadata_base['feature_cols'] if c in df.columns]
+            if len(base_features) != len(metadata_base['feature_cols']):
+                missing = len(metadata_base['feature_cols']) - len(base_features)
+                if missing > 0:
+                    raise KeyError(f"{missing} features missing in dataset for base model")
+            X_base = df[base_features]
+            df['PRED_EVENTOS_DIRECT31'] = reg_model_base.predict(X_base)
+            
+            # Extraer importancia base
+            importances_base = getattr(reg_model_base, 'feature_importances_', None)
+            if importances_base is None:
+                try:
+                    from sklearn.inspection import permutation_importance
+                    importances_base = permutation_importance(
+                        reg_model_base, X_base, df['PRED_EVENTOS_DIRECT31'],
+                        n_repeats=5, random_state=42, n_jobs=-1
+                    ).importances_mean
+                except Exception:
+                    from sklearn.ensemble import GradientBoostingRegressor
+                    imp_model = GradientBoostingRegressor(n_estimators=100, max_depth=4, random_state=42)
+                    imp_model.fit(X_base, df['PRED_EVENTOS_DIRECT31'])
+                    importances_base = imp_model.feature_importances_
+            df_imp_base = pd.DataFrame({
+                'Feature': base_features,
+                'Importance': importances_base
+            }).sort_values(by='Importance', ascending=True)
+        except (KeyError, Exception) as e:
+            print(f"Base model not compatible with current data: {e}. Skipping base model comparison.")
+            reg_model_base = None
+            metadata_base = None
+            df['PRED_EVENTOS_DIRECT31'] = np.nan
+            df_imp_base = pd.DataFrame({'Feature': [], 'Importance': []})
         
-        # Realizar predicciones históricas base
-        X_base = df[metadata_base['feature_cols']]
-        df['PRED_EVENTOS_DIRECT31'] = reg_model_base.predict(X_base)
-        
-        # Extraer importancia base
-        importances_base = reg_model_base.feature_importances_
-        df_imp_base = pd.DataFrame({
-            'Feature': metadata_base['feature_cols'],
-            'Importance': importances_base
-        }).sort_values(by='Importance', ascending=True) # Ascendente para barra horizontal
-        
-        # 2. Modelo principal optimizado por categorias
+        # 2. Modelo principal optimizado por categorias (CategoryBlendRegressor)
         with open(models_dir / "regressor_climatic_augmented.pkl", "rb") as f:
             reg_model_aug = pickle.load(f)
+        reg_model_aug = force_single_thread_model(reg_model_aug)
         with open(models_dir / "metadata_climatic_augmented.pkl", "rb") as f:
             metadata_aug = pickle.load(f)
             
-        # Realizar predicciones históricas aumentadas
-        X_aug = df[metadata_aug['feature_cols']]
+        # Collect ALL features needed by blend's category sub-models
+        all_blend_features = set(metadata_aug['feature_cols'])
+        for details in getattr(reg_model_aug, 'category_models', {}).values():
+            all_blend_features.update(details.get('feature_cols', []))
+        aug_features = [c for c in sorted(all_blend_features) if c in df.columns]
+        X_aug = df[aug_features]
         df['PRED_EVENTOS_PRUNED'] = reg_model_aug.predict(X_aug)
+        df['PRED_EVENTOS_PRIMARY'] = df['PRED_EVENTOS_PRUNED']
         
-        # Extraer importancia aumentada
-        importances_aug = reg_model_aug.feature_importances_
+        # Extraer importancia aumentada (ponderada del blend directo + categorías)
+        importances_aug = getattr(reg_model_aug, 'feature_importances_', None)
+        if importances_aug is None:
+            # HistGBR no tiene feature_importances_; usar permutation importance o GBR fallback
+            try:
+                from sklearn.inspection import permutation_importance
+                importances_aug = permutation_importance(
+                    reg_model_aug, X_aug, df['PRED_EVENTOS_PRIMARY'], 
+                    n_repeats=5, random_state=42, n_jobs=-1
+                ).importances_mean
+            except Exception:
+                # Fallback: entrenar GBR auxiliar solo para importancia
+                from sklearn.ensemble import GradientBoostingRegressor
+                imp_model = GradientBoostingRegressor(n_estimators=100, max_depth=4, random_state=42)
+                imp_model.fit(X_aug, df['PRED_EVENTOS_PRIMARY'])
+                importances_aug = imp_model.feature_importances_
         df_imp_aug = pd.DataFrame({
-            'Feature': metadata_aug['feature_cols'],
+            'Feature': aug_features,
             'Importance': importances_aug
         }).sort_values(by='Importance', ascending=True)
+        df_imp_v3 = df_imp_aug
+        metadata_v3 = metadata_aug
         
-        # 3. Copia canonica del modelo principal seleccionado automaticamente
-        with open(models_dir / "regressor_climatic_augmented.pkl", "rb") as f:
-            reg_model_v3 = pickle.load(f)
-        with open(models_dir / "metadata_climatic_augmented.pkl", "rb") as f:
-            metadata_v3 = pickle.load(f)
-            
-        # Predicciones historicas del ganador
-        X_v3 = df[metadata_v3['feature_cols']]
-        df['PRED_EVENTOS_PRIMARY'] = reg_model_v3.predict(X_v3)
+        # Predicciones del clasificador principal
         try:
             with open(models_dir / "classifier_climatic_augmented.pkl", "rb") as f:
                 clf_model_v3 = pickle.load(f)
             clf_model_v3 = force_single_thread_model(clf_model_v3)
-            df['PROB_ALTA_PRIMARY'] = clf_model_v3.predict_proba(X_v3)[:, 1]
+            clf_features = list(getattr(clf_model_v3, 'feature_names_in_', metadata_aug['feature_cols']))
+            X_clf = df[[c for c in clf_features if c in df.columns]]
+            df['PROB_ALTA_PRIMARY'] = clf_model_v3.predict_proba(X_clf)[:, 1]
+            metadata_aug = add_brier_if_missing(metadata_aug, df['EVENTOS'], df['PROB_ALTA_PRIMARY'])
+            metadata_v3 = metadata_aug
+            metadata_base = add_brier_if_missing(metadata_base, df['EVENTOS'], df['PROB_ALTA_PRIMARY'])
         except Exception:
             df['PROB_ALTA_PRIMARY'] = np.nan
 
@@ -504,26 +568,80 @@ def load_data_and_predict():
                 group_features = details.get("feature_cols", metadata_v3['feature_cols'])
                 df[f'PROB_{group_name.upper()}_ALTO'] = group_model.predict_proba(df[group_features])[:, 1]
         except Exception:
-            df['PROB_RESCATE_ALTO'] = np.nan
-            df['PROB_INCENDIO_ALTO'] = np.nan
-        
-        # Extraer importancia aumentada v3
-        importances_v3 = reg_model_v3.feature_importances_
-        df_imp_v3 = pd.DataFrame({
-            'Feature': metadata_v3['feature_cols'],
-            'Importance': importances_v3
-        }).sort_values(by='Importance', ascending=True)
+            pass
+        for probability_col in [
+            'PROB_RESCATE_VEHICULAR_ALTO',
+            'PROB_RESCATE_ALTO',
+            'PROB_INCENDIO_ALTO',
+            'PROB_CLIMATICAS_ALTO',
+        ]:
+            if probability_col not in df.columns:
+                df[probability_col] = np.nan
+
+        # 3. Modelo estructural validado con KFold aleatorio para comparacion.
+        metadata_kfold = None
+        df_imp_kfold = pd.DataFrame({'Feature': [], 'Importance': []})
+        df['PRED_EVENTOS_KFOLD'] = np.nan
+        df['PROB_ALTA_KFOLD'] = np.nan
+        try:
+            with open(models_dir / "regressor_climatic_augmented_kfold.pkl", "rb") as f:
+                reg_model_kfold = pickle.load(f)
+            reg_model_kfold = force_single_thread_model(reg_model_kfold)
+            with open(models_dir / "classifier_climatic_augmented_kfold.pkl", "rb") as f:
+                clf_model_kfold = pickle.load(f)
+            clf_model_kfold = force_single_thread_model(clf_model_kfold)
+            with open(models_dir / "metadata_climatic_augmented_kfold.pkl", "rb") as f:
+                metadata_kfold = pickle.load(f)
+
+            kfold_features = [c for c in metadata_kfold['feature_cols'] if c in df.columns]
+            if len(kfold_features) != len(metadata_kfold['feature_cols']):
+                missing = len(metadata_kfold['feature_cols']) - len(kfold_features)
+                if missing > 0:
+                    raise KeyError(f"{missing} features missing in dataset for KFold model")
+            X_kfold = df[kfold_features]
+            df['PRED_EVENTOS_KFOLD'] = reg_model_kfold.predict(X_kfold)
+            df['PROB_ALTA_KFOLD'] = clf_model_kfold.predict_proba(X_kfold)[:, 1]
+
+            stored_importances = metadata_kfold.get('feature_importances', {})
+            if stored_importances:
+                importances_kfold = [
+                    float(stored_importances.get(feature, 0.0))
+                    for feature in kfold_features
+                ]
+            else:
+                importances_kfold = getattr(reg_model_kfold, 'feature_importances_', None)
+                if importances_kfold is None:
+                    from sklearn.ensemble import GradientBoostingRegressor
+                    imp_model = GradientBoostingRegressor(n_estimators=100, max_depth=4, random_state=42)
+                    imp_model.fit(X_kfold, df['PRED_EVENTOS_KFOLD'])
+                    importances_kfold = imp_model.feature_importances_
+            df_imp_kfold = pd.DataFrame({
+                'Feature': kfold_features,
+                'Importance': importances_kfold
+            }).sort_values(by='Importance', ascending=True)
+        except Exception as e:
+            print(f"KFold model not available for comparison: {e}")
         
         # Extraer día del año
         df['FECHA_DT'] = pd.to_datetime(df['FECHA_DIA'])
         df['DIA_DEL_ANO'] = df['FECHA_DT'].dt.dayofyear
         
-        return df, df_imp_base, df_imp_aug, df_imp_v3, metadata_base, metadata_aug, metadata_v3
+        return df, df_imp_base, df_imp_aug, df_imp_v3, metadata_base, metadata_aug, metadata_v3, df_imp_kfold, metadata_kfold
     except Exception as e:
         st.error(f"Error al cargar modelos: {e}")
-        return None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None
 
-df, df_imp_base, df_imp_aug, df_imp_v3, metadata_base, metadata_aug, metadata_v3 = load_data_and_predict()
+(
+    df,
+    df_imp_base,
+    df_imp_aug,
+    df_imp_v3,
+    metadata_base,
+    metadata_aug,
+    metadata_v3,
+    df_imp_kfold,
+    metadata_kfold,
+) = load_data_and_predict()
 
 
 @st.cache_data
@@ -602,6 +720,26 @@ def category_risk_label(probability, p33_threshold, p66_threshold, p80_threshold
     if probability is None or np.isnan(probability):
         return "Sin modelo", "activity-low"
     return secondary_level(probability, p33_threshold, p66_threshold, p80_threshold)
+
+
+def probability_percent(probability):
+    if probability is None or np.isnan(probability):
+        return "--"
+    return f"{probability * 100:.0f}%"
+
+
+def risk_model_details(primary_key, legacy_key=None):
+    if not category_risk_artifact:
+        return {}
+    models = category_risk_artifact.get("models", {})
+    return models.get(primary_key, models.get(legacy_key, {}))
+
+
+def risk_probability_series(primary_col, legacy_col=None):
+    source = df.get(primary_col)
+    if source is None or pd.to_numeric(source, errors='coerce').dropna().empty:
+        source = df.get(legacy_col, pd.Series(dtype=float)) if legacy_col else pd.Series(dtype=float)
+    return pd.to_numeric(source, errors='coerce').dropna()
 
 
 PERCENTILE_COLUMNS = [0, 10, 20, 30, 33, 40, 50, 60, 66, 70, 80, 90, 100]
@@ -748,12 +886,13 @@ def get_weather_for_range(start_date, is_historical):
     except Exception:
         return build_local_weather_fallback(start_date, is_historical)
 
-# Recursive forecasting function for 6 days
-def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmented", weather_data=None):
+# Forecasting function for 6 days (weather-only model)
+def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weather_data=None):
     # Load models and metadata
     try:
         with open(models_dir / f"regressor{prefix}.pkl", "rb") as f:
             reg_model = pickle.load(f)
+        reg_model = force_single_thread_model(reg_model)
         with open(models_dir / f"classifier{prefix}.pkl", "rb") as f:
             clf_model = pickle.load(f)
         clf_model = force_single_thread_model(clf_model)
@@ -794,88 +933,29 @@ def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
         TEMP_MEDIA=('temperature_2m', 'mean'),
         TEMP_SKEW=('temperature_2m', get_skew),
         TEMP_KURT=('temperature_2m', get_kurt),
-        
         HUM_MAX=('relative_humidity_2m', 'max'),
         HUM_MIN=('relative_humidity_2m', 'min'),
         HUM_MEDIA=('relative_humidity_2m', 'mean'),
         HUM_SKEW=('relative_humidity_2m', get_skew),
         HUM_KURT=('relative_humidity_2m', get_kurt),
-        
         VIENTO_MAX=('wind_speed_10m', 'max'),
         VIENTO_MEDIO=('wind_speed_10m', 'mean'),
         VIENTO_SKEW=('wind_speed_10m', get_skew),
         VIENTO_KURT=('wind_speed_10m', get_kurt),
-        
         LLUVIA=('precipitation', 'sum')
     )
-    
-    # Initialize event history for previous 7 days
-    event_history = {}
-    for i in range(1, 8):
-        prev_date = start_date - datetime.timedelta(days=i)
-        match = df[df['FECHA_DIA'] == prev_date.strftime('%Y-%m-%d')]
-        if not match.empty:
-            event_history[prev_date] = float(match.iloc[0]['EVENTOS'])
-        else:
-            event_history[prev_date] = 5.46 # training mean baseline
-            
-    # Category lags from D1 - 1
-    prev_date_1 = start_date - datetime.timedelta(days=1)
-    match_1 = df[df['FECHA_DIA'] == prev_date_1.strftime('%Y-%m-%d')]
-    if not match_1.empty:
-        cat_lags = {
-            'N_INCENDIO_ESTR_lag_1': float(match_1.iloc[0].get('N_INCENDIO_ESTR_lag_1', 0.0)),
-            'N_INCENDIO_FOREST_lag_1': float(match_1.iloc[0].get('N_INCENDIO_FOREST_lag_1', 0.0)),
-            'N_RESCATE_VEH_lag_1': float(match_1.iloc[0].get('N_RESCATE_VEH_lag_1', 0.0)),
-            'N_RESCATE_PERS_lag_1': float(match_1.iloc[0].get('N_RESCATE_PERS_lag_1', 0.0)),
-            'N_GASES_lag_1': float(match_1.iloc[0].get('N_GASES_lag_1', 0.0)),
-        }
-    else:
-        cat_lags = {
-            'N_INCENDIO_ESTR_lag_1': 0.0,
-            'N_INCENDIO_FOREST_lag_1': 0.0,
-            'N_RESCATE_VEH_lag_1': 0.0,
-            'N_RESCATE_PERS_lag_1': 0.0,
-            'N_GASES_lag_1': 0.0,
-        }
-        
+
     predictions = []
-    chile_holidays = holidays.Chile(years=[start_date.year, (start_date + datetime.timedelta(days=5)).year])
-    
     DIAS_ES = {
         'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles',
         'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
     }
-    
+
     for j in range(6):
         d = start_date + datetime.timedelta(days=j)
         d_str = d.strftime('%Y-%m-%d')
-        
-        # Calendar features
-        mes = d.month
-        dia_semana = d.weekday()
-        es_fin_semana = 1 if dia_semana in [5, 6] else 0
-        es_feriado = 1 if d_str in chile_holidays else 0
-        
-        feriados_irrenunciables = {(1, 1), (5, 1), (9, 18), (9, 19), (12, 25)}
-        holiday_name = chile_holidays.get(d_str)
-        es_feriado_irrenunciable = 0
-        if (mes, d.day) in feriados_irrenunciables:
-            es_feriado_irrenunciable = 1
-        elif holiday_name and ("elecciones" in holiday_name.lower() or "plebiscito" in holiday_name.lower()):
-            es_feriado_irrenunciable = 1
-            
-        dia_del_ano = d.timetuple().tm_yday
-        
-        # Cyclic encodings
-        mes_sin = np.sin(2 * np.pi * mes / 12)
-        mes_cos = np.cos(2 * np.pi * mes / 12)
-        dia_sin = np.sin(2 * np.pi * dia_semana / 7)
-        dia_cos = np.cos(2 * np.pi * dia_semana / 7)
-        dano_sin = np.sin(2 * np.pi * dia_del_ano / 365)
-        dano_cos = np.cos(2 * np.pi * dia_del_ano / 365)
-        
-        # Weather features
+
+        # Weather features (the only features the model uses)
         if d not in weather_df.index:
             st.error(f"La fecha {d_str} no tiene datos de clima disponibles.")
             return None, 0.25, 7.0
@@ -895,7 +975,7 @@ def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
         viento_skew = float(w_d['VIENTO_SKEW'])
         viento_kurt = float(w_d['VIENTO_KURT'])
         lluvia = float(w_d['LLUVIA'])
-        
+
         # Weather lags
         viento_medio_lag_1 = float(weather_df.loc[d - datetime.timedelta(days=1)]['VIENTO_MEDIO'])
         hum_media_lag_1 = float(weather_df.loc[d - datetime.timedelta(days=1)]['HUM_MEDIA'])
@@ -904,23 +984,7 @@ def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
             for i in range(1, 31)
         }
 
-        # Event lags
-        eventos_lag_1 = float(event_history[d - datetime.timedelta(days=1)])
-        eventos_lag_2 = float(event_history[d - datetime.timedelta(days=2)])
-        eventos_lag_3 = float(event_history[d - datetime.timedelta(days=3)])
-        eventos_lag_7 = float(event_history[d - datetime.timedelta(days=7)])
-        
-        ev_rolling_3d = [float(event_history[d - datetime.timedelta(days=i)]) for i in range(1, 4)]
-        eventos_rolling_mean_3d = float(np.mean(ev_rolling_3d))
-        eventos_rolling_std_3d = float(np.std(ev_rolling_3d))
-        eventos_rolling_max_3d = float(np.max(ev_rolling_3d))
-        
-        ev_rolling_7d = [float(event_history[d - datetime.timedelta(days=i)]) for i in range(1, 8)]
-        eventos_rolling_mean_7d = float(np.mean(ev_rolling_7d))
-        eventos_rolling_std_7d = float(np.std(ev_rolling_7d))
-        eventos_rolling_max_7d = float(np.max(ev_rolling_7d))
-        
-        # Construct feature vector
+        # Construct weather-only feature vector
         features = {
             'TEMP_MAX': temp_max,
             'TEMP_MIN': temp_min,
@@ -937,42 +1001,9 @@ def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
             'VIENTO_SKEW': viento_skew,
             'VIENTO_KURT': viento_kurt,
             'LLUVIA': lluvia,
-            'EVENTOS_lag_1': eventos_lag_1,
-            'EVENTOS_lag_2': eventos_lag_2,
-            'EVENTOS_lag_3': eventos_lag_3,
-            'EVENTOS_lag_7': eventos_lag_7,
-            'N_INCENDIO_ESTR_lag_1': cat_lags['N_INCENDIO_ESTR_lag_1'],
-            'N_INCENDIO_FOREST_lag_1': cat_lags['N_INCENDIO_FOREST_lag_1'],
-            'N_RESCATE_VEH_lag_1': cat_lags['N_RESCATE_VEH_lag_1'],
-            'N_RESCATE_PERS_lag_1': cat_lags['N_RESCATE_PERS_lag_1'],
-            'N_GASES_lag_1': cat_lags['N_GASES_lag_1'],
-            'EVENTOS_rolling_mean_3d': eventos_rolling_mean_3d,
-            'EVENTOS_rolling_std_3d': eventos_rolling_std_3d,
-            'EVENTOS_rolling_max_3d': eventos_rolling_max_3d,
-            'EVENTOS_rolling_mean_7d': eventos_rolling_mean_7d,
-            'EVENTOS_rolling_std_7d': eventos_rolling_std_7d,
-            'EVENTOS_rolling_max_7d': eventos_rolling_max_7d,
             'VIENTO_MEDIO_lag_1': viento_medio_lag_1,
             'HUM_MEDIA_lag_1': hum_media_lag_1,
-            'MES': mes,
-            'DIA_SEMANA': dia_semana,
-            'ES_FIN_SEMANA': es_fin_semana,
-            'ES_FERIADO': es_feriado,
-            'ES_FERIADO_IRRENUNCIABLE': es_feriado_irrenunciable,
-            'MES_SIN': mes_sin,
-            'MES_COS': mes_cos,
-            'DIA_SIN': dia_sin,
-            'DIA_COS': dia_cos,
-            'DANO_SIN': dano_sin,
-            'DANO_COS': dano_cos
         }
-        weekday_columns = [
-            'DIA_LUNES', 'DIA_MARTES', 'DIA_MIERCOLES', 'DIA_JUEVES',
-            'DIA_VIERNES', 'DIA_SABADO', 'DIA_DOMINGO'
-        ]
-        for weekday, column in enumerate(weekday_columns):
-            features[column] = int(dia_semana == weekday)
-
         for lag in [1, 2, 3, 5, 7, 10, 14]:
             features[f'LLUVIA_LAG_{lag}D'] = rain_history[lag]
         for window in [3, 7, 14, 30]:
@@ -982,39 +1013,49 @@ def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
             features[f'LLUVIA_DESV_{window}D_PREV'] = float(np.std(rain_window, ddof=1))
             features[f'LLUVIA_MAX_{window}D_PREV'] = float(np.max(rain_window))
             features[f'DIAS_SECOS_{window}D_PREV'] = float(np.sum(rain_window <= 0.1))
-        
-        # DataFrame aligned with model features
-        X_pred = pd.DataFrame([features])[metadata['feature_cols']]
-        
+
+        # DataFrame with all features for blend model's category sub-models
+        X_all = pd.DataFrame([features])
+        # DataFrame aligned with classifier features
+        X_pred = X_all[metadata['feature_cols']]
+
         # Predict
-        pred_count = float(reg_model.predict(X_pred)[0])
+        if hasattr(reg_model, "category_models"):
+            pred_count = float(np.clip(reg_model.predict(X_all)[0], 0, None))
+        else:
+            pred_count = float(np.clip(reg_model.predict(X_pred)[0], 0, None))
         prob_high = float(clf_model.predict_proba(X_pred)[0, 1])
         category_risk_probs = {}
         if category_risk_artifact:
             for group_name, details in category_risk_artifact.get("models", {}).items():
                 group_features = details.get("feature_cols", metadata['feature_cols'])
                 group_X = pd.DataFrame([features])[group_features]
-                category_risk_probs[group_name] = float(details["model"].predict_proba(group_X)[0, 1])
-        
-        # Update event history for subsequent recursive days
-        event_history[d] = pred_count
-        
+                group_model = force_single_thread_model(details["model"])
+                category_risk_probs[group_name] = float(group_model.predict_proba(group_X)[0, 1])
+
         predictions.append({
             'Fecha': d,
             'FechaStr': d_str,
             'Dia': DIAS_ES[d.strftime('%A')],
             'Prediccion': pred_count,
             'Prob_Alta': prob_high,
-            'Prob_Rescate_Alto': category_risk_probs.get("rescate", np.nan),
+            'Prob_RVehicular_Alto': category_risk_probs.get(
+                "rescate_vehicular",
+                category_risk_probs.get("rescate", np.nan),
+            ),
+            'Prob_Rescate_Alto': category_risk_probs.get(
+                "rescate_vehicular",
+                category_risk_probs.get("rescate", np.nan),
+            ),
             'Prob_Incendio_Alto': category_risk_probs.get("incendio", np.nan),
+            'Prob_Climaticas_Alto': category_risk_probs.get("climaticas", np.nan),
             'Temp_Max': temp_max,
             'Temp_Media': temp_media,
             'Hum_Media': hum_media,
             'Viento_Medio': viento_medio,
             'Lluvia': lluvia,
-            'Es_Feriado': es_feriado,
         })
-        
+
     return predictions, float(metadata.get('classification_threshold', 0.25)), float(metadata.get('umbral_alta_actividad', 7.0))
 
 # 8. Encabezado principal de la aplicación
@@ -1022,7 +1063,7 @@ def predict_6_days_recursive(start_date, is_historical, prefix="_agnostic_augmen
 st.markdown(f"""
 <div class="header-container">
     <div class="brand-name">
-        🧯 Emergencias CBT
+        🧯 Emergencias CBT <span style="font-size: 0.65rem; font-weight: 400; color: var(--text-muted); vertical-align: middle;">v0617</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -1074,9 +1115,17 @@ def render_seasonal_chart():
         key="smoothing_slider_fragment"
     )
     y_pred_col = 'PRED_EVENTOS_PRIMARY'
+    y_robust_col = 'PRED_EVENTOS_KFOLD'
+    has_robust_prediction = (
+        y_robust_col in df.columns
+        and pd.to_numeric(df[y_robust_col], errors='coerce').notna().any()
+    )
+    grouped_cols = ['EVENTOS', y_pred_col]
+    if has_robust_prediction:
+        grouped_cols.append(y_robust_col)
     
     # Agrupar por día del año y restringir a 365 días (excluyendo el día bisiesto 366 si existe)
-    df_grouped = df.groupby('DIA_DEL_ANO')[['EVENTOS', y_pred_col]].mean().reset_index()
+    df_grouped = df.groupby('DIA_DEL_ANO')[grouped_cols].mean().reset_index()
     df_grouped = df_grouped[df_grouped['DIA_DEL_ANO'] <= 365].copy()
 
     event_mean = float(df['EVENTOS'].mean())
@@ -1092,11 +1141,13 @@ def render_seasonal_chart():
     y_min = min(
         df_grouped['EVENTOS'].min(),
         df_grouped[y_pred_col].min(),
+        df_grouped[y_robust_col].min() if has_robust_prediction else df_grouped[y_pred_col].min(),
         min(reference_values),
     )
     y_max = max(
         df_grouped['EVENTOS'].max(),
         df_grouped[y_pred_col].max(),
+        df_grouped[y_robust_col].max() if has_robust_prediction else df_grouped[y_pred_col].max(),
         max(reference_values),
     )
     ymin_fixed = max(0.0, float(y_min) - 0.5)
@@ -1110,10 +1161,16 @@ def render_seasonal_chart():
     if dias_suavizado > 1:
         y_real = df_grouped['EVENTOS'].rolling(dias_suavizado, min_periods=1, center=True).mean()
         y_pred = df_grouped[y_pred_col].rolling(dias_suavizado, min_periods=1, center=True).mean()
+        y_robust = (
+            df_grouped[y_robust_col].rolling(dias_suavizado, min_periods=1, center=True).mean()
+            if has_robust_prediction
+            else None
+        )
         suffix = f" (Suavizado {dias_suavizado}d)"
     else:
         y_real = df_grouped['EVENTOS']
         y_pred = df_grouped[y_pred_col]
+        y_robust = df_grouped[y_robust_col] if has_robust_prediction else None
         suffix = " (Original)"
 
     # Crear gráfico Plotly
@@ -1134,10 +1191,19 @@ def render_seasonal_chart():
         x=df_grouped['FECHA_EJE'],
         y=y_pred,
         mode='lines',
-        name=f'Eventos Predichos{suffix}',
+        name=f'Prediccion Operacional{suffix}',
         line=dict(color='#3b82f6', width=2.5, dash='dash'),
         hovertemplate='Fecha: %{x|%d-%b}<br>Predicho: %{y:.2f} eventos<extra></extra>'
     ))
+    if has_robust_prediction:
+        fig.add_trace(go.Scatter(
+            x=df_grouped['FECHA_EJE'],
+            y=y_robust,
+            mode='lines',
+            name=f'Prediccion Robusta{suffix}',
+            line=dict(color='#f97316', width=2.3, dash='dot'),
+            hovertemplate='Fecha: %{x|%d-%b}<br>Robusto: %{y:.2f} eventos<extra></extra>'
+        ))
     
     # Referencias históricas de media y desviación estándar.
     for label, level, color, dash in reference_levels:
@@ -1218,9 +1284,14 @@ def render_seasonal_chart():
 
 @st.fragment
 def render_historical_chart():
-    historical = df[
-        ['FECHA_DT', 'EVENTOS', 'PRED_EVENTOS_PRIMARY']
-    ].sort_values('FECHA_DT').copy()
+    historical_cols = ['FECHA_DT', 'EVENTOS', 'PRED_EVENTOS_PRIMARY']
+    if 'PRED_EVENTOS_KFOLD' in df.columns:
+        historical_cols.append('PRED_EVENTOS_KFOLD')
+    historical = df[historical_cols].sort_values('FECHA_DT').copy()
+    has_robust_prediction = (
+        'PRED_EVENTOS_KFOLD' in historical.columns
+        and pd.to_numeric(historical['PRED_EVENTOS_KFOLD'], errors='coerce').notna().any()
+    )
     historical['AÑO'] = historical['FECHA_DT'].dt.year
     historical['MES_NUM'] = historical['FECHA_DT'].dt.month
     historical['DIA_SEMANA_NUM'] = historical['FECHA_DT'].dt.dayofweek
@@ -1288,6 +1359,11 @@ def render_historical_chart():
 
     real = historical['EVENTOS'].astype(float)
     predicted = historical['PRED_EVENTOS_PRIMARY'].astype(float)
+    robust_predicted = (
+        pd.to_numeric(historical['PRED_EVENTOS_KFOLD'], errors='coerce')
+        if has_robust_prediction
+        else None
+    )
 
     historical_metrics = [
         ("Días", f"{len(historical):,}", "observaciones"),
@@ -1295,6 +1371,10 @@ def render_historical_chart():
         ("Desv. real", f"{real.std():.2f}", "llamadas"),
         ("Media predicción", f"{predicted.mean():.2f}", "llamadas/día"),
     ]
+    if robust_predicted is not None:
+        historical_metrics.append(
+            ("Media robusta", f"{robust_predicted.mean():.2f}", "llamadas/día")
+        )
     historical_metrics_html = "".join(
         f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem;">
             <div style="font-size: .68rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">{label}</div>
@@ -1313,10 +1393,16 @@ def render_historical_chart():
     if smoothing_days > 1:
         real_plot = real.rolling(smoothing_days, min_periods=1, center=True).mean()
         predicted_plot = predicted.rolling(smoothing_days, min_periods=1, center=True).mean()
+        robust_plot = (
+            robust_predicted.rolling(smoothing_days, min_periods=1, center=True).mean()
+            if robust_predicted is not None
+            else None
+        )
         suffix = f" · media móvil {smoothing_days}d"
     else:
         real_plot = real
         predicted_plot = predicted
+        robust_plot = robust_predicted
         suffix = " · diario"
 
     fig = go.Figure()
@@ -1336,6 +1422,16 @@ def render_historical_chart():
         line=dict(color='#3b82f6', width=2, dash='dash'),
         hovertemplate='%{x|%d-%m-%Y}<br>Predicción: %{y:.2f}<extra></extra>',
     ))
+
+    if robust_plot is not None:
+        fig.add_trace(go.Scatter(
+            x=historical['FECHA_DT'],
+            y=robust_plot,
+            mode='lines',
+            name=f'Robusto{suffix}',
+            line=dict(color='#f97316', width=1.9, dash='dot'),
+            hovertemplate='%{x|%d-%m-%Y}<br>Robusto: %{y:.2f}<extra></extra>',
+        ))
 
     global_mean = float(df['EVENTOS'].mean())
     global_std = float(df['EVENTOS'].std())
@@ -1362,6 +1458,8 @@ def render_historical_chart():
     y_max = max(
         13.0,
         float(real.max()) + 0.5,
+        float(predicted.max()) + 0.5,
+        float(robust_predicted.max()) + 0.5 if robust_predicted is not None else 0.0,
         max(level for _, level, _, _ in historical_reference_levels) + 0.5,
     )
     layout = PLOT_LAYOUT.copy()
@@ -1498,9 +1596,31 @@ def render_distribution_charts():
     )
 
 
+    robust_predictions = pd.to_numeric(
+        df.get('PRED_EVENTOS_KFOLD', pd.Series(dtype=float)),
+        errors='coerce',
+    ).dropna()
+    if not robust_predictions.empty:
+        render_distribution_section(
+            robust_predictions,
+            "Distribución de Predicciones Históricas · Modelo Robusto",
+            "Predicciones KFold generadas sobre el histórico y campana normal de referencia.",
+            [
+                ("Mínimo robusto", f"{robust_predictions.min():.2f}", "llamadas/día"),
+                ("Máximo robusto", f"{robust_predictions.max():.2f}", "llamadas/día"),
+                ("Media robusta", f"{robust_predictions.mean():.2f}", "llamadas/día"),
+                ("Desviación estándar", f"{robust_predictions.std():.2f}", "llamadas"),
+            ],
+            "#f97316",
+            0.5,
+            "Llamados robustos por día",
+        )
+
+
 # 12. Pestañas de navegación
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "🔮 Predicciones Siguientes 6 Días",
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🔮 Predicción Operacional",
+    "🧪 Predicción Robusta",
     "⚡ Estadísticas de Modelo",
     "📈 Histórico Real vs Predicción",
     "📊 Curvas de Estacionalidad (365 días)",
@@ -1529,10 +1649,16 @@ with tab1:
             clf_threshold = float(metadata_v3.get('classification_threshold', 0.25))
             umbral_alta = float(metadata_v3.get('umbral_alta_actividad', 7.0))
         else:
-            pred_results, clf_threshold, umbral_alta = predict_6_days_recursive(
-                start_pred_date, is_historical_pred, prefix="_climatic_augmented", weather_data=shared_weather
-            )
-            pred_results_base = pred_results_v3 = pred_results
+            try:
+                pred_results, clf_threshold, umbral_alta = predict_6_days(
+                    start_pred_date, is_historical_pred, prefix="_climatic_augmented", weather_data=shared_weather
+                )
+                pred_results_base = pred_results_v3 = pred_results
+            except Exception as e:
+                st.error(f"Error en predicción: {e}")
+                pred_results = pred_results_base = pred_results_v3 = None
+                clf_threshold = float(metadata_v3.get('classification_threshold', 0.25))
+                umbral_alta = float(metadata_v3.get('umbral_alta_actividad', 7.0))
         
     if pred_results is not None:
         if weather_uses_local_fallback:
@@ -1546,7 +1672,22 @@ with tab1:
             df.get('PROB_ALTA_PRIMARY', pd.Series(dtype=float)),
             errors='coerce',
         ).dropna()
-        if historical_alert_probabilities.empty:
+
+        # Umbrales calculados solo sobre el período de entrenamiento (sin fuga de test ni in-sample del test)
+        train_end_date = str(metadata_v3.get('train_end_date', ''))
+        train_mask = (
+            df['FECHA_DIA'].astype(str) <= train_end_date
+            if train_end_date
+            else pd.Series([True] * len(df), index=df.index)
+        )
+        df_train = df[train_mask]
+        train_predictions = df_train['PRED_EVENTOS_PRIMARY'].astype(float)
+        train_alert_probs = pd.to_numeric(
+            df_train.get('PROB_ALTA_PRIMARY', pd.Series(dtype=float)),
+            errors='coerce',
+        ).dropna()
+
+        if train_alert_probs.empty:
             historical_alert_probability_mean = 0.0
             historical_alert_probability_p33 = 0.0
             historical_alert_probability_p66 = 0.0
@@ -1555,67 +1696,44 @@ with tab1:
             historical_alert_count = 0
             probability_source = "frecuencia real historica"
         else:
-            historical_alert_probability_mean = float(historical_alert_probabilities.mean())
-            historical_alert_probability_p33 = float(historical_alert_probabilities.quantile(0.33))
-            historical_alert_probability_p66 = float(historical_alert_probabilities.quantile(0.66))
-            historical_alert_probability_p80 = float(historical_alert_probabilities.quantile(0.80))
-            historical_probability_alerts = historical_alert_probabilities > historical_alert_probability_p80
+            historical_alert_probability_mean = float(train_alert_probs.mean())
+            historical_alert_probability_p33 = float(train_alert_probs.quantile(0.33))
+            historical_alert_probability_p66 = float(train_alert_probs.quantile(0.66))
+            historical_alert_probability_p80 = float(train_alert_probs.quantile(0.80))
+            historical_probability_alerts = train_alert_probs > historical_alert_probability_p80
             historical_alert_rate = float(historical_probability_alerts.mean())
             historical_alert_count = int(historical_probability_alerts.sum())
-            probability_source = "probabilidad historica del modelo"
-        historical_rescue_probabilities = pd.to_numeric(
-            df.get('PROB_RESCATE_ALTO', pd.Series(dtype=float)),
-            errors='coerce',
-        ).dropna()
-        historical_fire_probabilities = pd.to_numeric(
-            df.get('PROB_INCENDIO_ALTO', pd.Series(dtype=float)),
-            errors='coerce',
-        ).dropna()
-        rescue_probability_p33 = (
-            float(historical_rescue_probabilities.quantile(0.33))
-            if not historical_rescue_probabilities.empty
-            else 0.0
+            probability_source = "probabilidad OOF del set de entrenamiento"
+
+        # Para category risk: usar umbrales OOF almacenados en el artefacto
+        historical_rescue_probabilities = risk_probability_series(
+            'PROB_RESCATE_VEHICULAR_ALTO',
+            'PROB_RESCATE_ALTO',
         )
-        rescue_probability_p66 = (
-            float(historical_rescue_probabilities.quantile(0.66))
-            if not historical_rescue_probabilities.empty
-            else 0.0
-        )
-        rescue_probability_p80 = (
-            float(historical_rescue_probabilities.quantile(0.80))
-            if not historical_rescue_probabilities.empty
-            else 0.0
-        )
-        fire_probability_p33 = (
-            float(historical_fire_probabilities.quantile(0.33))
-            if not historical_fire_probabilities.empty
-            else 0.0
-        )
-        fire_probability_p66 = (
-            float(historical_fire_probabilities.quantile(0.66))
-            if not historical_fire_probabilities.empty
-            else 0.0
-        )
-        fire_probability_p80 = (
-            float(historical_fire_probabilities.quantile(0.80))
-            if not historical_fire_probabilities.empty
-            else 0.0
-        )
-        rescue_alert_rate = (
-            float((historical_rescue_probabilities > rescue_probability_p80).mean())
-            if not historical_rescue_probabilities.empty
-            else 0.0
-        )
-        fire_alert_rate = (
-            float((historical_fire_probabilities > fire_probability_p80).mean())
-            if not historical_fire_probabilities.empty
-            else 0.0
-        )
+        historical_fire_probabilities = risk_probability_series('PROB_INCENDIO_ALTO')
+        historical_climate_probabilities = risk_probability_series('PROB_CLIMATICAS_ALTO')
+
+        rescate_details = risk_model_details("rescate_vehicular", "rescate")
+        incendio_details = risk_model_details("incendio")
+        climaticas_details = risk_model_details("climaticas")
+        rescue_probability_p33 = float(rescate_details.get("probability_p33", 0.0))
+        rescue_probability_p66 = float(rescate_details.get("probability_p66", 0.0))
+        rescue_probability_p80 = float(rescate_details.get("probability_p80", 0.0))
+        fire_probability_p33 = float(incendio_details.get("probability_p33", 0.0))
+        fire_probability_p66 = float(incendio_details.get("probability_p66", 0.0))
+        fire_probability_p80 = float(incendio_details.get("probability_p80", 0.0))
+        climate_probability_p33 = float(climaticas_details.get("probability_p33", 0.0))
+        climate_probability_p66 = float(climaticas_details.get("probability_p66", 0.0))
+        climate_probability_p80 = float(climaticas_details.get("probability_p80", 0.0))
+        rescue_alert_rate = float(rescate_details.get("oof_alert_rate", 0.0))
+        fire_alert_rate = float(incendio_details.get("oof_alert_rate", 0.0))
+
         st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario de Llamados Talcahuano</h5></div>', unsafe_allow_html=True)
         
-        activity_p33_threshold = float(historical_predictions.quantile(0.33))
-        activity_p66_threshold = float(historical_predictions.quantile(0.66))
-        activity_p80_threshold = float(historical_predictions.quantile(0.80))
+        train_events = df_train['EVENTOS'].astype(float)
+        activity_p33_threshold = float(train_predictions.quantile(0.33))
+        activity_p66_threshold = float(train_predictions.quantile(0.66))
+        activity_p80_threshold = float(train_predictions.quantile(0.80))
 
         forecast_cards = []
         for p in pred_results:
@@ -1643,6 +1761,12 @@ with tab1:
                 fire_probability_p66,
                 fire_probability_p80,
             )
+            climate_label, climate_class = category_risk_label(
+                p.get('Prob_Climaticas_Alto', np.nan),
+                climate_probability_p33,
+                climate_probability_p66,
+                climate_probability_p80,
+            )
             forecast_cards.append(
                 f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
                     <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Dia']}</div>
@@ -1655,8 +1779,9 @@ with tab1:
                     <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.5;" />
                     <div style="font-size: 0.68rem; color: var(--text-muted); line-height: 1.45; text-align: left;">
                         &#128680; Sobredemanda: <strong>{p['Prob_Alta']*100:.0f}%</strong> <span class="metric-delta {badge_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{badge_text}</span><br/>
-                        &#128663; Rescate: <strong>{p.get('Prob_Rescate_Alto', np.nan)*100:.0f}%</strong> <span class="metric-delta {rescue_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{rescue_label}</span><br/>
-                        &#128293; Incendio: <strong>{p.get('Prob_Incendio_Alto', np.nan)*100:.0f}%</strong> <span class="metric-delta {fire_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{fire_label}</span>
+                        &#128663; R.Vehicular: <strong>{probability_percent(p.get('Prob_RVehicular_Alto', np.nan))}</strong> <span class="metric-delta {rescue_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{rescue_label}</span><br/>
+                        &#128293; Incendio: <strong>{probability_percent(p.get('Prob_Incendio_Alto', np.nan))}</strong> <span class="metric-delta {fire_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{fire_label}</span><br/>
+                        &#9928;&#65039; Climáticas: <strong>{probability_percent(p.get('Prob_Climaticas_Alto', np.nan))}</strong> <span class="metric-delta {climate_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{climate_label}</span>
                         <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.35;" />
                         &#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong><br/>
                         &#127777;&#65039; Media: <strong>{p['Temp_Media']:.1f}&deg;C</strong><br/>
@@ -1673,10 +1798,11 @@ with tab1:
             unsafe_allow_html=True,
         )
         percentile_summary_html = render_percentile_table([
-            build_percentile_row("Nivel de actividad", historical_predictions, as_probability=False),
+            build_percentile_row("Nivel de actividad (predicciones)", train_predictions, as_probability=False),
             build_percentile_row("Probabilidad de sobredemanda", historical_alert_probabilities, as_probability=True),
-            build_percentile_row("Probabilidad de rescate", historical_rescue_probabilities, as_probability=True),
+            build_percentile_row("Probabilidad de R.Vehicular", historical_rescue_probabilities, as_probability=True),
             build_percentile_row("Probabilidad de incendio", historical_fire_probabilities, as_probability=True),
+            build_percentile_row("Probabilidad de climaticas", historical_climate_probabilities, as_probability=True),
         ])
         st.markdown(
             f"""<div class="responsive-grid responsive-grid-4" style="margin-top: 1rem; margin-bottom: 1rem;">
@@ -1692,17 +1818,221 @@ with tab1:
                 </div>
             </div>
             <div class="chart-subtitle" style="margin-top: -0.35rem;">
-                Cambios de etiqueta: Bajo menor a p33, Normal entre p33 y p66, Alto sobre p66 y Alerta sobre p80.
-                Para actividad principal: baja menor a p33, normal p33-p66, alta p66-p80 y muy alta p80+.
+                Baja &lt; p33, Normal p33-p66, Alta p66-p80, Muy alta p80+.
                 {percentile_summary_html}
             </div>""",
             unsafe_allow_html=True,
         )
                 
+with tab2:
+    is_historical_pred = False
+    start_pred_date = project_today()
+
+    if metadata_kfold is None:
+        st.warning(
+            "Modelo KFold no disponible. Ejecuta `python 03_model/train_kfold_model.py` "
+            "para habilitar la prediccion robusta."
+        )
+    else:
+        with st.spinner("Consultando clima y simulando prediccion robusta con KFold..."):
+            try:
+                robust_weather = get_weather_for_range(start_pred_date, is_historical_pred)
+            except Exception as e:
+                st.error(f"Error al descargar pronostico del clima: {e}")
+                robust_weather = None
+            robust_weather_uses_local_fallback = (
+                robust_weather is not None
+                and robust_weather.get('_source', [''])[0] == 'local_fallback'
+            )
+
+            if robust_weather is None:
+                robust_results = None
+            else:
+                try:
+                    robust_results, _, _ = predict_6_days(
+                        start_pred_date,
+                        is_historical_pred,
+                        prefix="_climatic_augmented_kfold",
+                        weather_data=robust_weather,
+                    )
+                except Exception as e:
+                    st.error(f"Error en prediccion robusta: {e}")
+                    robust_results = None
+
+        if robust_results is not None:
+            if robust_weather_uses_local_fallback:
+                st.warning(
+                    "Open-Meteo no esta disponible desde este equipo. "
+                    "La prediccion robusta usa clima estimado desde el historico local."
+                )
+
+            robust_predictions = pd.to_numeric(
+                df.get('PRED_EVENTOS_KFOLD', pd.Series(dtype=float)),
+                errors='coerce',
+            ).dropna()
+            robust_alert_probabilities = pd.to_numeric(
+                df.get('PROB_ALTA_KFOLD', pd.Series(dtype=float)),
+                errors='coerce',
+            ).dropna()
+            robust_train_end_date = str(metadata_kfold.get('train_end_date', ''))
+            robust_train_mask = (
+                df['FECHA_DIA'].astype(str) <= robust_train_end_date
+                if robust_train_end_date
+                else pd.Series([True] * len(df), index=df.index)
+            )
+            df_robust_train = df[robust_train_mask]
+            robust_train_predictions = pd.to_numeric(
+                df_robust_train.get('PRED_EVENTOS_KFOLD', pd.Series(dtype=float)),
+                errors='coerce',
+            ).dropna()
+            robust_train_probs = pd.to_numeric(
+                df_robust_train.get('PROB_ALTA_KFOLD', pd.Series(dtype=float)),
+                errors='coerce',
+            ).dropna()
+
+            prediction_reference = (
+                robust_train_predictions
+                if not robust_train_predictions.empty
+                else robust_predictions
+            )
+            probability_reference = (
+                robust_train_probs
+                if not robust_train_probs.empty
+                else robust_alert_probabilities
+            )
+
+            if prediction_reference.empty:
+                prediction_reference = df['EVENTOS'].astype(float)
+            if probability_reference.empty:
+                probability_reference = pd.Series([0.0], dtype=float)
+
+            robust_mean = float(df['EVENTOS'].astype(float).mean())
+            robust_prob_mean = float(probability_reference.mean())
+            robust_prob_p33 = float(probability_reference.quantile(0.33))
+            robust_prob_p66 = float(probability_reference.quantile(0.66))
+            robust_prob_p80 = float(probability_reference.quantile(0.80))
+            robust_activity_p33 = float(prediction_reference.quantile(0.33))
+            robust_activity_p66 = float(prediction_reference.quantile(0.66))
+            robust_activity_p80 = float(prediction_reference.quantile(0.80))
+
+            robust_rescue_probabilities = risk_probability_series(
+                'PROB_RESCATE_VEHICULAR_ALTO',
+                'PROB_RESCATE_ALTO',
+            )
+            robust_fire_probabilities = risk_probability_series('PROB_INCENDIO_ALTO')
+            robust_climate_probabilities = risk_probability_series('PROB_CLIMATICAS_ALTO')
+            rescate_details = risk_model_details("rescate_vehicular", "rescate")
+            incendio_details = risk_model_details("incendio")
+            climaticas_details = risk_model_details("climaticas")
+            rescue_probability_p33 = float(rescate_details.get("probability_p33", 0.0))
+            rescue_probability_p66 = float(rescate_details.get("probability_p66", 0.0))
+            rescue_probability_p80 = float(rescate_details.get("probability_p80", 0.0))
+            fire_probability_p33 = float(incendio_details.get("probability_p33", 0.0))
+            fire_probability_p66 = float(incendio_details.get("probability_p66", 0.0))
+            fire_probability_p80 = float(incendio_details.get("probability_p80", 0.0))
+            climate_probability_p33 = float(climaticas_details.get("probability_p33", 0.0))
+            climate_probability_p66 = float(climaticas_details.get("probability_p66", 0.0))
+            climate_probability_p80 = float(climaticas_details.get("probability_p80", 0.0))
+
+            st.markdown(
+                '<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Prediccion Robusta de Llamados Talcahuano</h5></div>',
+                unsafe_allow_html=True,
+            )
+
+            robust_cards = []
+            for p in robust_results:
+                badge_text, badge_class = operational_decision(
+                    p,
+                    robust_prob_p33,
+                    robust_prob_p66,
+                    robust_prob_p80,
+                )
+                activity_text, activity_class = activity_level(
+                    p['Prediccion'],
+                    robust_activity_p33,
+                    robust_activity_p66,
+                    robust_activity_p80,
+                )
+                rescue_label, rescue_class = category_risk_label(
+                    p.get('Prob_Rescate_Alto', np.nan),
+                    rescue_probability_p33,
+                    rescue_probability_p66,
+                    rescue_probability_p80,
+                )
+                fire_label, fire_class = category_risk_label(
+                    p.get('Prob_Incendio_Alto', np.nan),
+                    fire_probability_p33,
+                    fire_probability_p66,
+                    fire_probability_p80,
+                )
+                climate_label, climate_class = category_risk_label(
+                    p.get('Prob_Climaticas_Alto', np.nan),
+                    climate_probability_p33,
+                    climate_probability_p66,
+                    climate_probability_p80,
+                )
+                robust_cards.append(
+                    f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
+                        <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Dia']}</div>
+                        <div style="font-size: 0.8rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem;">{p['Fecha'].strftime('%d-%b')}</div>
+                        <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Prediccion']:.1f}</div>
+                        <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.5rem;">llamadas</div>
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 0.35rem; margin-bottom: 0.6rem;">
+                            <div class="metric-delta {activity_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{activity_text}</div>
+                        </div>
+                        <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.5;" />
+                        <div style="font-size: 0.68rem; color: var(--text-muted); line-height: 1.45; text-align: left;">
+                            &#128680; Sobredemanda: <strong>{p['Prob_Alta']*100:.0f}%</strong> <span class="metric-delta {badge_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{badge_text}</span><br/>
+                            &#128663; R.Vehicular: <strong>{probability_percent(p.get('Prob_RVehicular_Alto', np.nan))}</strong> <span class="metric-delta {rescue_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{rescue_label}</span><br/>
+                            &#128293; Incendio: <strong>{probability_percent(p.get('Prob_Incendio_Alto', np.nan))}</strong> <span class="metric-delta {fire_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{fire_label}</span><br/>
+                            &#9928;&#65039; Climáticas: <strong>{probability_percent(p.get('Prob_Climaticas_Alto', np.nan))}</strong> <span class="metric-delta {climate_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{climate_label}</span>
+                            <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.35;" />
+                            &#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong><br/>
+                            &#127777;&#65039; Media: <strong>{p['Temp_Media']:.1f}&deg;C</strong><br/>
+                            &#128167; Humedad: <strong>{p['Hum_Media']:.0f}%</strong><br/>
+                            &#128168; Viento: <strong>{p['Viento_Medio']:.1f} km/h</strong><br/>
+                            &#127783;&#65039; Lluvia: <strong>{p['Lluvia']:.1f} mm</strong>
+                        </div>
+                    </div>"""
+                )
+
+            st.markdown(
+                f"""<div class="responsive-grid responsive-grid-6">
+                    {''.join(robust_cards)}
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            robust_percentile_summary_html = render_percentile_table([
+                build_percentile_row("Nivel de actividad robusta", prediction_reference, as_probability=False),
+                build_percentile_row("Probabilidad de sobredemanda robusta", probability_reference, as_probability=True),
+                build_percentile_row("Probabilidad de R.Vehicular", robust_rescue_probabilities, as_probability=True),
+                build_percentile_row("Probabilidad de incendio", robust_fire_probabilities, as_probability=True),
+                build_percentile_row("Probabilidad de climaticas", robust_climate_probabilities, as_probability=True),
+            ])
+            st.markdown(
+                f"""<div class="responsive-grid responsive-grid-4" style="margin-top: 1rem; margin-bottom: 1rem;">
+                    <div class="metric-card">
+                        <div class="metric-label">Media historica</div>
+                        <div class="metric-value">{robust_mean:.2f}</div>
+                        <div style="font-size: .68rem; color: var(--text-muted);">llamadas por dia</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Prob. sobredemanda robusta</div>
+                        <div class="metric-value">{robust_prob_mean*100:.1f}%</div>
+                        <div style="font-size: .68rem; color: var(--text-muted);">modelo KFold estructural</div>
+                    </div>
+                </div>
+                <div class="chart-subtitle" style="margin-top: -0.35rem;">
+                    Baja &lt; p33, Normal p33-p66, Alta p66-p80, Muy alta p80+.
+                    {robust_percentile_summary_html}
+                </div>""",
+                unsafe_allow_html=True,
+            )
+
 def render_model_metrics(metadata, title, color):
     principal = " · PRINCIPAL" if metadata.get('is_primary') else ""
     rows = [
-        ("MAE", f"{float(metadata['mae']):.2f} llamadas"),
+        ("MAE", f"{float(metadata['mae']):.2f} eventos"),
         ("MSE", f"{float(metadata['mse']):.2f}"),
         ("R²", f"{float(metadata['r2']) * 100:.1f}%"),
         ("ROC-AUC", f"{float(metadata['roc_auc']) * 100:.1f}%"),
@@ -1713,6 +2043,8 @@ def render_model_metrics(metadata, title, color):
     ]
     if "brier" in metadata:
         rows.insert(4, ("Brier", f"{float(metadata['brier']):.3f}"))
+    if metadata.get("validation_protocol"):
+        rows.insert(0, ("Validacion", str(metadata["validation_protocol"])))
     table_rows = "".join(
         f'<tr style="border-bottom: 1px solid rgba(128,128,128,.15);">'
         f'<td style="color: var(--text-muted); padding: .3rem 0;">{label}</td>'
@@ -1728,7 +2060,33 @@ def render_model_metrics(metadata, title, color):
     )
 
 
+def render_metric_explanations():
+    st.markdown(
+        """
+        <div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-top: 1rem;">
+            <div style="font-weight: 700; color: var(--text); margin-bottom: 0.55rem;">Guia breve de metricas</div>
+            <div style="font-size: 0.78rem; line-height: 1.55; color: var(--text-muted);">
+                <p><strong>MAE:</strong> error absoluto medio. Indica cuantos eventos se equivoca el modelo en promedio.</p>
+                <p><strong>MSE:</strong> error cuadratico medio. Penaliza mas fuerte los errores grandes.</p>
+                <p><strong>R2:</strong> mejora frente a usar una media historica. Cerca de 0 significa que el conteo diario sigue teniendo mucho ruido.</p>
+                <p><strong>ROC-AUC:</strong> capacidad de ordenar dias riesgosos sobre dias normales; 0.50 equivale a azar y 1.00 seria separacion perfecta.</p>
+                <p><strong>Brier:</strong> error de calibracion de probabilidades. Menor es mejor: castiga probabilidades confiadas que se equivocan.</p>
+                <p><strong>Matriz de confusion:</strong> TP = alerta correcta, TN = normal correcto, FP = falsa alerta, FN = alerta omitida.</p>
+                <p><strong>Accuracy:</strong> proporcion de aciertos totales. Formula: <code>(TP + TN) / (TP + TN + FP + FN)</code>.</p>
+                <p><strong>Precision:</strong> de las alertas emitidas, cuantas fueron correctas. Formula: <code>TP / (TP + FP)</code>.</p>
+                <p><strong>Recall:</strong> de los dias realmente criticos, cuantos detecto el modelo. Formula: <code>TP / (TP + FN)</code>.</p>
+                <p><strong>F1-Score:</strong> equilibrio entre precision y recall. Formula: <code>2 * Precision * Recall / (Precision + Recall)</code>.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_importance_chart(df_importance, title, color):
+    if df_importance is None or df_importance.empty:
+        st.info("No hay importancia de variables disponible para este modelo.")
+        return
     shown = df_importance.tail(20)
     fig = go.Figure(go.Bar(
         y=shown['Feature'],
@@ -1768,27 +2126,52 @@ def render_importance_chart(df_importance, title, color):
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
-with tab2:
+with tab3:
     st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="chart-title">Estadísticas del Modelo Principal</div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title">Estadísticas de Modelos</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="chart-subtitle">Métricas de evaluación e importancia de variables del modelo optimizado por categorías.</div>',
+        '<div class="chart-subtitle">Comparación metodológica entre el modelo operacional validado temporalmente y el modelo robusto validado con 5KFold.</div>',
         unsafe_allow_html=True,
     )
-    render_model_metrics(
-        metadata_aug,
-        "Actual · Optimizado por categorías",
-        "#8b5cf6",
-    )
+    col_stats_operational, col_stats_robust = st.columns(2)
+    with col_stats_operational:
+        metadata_operational_stats = dict(metadata_aug)
+        metadata_operational_stats.setdefault("validation_protocol", "Backtesting temporal")
+        render_model_metrics(
+            metadata_operational_stats,
+            "Operacional · Backtesting temporal",
+            "#8b5cf6",
+        )
+    with col_stats_robust:
+        if metadata_kfold is not None:
+            render_model_metrics(
+                metadata_kfold,
+                "Robusto · 5KFold",
+                "#f97316",
+            )
+        else:
+            st.info("Modelo robusto no disponible. Ejecuta: python 03_model/train_kfold_model.py")
+    render_metric_explanations()
     st.markdown(
         '<div class="chart-title" style="margin-top: 1.25rem;">Importancia de Variables</div>',
         unsafe_allow_html=True,
     )
-    render_importance_chart(
-        df_imp_aug,
-        "Importancia · Optimizado por categorías",
-        "#8b5cf6",
-    )
+    col_imp_operational, col_imp_robust = st.columns(2)
+    with col_imp_operational:
+        render_importance_chart(
+            df_imp_aug,
+            "Importancia · Operacional",
+            "#8b5cf6",
+        )
+    with col_imp_robust:
+        if metadata_kfold is not None:
+            render_importance_chart(
+                df_imp_kfold,
+                "Importancia · Robusto 5KFold",
+                "#f97316",
+            )
+        else:
+            st.info("No hay importancia robusta disponible.")
 
 
 if False:  # Vista comparativa antigua, conservada temporalmente como referencia.
@@ -1810,7 +2193,7 @@ if False:  # Vista comparativa antigua, conservada temporalmente como referencia
         st.markdown(f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
             <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); border-bottom: 2px solid #3b82f6; padding-bottom: 0.4rem; margin-bottom: 0.8rem;">Métricas Modelo Climático</div>
             <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; line-height: 1.6;">
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Absoluto Medio (MAE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mae_base:.2f} llamadas</td></tr>
+                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Absoluto Medio (MAE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mae_base:.2f} eventos</td></tr>
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Cuadrático Medio (MSE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mse_base:.2f}</td></tr>
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Coeficiente R² (Regresión)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{r2_base:.1f}%</td></tr>
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Umbral Clasificación Calibrado</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{thresh_base:.2f}</td></tr>
@@ -1832,7 +2215,7 @@ if False:  # Vista comparativa antigua, conservada temporalmente como referencia
         st.markdown(f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
             <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); border-bottom: 2px solid #10b981; padding-bottom: 0.4rem; margin-bottom: 0.8rem;">Métricas Modelo Climático con Inercia</div>
             <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; line-height: 1.6;">
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Absoluto Medio (MAE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mae_aug:.2f} llamadas</td></tr>
+                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Absoluto Medio (MAE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mae_aug:.2f} eventos</td></tr>
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Cuadrático Medio (MSE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mse_aug:.2f}</td></tr>
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Coeficiente R² (Regresión)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{r2_aug:.1f}%</td></tr>
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Umbral Clasificación Calibrado</td><td style="text-align: right; color: #10b981; font-weight: 700; padding: 0.3rem 0;">{thresh_aug:.2f}</td></tr>
@@ -1854,7 +2237,7 @@ if False:  # Vista comparativa antigua, conservada temporalmente como referencia
         st.markdown(f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
             <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); border-bottom: 2px solid #8b5cf6; padding-bottom: 0.4rem; margin-bottom: 0.8rem;">Métricas Climático Aumentado (Principal)</div>
             <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; line-height: 1.6;">
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Absoluto Medio (MAE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mae_v3:.2f} llamadas</td></tr>
+                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Absoluto Medio (MAE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mae_v3:.2f} eventos</td></tr>
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Cuadrático Medio (MSE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mse_v3:.2f}</td></tr>
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Coeficiente R² (Regresión)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{r2_v3:.1f}%</td></tr>
                 <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Umbral Clasificación Calibrado</td><td style="text-align: right; color: #8b5cf6; font-weight: 700; padding: 0.3rem 0;">{thresh_v3:.2f}</td></tr>
@@ -1868,7 +2251,7 @@ if False:  # Vista comparativa antigua, conservada temporalmente como referencia
         st.markdown("""<div style="font-size: 0.78rem; line-height: 1.6; color: var(--text-muted); padding: 0.5rem;">
             <p style="margin-top: 0px;"><strong>1. Métricas del Modelo de Regresión (¿Cuántas llamadas exactas ocurrirán hoy?):</strong></p>
             <ul>
-                <li style="margin-bottom: 0.5rem;"><strong>Error Absoluto Medio (MAE):</strong> Desviación promedio esperada de la predicción. Un valor de 2.5 indica que, en promedio, el pronóstico del modelo acierta con una diferencia de <strong>&plusmn;2.5 llamadas</strong> respecto a la realidad.</li>
+                <li style="margin-bottom: 0.5rem;"><strong>Error Absoluto Medio (MAE):</strong> Desviación promedio esperada de la predicción. Un valor de 2.5 indica que, en promedio, el pronóstico del modelo acierta con una diferencia de <strong>&plusmn;2.5 eventos</strong> respecto a la realidad.</li>
                 <li style="margin-bottom: 0.5rem;"><strong>Error Cuadrático Medio (MSE):</strong> Promedio de los errores elevados al cuadrado. Al elevarlos al cuadrado, penaliza y destaca con mayor rigor las fallas graves de predicción.</li>
                 <li style="margin-bottom: 0.5rem;"><strong>Coeficiente R² (Regresión):</strong> Mide la mejora del modelo en comparación con usar un promedio histórico fijo.
                 <br/><em>¿Por qué es negativo o cercano a cero?</em> La demanda de emergencias de bomberos diaria posee una aleatoriedad intrínseca extrema. Un R² ligeramente negativo o muy bajo (-0.7% o -0.3%) en la evaluación indica que predecir el número puntual exacto tiene tanto "ruido" que el promedio histórico comete un error similar, lo que demuestra la dificultad de acertar el número exacto, aunque el modelo sea excelente en capturar tendencias y días críticos.</li>
@@ -2009,11 +2392,11 @@ if False:  # Vista comparativa antigua, conservada temporalmente como referencia
     </div>""", unsafe_allow_html=True)
 
 
-with tab3:
+with tab4:
     st.markdown('<div class="chart-anchor"></div>', unsafe_allow_html=True)
     st.markdown('<div class="chart-title">Histórico Real versus Predicción</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="chart-subtitle">Serie cronológica del modelo principal. '
+        '<div class="chart-subtitle">Serie cronológica del modelo principal v0617. '
         'Los filtros de año, mes y día de la semana pueden combinarse libremente.</div>',
         unsafe_allow_html=True,
     )
@@ -2021,7 +2404,7 @@ with tab3:
     render_distribution_charts()
 
 
-with tab4:
+with tab5:
     with st.container():
         principal_variant = {
             'full': 'Full',
@@ -2031,7 +2414,7 @@ with tab4:
         st.markdown('<div class="chart-anchor"></div>', unsafe_allow_html=True)
         st.markdown('<div class="chart-title">Curva Estacional del Modelo Principal</div>', unsafe_allow_html=True)
         st.markdown(
-            f'<div class="chart-subtitle">Eventos reales versus predicciones históricas del modelo {principal_variant}, seleccionado automáticamente por desempeño.</div>',
+            f'<div class="chart-subtitle">Eventos reales versus predicciones históricas del modelo {principal_variant} v0617, seleccionado automáticamente por desempeño.</div>',
             unsafe_allow_html=True,
         )
         render_seasonal_chart()
@@ -2046,20 +2429,19 @@ with tab4:
     """)
 
 
-with tab5:
+with tab6:
     st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="chart-title">Comparación de Modelos</div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title">Comparación de Modelos v0617</div>', unsafe_allow_html=True)
     direct_weight = metadata_aug.get('blend_weight_direct', 0.53)
     category_weight = metadata_aug.get('blend_weight_categories', 0.47)
     st.markdown(
         f'<div class="chart-subtitle">El modelo actual combina {direct_weight:.0%} del modelo '
         f'directo y {category_weight:.0%} de seis modelos por tipo de emergencia. '
-        'Se compara con el optimizado directo y el candidato experimental sin ceros agregados.</div>',
+        'Se compara con el directo de 31 variables y el modelo estructural validado con KFold.</div>',
         unsafe_allow_html=True,
     )
 
-    metric_columns = st.columns(3 if experimental_metadata else 2)
-    col_met1, col_met2 = metric_columns[:2]
+    col_met1, col_met2, col_met3 = st.columns(3)
     with col_met1:
         render_model_metrics(
             metadata_aug,
@@ -2072,43 +2454,17 @@ with tab5:
             "Comparación · Directo 31 variables",
             "#3b82f6",
         )
-
-    if experimental_metadata:
-        with metric_columns[2]:
+    with col_met3:
+        if metadata_kfold is not None:
             render_model_metrics(
-                experimental_metadata,
-                "Experimental - Clima ampliado",
-                "#f59e0b",
+                metadata_kfold,
+                "Estructural Â· KFold aleatorio",
+                "#f97316",
             )
-        promotion_text = (
-            "Cumple criterio de promoción."
-            if experimental_metadata["promoted"]
-            else "No cumple criterio de promoción; no pasa al modelo mixto."
-        )
-        st.info(
-            f"Ablación ganadora: {experimental_metadata['experiment_name']}. "
-            f"MAE {experimental_metadata['baseline_mae']:.3f} → "
-            f"{experimental_metadata['mae']:.3f}; ROC-AUC "
-            f"{experimental_metadata['baseline_roc_auc']:.3f} → "
-            f"{experimental_metadata['roc_auc']:.3f}. "
-            f"Mejora MAE en {experimental_metadata['folds_improved']}/5 folds. "
-            f"{promotion_text}"
-        )
-        if blend_calibration_summary:
-            best_risk = blend_calibration_summary["best_risk"]
-            best_ranking = blend_calibration_summary["best_fold_ranking"]
-            st.warning(
-                f"Optimización directo/categorías: peso directo medio "
-                f"{blend_calibration_summary['mean_weight_direct']:.0%}; la mezcla "
-                f"superó al directo en "
-                f"{blend_calibration_summary['folds_blend_beats_direct']}/5 folds. "
-                f"Mejor Brier: {best_risk['brier']:.3f} "
-                f"({best_risk['model']}). Mejor ROC-AUC medio por periodo: "
-                f"{best_ranking['mean_fold_roc_auc']:.3f} "
-                f"({best_ranking['model']}). Sin promoción."
-            )
+        else:
+            st.info("Modelo KFold no entrenado aun. Ejecuta: python 03_model/train_kfold_model.py")
 
-    col_imp1, col_imp2 = st.columns(2)
+    col_imp1, col_imp2, col_imp3 = st.columns(3)
     with col_imp1:
         render_importance_chart(
             df_imp_aug,
@@ -2121,3 +2477,10 @@ with tab5:
             "Importancia · Modelo comparado",
             "#3b82f6",
         )
+    with col_imp3:
+        if metadata_kfold is not None:
+            render_importance_chart(
+                df_imp_kfold,
+                "Importancia Â· KFold estructural",
+                "#f97316",
+            )
