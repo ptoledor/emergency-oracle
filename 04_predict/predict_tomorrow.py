@@ -2,8 +2,14 @@ import pandas as pd
 import numpy as np
 import requests
 import os
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("SKLEARN_NUM_THREADS", "1")
 import pickle
 import datetime
+import time
 import holidays
 import argparse
 import sys
@@ -22,6 +28,81 @@ from dedup import mark_duplicates, assign_local_date, DEFAULT_TIMEZONE
 
 def project_today():
     return datetime.datetime.now(PROJECT_TIMEZONE).date()
+
+
+def build_local_weather_fallback(start_date, end_date):
+    weather_archive_path = PROJECT_ROOT / "02_data" / "weather_archive_talcahuano.csv"
+    archive = pd.read_csv(weather_archive_path)
+    archive['FECHA_DIA'] = pd.to_datetime(archive['FECHA_DIA']).dt.date
+    archive['MONTH_DAY'] = archive['FECHA_DIA'].apply(lambda value: (value.month, value.day))
+    archive['MONTH'] = archive['FECHA_DIA'].apply(lambda value: value.month)
+    numeric_cols = [
+        'TEMP_MAX', 'TEMP_MIN', 'TEMP_MEDIA',
+        'HUM_MAX', 'HUM_MIN', 'HUM_MEDIA',
+        'VIENTO_MAX', 'VIENTO_MEDIO', 'LLUVIA',
+    ]
+    global_medians = archive[numeric_cols].median(numeric_only=True)
+    rows = []
+    for offset in range((end_date - start_date).days + 1):
+        target_date = start_date + datetime.timedelta(days=offset)
+        exact = archive[archive['FECHA_DIA'] == target_date]
+        if not exact.empty:
+            source_row = exact.iloc[0]
+        else:
+            same_day = archive[archive['MONTH_DAY'] == (target_date.month, target_date.day)]
+            if not same_day.empty:
+                source_row = same_day[numeric_cols].median(numeric_only=True)
+            else:
+                same_month = archive[archive['MONTH'] == target_date.month]
+                source_row = (
+                    same_month[numeric_cols].median(numeric_only=True)
+                    if not same_month.empty
+                    else global_medians
+                )
+
+        temp_mean = float(source_row.get('TEMP_MEDIA', global_medians['TEMP_MEDIA']))
+        temp_amp = max(
+            0.1,
+            (float(source_row.get('TEMP_MAX', temp_mean)) - float(source_row.get('TEMP_MIN', temp_mean))) / 2,
+        )
+        hum_mean = float(source_row.get('HUM_MEDIA', global_medians['HUM_MEDIA']))
+        wind_mean = float(source_row.get('VIENTO_MEDIO', global_medians['VIENTO_MEDIO']))
+        rain_daily = max(0.0, float(source_row.get('LLUVIA', global_medians['LLUVIA'])))
+
+        for hour in range(24):
+            angle = 2 * np.pi * (hour - 15) / 24
+            temp = temp_mean + temp_amp * np.cos(angle)
+            humidity = float(np.clip(hum_mean - 8 * np.cos(angle), 0, 100))
+            rows.append({
+                'time': f"{target_date.strftime('%Y-%m-%d')}T{hour:02d}:00",
+                'temperature_2m': temp,
+                'relative_humidity_2m': humidity,
+                'wind_speed_10m': wind_mean,
+                'precipitation': rain_daily / 24,
+            })
+    return pd.DataFrame(rows)
+
+
+def fetch_weather_hourly(url, fallback_start, fallback_end, retries=3):
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            session = requests.Session()
+            session.trust_env = False
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            return pd.DataFrame(response.json()['hourly'])
+        except Exception as exc:
+            last_error = exc
+            if attempt < retries:
+                time.sleep(2 * attempt)
+
+    print(
+        "Open-Meteo no disponible despues de "
+        f"{retries} intentos, usando clima local estimado: {last_error}"
+    )
+    return build_local_weather_fallback(fallback_start, fallback_end)
+
 
 def get_events_and_categories_for_dates(csv_path, codes_path, dates):
     """
@@ -48,9 +129,9 @@ def get_events_and_categories_for_dates(csv_path, codes_path, dates):
     df_merged = pd.merge(df, codigos_clean, how='left', on='CODIGO_EMERGENCIA')
 
     # Deduplicar y filtrar solo incident-like únicos (consistente con clean_and_augment.py)
-    dup_flags, incident_flags = mark_duplicates(df_merged, 'Fecha', 'Texto')
-    df_merged['_IS_DUPLICATE'] = df_merged.index.map(lambda i: dup_flags.get(i, False))
-    df_merged['_IS_INCIDENT_LIKE'] = df_merged.index.map(lambda i: incident_flags.get(i, False))
+    _, incident_flags = mark_duplicates(df_merged, 'Fecha', 'Texto')
+    df_merged['_IS_DUPLICATE'] = False
+    df_merged['_IS_INCIDENT_LIKE'] = df_merged.index.map(lambda i: incident_flags.get(i, True))
     df_incidents = df_merged[df_merged['_IS_INCIDENT_LIKE'] & ~df_merged['_IS_DUPLICATE']].copy()
 
     daily_counts = df_incidents.groupby('FECHA_DIA').size().to_dict()
@@ -64,6 +145,7 @@ def get_events_and_categories_for_dates(csv_path, codes_path, dates):
         'INCENDIO PASTIZAL O FORESTAL': 'N_INCENDIO_FOREST_lag_1',
         'RESCATE VEHICULAR': 'N_RESCATE_VEH_lag_1',
         'RESCATE DE PERSONAS': 'N_RESCATE_PERS_lag_1',
+        'EMERGENCIAS CLIMATICAS': 'N_EMERGENCIAS_CLIMATICAS_lag_1',
         'EMANACIÓN DE GASES': 'N_GASES_lag_1',
     }
 
@@ -89,17 +171,18 @@ def main():
     parser = argparse.ArgumentParser(description="Predictor de emergencias para Bomberos de Talcahuano")
     parser.add_argument('--date', type=str, help="Fecha a predecir (YYYY-MM-DD). Por defecto predice el día siguiente al dataset.")
     parser.add_argument('--real-tomorrow', action='store_true', help="Fuerza a predecir el día de mañana real.")
-    parser.add_argument('--v3', action='store_true', help="Alias compatible del Modelo Climático Aumentado.")
     parser.add_argument('--inertia', action='store_true', help="Usa el spin-off con inercia de actividad.")
     args = parser.parse_args()
 
     # Cargar modelos según selección de versión
     prefix = "_agnostic_augmented" if args.inertia else "_climatic_augmented"
-    with open(f"{models_dir}/regressor{prefix}.pkl", "rb") as f:
+    import model_components
+    reg_path, clf_path, meta_path = model_components.resolve_model_path(models_dir, prefix)
+    with open(reg_path, "rb") as f:
         reg_model = pickle.load(f)
-    with open(f"{models_dir}/classifier{prefix}.pkl", "rb") as f:
+    with open(clf_path, "rb") as f:
         clf_model = pickle.load(f)
-    with open(f"{models_dir}/metadata{prefix}.pkl", "rb") as f:
+    with open(meta_path, "rb") as f:
         metadata = pickle.load(f)
 
     # Detectar última fecha disponible en el dataset
@@ -132,9 +215,9 @@ def main():
     # Obtener conteos de eventos y categorías
     lag_counts, category_lags = get_events_and_categories_for_dates(raw_tweets_path, claves_cbt_path, lag_dates_str)
     
-    # Imputar la media de entrenamiento (5.46) para las fechas de lags que son posteriores a la base de datos
+    train_mean = float(metadata.get('train_target_mean', 5.71))
     imputed_lag_counts = [
-        val if date <= max_date_in_dataset else 5.46 
+        val if date <= max_date_in_dataset else train_mean
         for val, date in zip(lag_counts, lag_dates_str)
     ]
     
@@ -145,11 +228,11 @@ def main():
     
     # Calcular estadísticas móviles de eventos (excluyendo el día de predicción)
     eventos_rolling_mean_3d = np.mean(imputed_lag_counts[4:])  # lag_3, lag_2, lag_1
-    eventos_rolling_std_3d = np.std(imputed_lag_counts[4:])
+    eventos_rolling_std_3d = np.std(imputed_lag_counts[4:], ddof=1)
     eventos_rolling_max_3d = np.max(imputed_lag_counts[4:])
     
     eventos_rolling_mean_7d = np.mean(imputed_lag_counts)      # lag_7 a lag_1
-    eventos_rolling_std_7d = np.std(imputed_lag_counts)
+    eventos_rolling_std_7d = np.std(imputed_lag_counts, ddof=1)
     eventos_rolling_max_7d = np.max(imputed_lag_counts)
 
     print(f"Conteo de eventos en lags principales:")
@@ -185,10 +268,9 @@ def main():
                f"latitude={lat}&longitude={lon}&"
                f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
                f"timezone=America%2FSantiago&past_days=30&forecast_days=10")
-        response = requests.get(url, timeout=30)
-        if response.status_code != 200:
-            raise RuntimeError(f"Error al descargar pronóstico: {response.text}")
-        data_raw = response.json()['hourly']
+        fallback_start = target_date - datetime.timedelta(days=30)
+        fallback_end = max(target_date, today_date + datetime.timedelta(days=9))
+        df_hourly = fetch_weather_hourly(url, fallback_start, fallback_end)
     else:
         print("Obteniendo clima histórico desde Open-Meteo...")
         # Consultamos 30 días previos para memoria hídrica multiescala.
@@ -198,12 +280,10 @@ def main():
                f"end_date={target_date_str}&"
                f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
                f"timezone=America%2FSantiago&format=json")
-        response = requests.get(url, timeout=30)
-        if response.status_code != 200:
-            raise RuntimeError(f"Error al descargar clima histórico: {response.text}")
-        data_raw = response.json()['hourly']
-        
-    df_hourly = pd.DataFrame(data_raw)
+        fallback_start = target_date - datetime.timedelta(days=30)
+        fallback_end = target_date
+        df_hourly = fetch_weather_hourly(url, fallback_start, fallback_end)
+
     df_hourly['time'] = pd.to_datetime(df_hourly['time'])
     df_hourly['FECHA_DIA'] = df_hourly['time'].dt.strftime('%Y-%m-%d')
     
@@ -276,6 +356,14 @@ def main():
         clima_data[f'LLUVIA_MAX_{window}D_PREV'] = float(np.max(rain_window))
         clima_data[f'DIAS_SECOS_{window}D_PREV'] = float(np.sum(rain_window <= 0.1))
 
+    clima_data['TEMP_HUM_INDEX'] = clima_data['TEMP_MEDIA'] * clima_data['HUM_MEDIA'] / 100
+    clima_data['VIENTO_LLUVIA_INDEX'] = clima_data['VIENTO_MEDIO'] * clima_data['LLUVIA']
+    clima_data['STORM_COMPOUND_INDEX'] = clima_data['VIENTO_MAX'] * (1 + clima_data['LLUVIA'])
+    clima_data['FIRE_DRY_INDEX_7D'] = (
+        clima_data['TEMP_MAX'] * clima_data['DIAS_SECOS_7D_PREV']
+        / (1 + clima_data['LLUVIA_TOTAL_7D_PREV'])
+    )
+
 
     print(f"Condiciones climáticas para la predicción:")
     print(f"  - Temperatura (Mín/Med/Máx): {clima_data['TEMP_MIN']}°C / {clima_data['TEMP_MEDIA']}°C / {clima_data['TEMP_MAX']}°C")
@@ -336,6 +424,7 @@ def main():
         'N_INCENDIO_FOREST_lag_1': category_lags['N_INCENDIO_FOREST_lag_1'],
         'N_RESCATE_VEH_lag_1': category_lags['N_RESCATE_VEH_lag_1'],
         'N_RESCATE_PERS_lag_1': category_lags['N_RESCATE_PERS_lag_1'],
+        'N_EMERGENCIAS_CLIMATICAS_lag_1': category_lags['N_EMERGENCIAS_CLIMATICAS_lag_1'],
         'N_GASES_lag_1': category_lags['N_GASES_lag_1'],
         'EVENTOS_rolling_mean_3d': eventos_rolling_mean_3d,
         'EVENTOS_rolling_std_3d': eventos_rolling_std_3d,
@@ -367,20 +456,25 @@ def main():
     for name, value in clima_data.items():
         if name.startswith('LLUVIA_') or name.startswith('DIAS_SECOS_'):
             features[name] = value
+    for name in [
+        'TEMP_HUM_INDEX',
+        'VIENTO_LLUVIA_INDEX',
+        'STORM_COMPOUND_INDEX',
+        'FIRE_DRY_INDEX_7D',
+    ]:
+        features[name] = clima_data[name]
 
-    # Convertir a DataFrame asegurando el orden de columnas del metadato
-    X_pred = pd.DataFrame([features])[metadata['feature_cols']]
+    # Convertir a DataFrame con todas las features construidas
+    X_all = pd.DataFrame([features])
 
     # Realizar predicciones
-    pred_count = float(np.clip(reg_model.predict(X_pred)[0], 0, None))
-    prob_high = float(clf_model.predict_proba(X_pred)[0, 1])
-    
-    # Intervalo predictivo 80% via Negative Binomial
-    nb_alpha = float(metadata.get('negative_binomial_alpha', 0.3))
-    nb_var = pred_count + nb_alpha * pred_count ** 2
-    nb_std = float(np.sqrt(max(nb_var, 0.01)))
-    pred_low = max(0.0, pred_count - 1.2816 * nb_std)
-    pred_high_bound = pred_count + 1.2816 * nb_std
+    if hasattr(reg_model, 'category_models'):
+        pred_count = float(np.clip(reg_model.predict(X_all)[0], 0, None))
+    else:
+        X_pred = X_all[metadata['feature_cols']]
+        pred_count = float(np.clip(reg_model.predict(X_pred)[0], 0, None))
+    X_clf = X_all[[c for c in metadata['feature_cols'] if c in X_all.columns]]
+    prob_high = float(clf_model.predict_proba(X_clf)[0, 1])
     
     # Lógica de umbral dinámico desde metadatos
     threshold = metadata.get('classification_threshold', 0.20)
@@ -393,7 +487,7 @@ def main():
     print(f" Fecha del reporte: {project_today()} | Fecha predicción: {target_date_str}")
     print("="*50)
     print(f" Cantidad esperada de emergencias: {pred_count:.1f} incidentes")
-    print(f" Intervalo 80% (NB): [{pred_low:.1f}, {pred_high_bound:.1f}]")
+    print(f" Probabilidad sobredemanda: {prob_high*100:.0f}%")
     print(f" Probabilidad de día crítico (>7 eventos): {prob_high * 100:.1f}% (Umbral Alerta: {threshold * 100:.1f}%)")
     
     # Decisión de personal basada en la predicción combinada

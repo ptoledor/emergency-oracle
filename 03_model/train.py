@@ -1,9 +1,17 @@
+import os
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("SKLEARN_NUM_THREADS", "1")
+
 import pandas as pd
 import numpy as np
-import os
 import pickle
 import shutil
 import tempfile
+import datetime
+import sys
 from itertools import combinations
 from pathlib import Path
 from joblib import Parallel, delayed
@@ -13,12 +21,16 @@ from sklearn.ensemble import (
     RandomForestClassifier,
 )
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.inspection import permutation_importance
 from sklearn.metrics import (
     mean_absolute_error, mean_squared_error, r2_score,
     accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
     confusion_matrix, brier_score_loss,
 )
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 RANDOM_STATE = 42
 
 # Modelo de producción: Poisson loss (no-negativo, apropiado para conteos)
@@ -32,7 +44,7 @@ FINAL_MODEL_PARAMS = {
     'random_state': RANDOM_STATE,
 }
 
-# GBR para feature selection (necesita feature_importances_)
+# GBR auxiliar legado para comparaciones livianas y fallbacks de importancia.
 MODEL_PARAMS = {
     'n_estimators': 150,
     'max_depth': 4,
@@ -46,19 +58,19 @@ CLASSIFIER_PARAMS = {
     'max_depth': 8,
     'min_samples_leaf': 4,
     'class_weight': 'balanced_subsample',
-    'n_jobs': -1,
+    'n_jobs': 1,
     'random_state': RANDOM_STATE,
 }
 SEARCH_MODEL_PARAMS = {
-    **MODEL_PARAMS,
-    'n_estimators': 120,
+    **FINAL_MODEL_PARAMS,
+    'max_iter': 180,
 }
 SEARCH_CLASSIFIER_PARAMS = {
     **CLASSIFIER_PARAMS,
     'n_estimators': 200,
     'n_jobs': 1,
 }
-SEARCH_N_JOBS = min(8, max(1, (os.cpu_count() or 2) - 1))
+SEARCH_N_JOBS = 1
 
 
 def select_stable_features(df, candidate_cols, split_idx, top_n):
@@ -66,10 +78,20 @@ def select_stable_features(df, candidate_cols, split_idx, top_n):
     y_train = df['EVENTOS'].iloc[:split_idx]
     fold_importances = []
 
-    for train_idx, _ in TimeSeriesSplit(n_splits=5).split(X_train):
-        model = GradientBoostingRegressor(**MODEL_PARAMS)
+    for train_idx, val_idx in TimeSeriesSplit(n_splits=5).split(X_train):
+        model = HistGradientBoostingRegressor(**FINAL_MODEL_PARAMS)
         model.fit(X_train.iloc[train_idx], y_train.iloc[train_idx])
-        fold_importances.append(model.feature_importances_)
+        fold_importances.append(
+            permutation_importance(
+                model,
+                X_train.iloc[val_idx],
+                y_train.iloc[val_idx],
+                n_repeats=3,
+                random_state=RANDOM_STATE,
+                n_jobs=1,
+                scoring='neg_mean_absolute_error',
+            ).importances_mean
+        )
 
     mean_importances = np.mean(fold_importances, axis=0)
     ranking = sorted(
@@ -88,7 +110,7 @@ def evaluate_feature_subset_temporally(X_all, y_reg, y_clf, feature_cols, stage)
     fold_aucs = []
 
     for train_idx, val_idx in TimeSeriesSplit(n_splits=4).split(X):
-        reg_model = GradientBoostingRegressor(**SEARCH_MODEL_PARAMS)
+        reg_model = HistGradientBoostingRegressor(**SEARCH_MODEL_PARAMS)
         reg_model.fit(X.iloc[train_idx], y_reg.iloc[train_idx])
         fold_reg_predictions = reg_model.predict(X.iloc[val_idx])
         reg_predictions[val_idx] = fold_reg_predictions
@@ -277,10 +299,18 @@ def train_model_pipeline(
     # Entrenar regresor base para calcular la importancia de características
     if forced_feature_cols is None:
         print("Calculando la importancia de variables en el set de entrenamiento...")
-        base_reg = GradientBoostingRegressor(**MODEL_PARAMS)
+        base_reg = HistGradientBoostingRegressor(**FINAL_MODEL_PARAMS)
         base_reg.fit(X_train_initial, y_reg_train_initial)
         importance_threshold = 0.008
-        importances = base_reg.feature_importances_
+        importances = permutation_importance(
+            base_reg,
+            X_train_initial,
+            y_reg_train_initial,
+            n_repeats=3,
+            random_state=RANDOM_STATE,
+            n_jobs=1,
+            scoring='neg_mean_absolute_error',
+        ).importances_mean
         feature_cols = [
             col for col, imp in zip(initial_feature_cols, importances)
             if imp >= importance_threshold
@@ -330,7 +360,7 @@ def train_model_pipeline(
         clf_fold.fit(X_tr, y_tr)
         oof_probs[val_idx] = clf_fold.predict_proba(X_val)[:, 1]
 
-        reg_fold = GradientBoostingRegressor(**MODEL_PARAMS)
+        reg_fold = HistGradientBoostingRegressor(**FINAL_MODEL_PARAMS)
         reg_fold.fit(X_tr, y_reg_train.iloc[train_idx])
         oof_reg_predictions[val_idx] = reg_fold.predict(X_val)
 
@@ -365,7 +395,7 @@ def train_model_pipeline(
     # Entrenar Modelo de Regresión Final
     print("\nEntrenando modelo final de Regresión...")
     operational_threshold = 0.50
-    operational_precision_target = 0.30
+    operational_precision_target = 0.20
     operational_precision = 0.0
     operational_recall = -1.0
     for t in np.arange(0.05, 0.85, 0.01):
@@ -396,24 +426,39 @@ def train_model_pipeline(
     baseline_mae = mean_absolute_error(y_reg_test, baseline_pred)
     baseline_mse = mean_squared_error(y_reg_test, baseline_pred)
 
-    # --- Baseline gate: mediana histórica y media móvil 28d ---
+    # --- Baseline gate: mediana histórica, persistencia y rolling dinámico ---
     median_baseline_pred = np.full(len(y_reg_test), train_median)
     median_baseline_mae = mean_absolute_error(y_reg_test, median_baseline_pred)
-    rolling_28d_pred = y_reg_train.rolling(28, min_periods=1).mean().iloc[-1]
-    rolling_baseline_pred = np.full(len(y_reg_test), rolling_28d_pred)
+
+    # Persistencia: y_pred[t] = y_true[t-1] (usa solo información pasada)
+    y_train_arr = y_reg_train.values
+    y_test_arr = y_reg_test.values
+    persistence_pred = np.empty(len(y_test_arr), dtype=float)
+    persistence_pred[0] = y_train_arr[-1]
+    persistence_pred[1:] = y_test_arr[:-1]
+    persistence_mae = mean_absolute_error(y_reg_test, persistence_pred)
+
+    # Rolling 28d dinámico: actualiza con cada día de test usando solo pasado
+    rolling_baseline_pred = np.empty(len(y_test_arr), dtype=float)
+    history = list(y_train_arr[-28:])
+    for i in range(len(y_test_arr)):
+        rolling_baseline_pred[i] = np.mean(history[-28:])
+        history.append(y_test_arr[i])
     rolling_baseline_mae = mean_absolute_error(y_reg_test, rolling_baseline_pred)
 
     print("\n--- Métricas del Modelo de Regresión (Set de Prueba) ---")
     print(f"Error Absoluto Medio (MAE): {mae:.3f} eventos")
-    print(f"Error Cuadrático Medio (MSE): {mse:.3f}")
+    print(f"Raíz del Error Cuadrático Medio (RMSE): {mse ** 0.5:.3f}")
     print(f"Coeficiente de Determinación R²: {r2:.3f}")
     print(f"Baseline media train:     MAE={baseline_mae:.3f}")
     print(f"Baseline mediana train:   MAE={median_baseline_mae:.3f}")
-    print(f"Baseline media móvil 28d: MAE={rolling_baseline_mae:.3f}")
-    if mae > min(median_baseline_mae, rolling_baseline_mae):
+    print(f"Baseline persistencia:    MAE={persistence_mae:.3f}")
+    print(f"Baseline rolling 28d:     MAE={rolling_baseline_mae:.3f}")
+    best_baseline = min(median_baseline_mae, persistence_mae, rolling_baseline_mae)
+    if mae > best_baseline:
         print("=" * 60)
         print("ADVERTENCIA: El modelo NO supera al baseline naive.")
-        print(f"  Modelo MAE={mae:.3f} vs mejor baseline MAE={min(median_baseline_mae, rolling_baseline_mae):.3f}")
+        print(f"  Modelo MAE={mae:.3f} vs mejor baseline MAE={best_baseline:.3f}")
         print("  Considere no promover este modelo.")
         print("=" * 60)
 
@@ -454,10 +499,15 @@ def train_model_pipeline(
     # Importancia de las Características (HistGBR no tiene feature_importances_, usar GBR fallback)
     importances_final = getattr(reg_model, 'feature_importances_', None)
     if importances_final is None:
-        # Entrenar un GBR auxiliar solo para importancia de features
-        imp_model = GradientBoostingRegressor(**MODEL_PARAMS)
-        imp_model.fit(X_train, y_reg_train)
-        importances_final = imp_model.feature_importances_
+        importances_final = permutation_importance(
+            reg_model,
+            X_train,
+            y_reg_train,
+            n_repeats=5,
+            random_state=RANDOM_STATE,
+            n_jobs=1,
+            scoring='neg_mean_absolute_error',
+        ).importances_mean
     df_importance = pd.DataFrame({
         'Característica': feature_cols,
         'Importancia': importances_final
@@ -491,13 +541,25 @@ def train_model_pipeline(
         'train_samples': int(len(X_train)),
         'test_samples': int(len(X_test)),
         'train_target_mean': train_mean,
+        'train_target_median': train_median,
         'baseline_mae': baseline_mae,
         'median_baseline_mae': median_baseline_mae,
+        'persistence_baseline_mae': persistence_mae,
         'rolling_28d_baseline_mae': rolling_baseline_mae,
-        'beats_baseline': bool(mae <= min(median_baseline_mae, rolling_baseline_mae)),
+        'beats_baseline': bool(mae <= best_baseline),
+        'best_baseline_mae': best_baseline,
+        'best_baseline_name': (
+            'median'
+            if best_baseline == median_baseline_mae
+            else 'rolling_28d'
+            if best_baseline == rolling_baseline_mae
+            else 'persistence'
+        ),
         'baseline_mse': baseline_mse,
+        'baseline_rmse': baseline_mse ** 0.5,
         'mae': mae,
         'mse': mse,
+        'rmse': mse ** 0.5,
         'r2': r2,
         'accuracy': acc,
         'precision': prec,
@@ -519,7 +581,7 @@ def train_model_pipeline(
 
 def walk_forward_evaluation(df, feature_cols, models_dir, output_csv,
                             min_train_size=365, test_window=60, step=60,
-                            umbral_alta=7):
+                            umbral_alta=8, clf_threshold=0.5):
     print("\n==================================================")
     print(" Evaluación Walk-Forward (Rolling-Origin CV)")
     print("==================================================")
@@ -538,16 +600,16 @@ def walk_forward_evaluation(df, feature_cols, models_dir, output_csv,
         y_tr_reg, y_te_reg = y_reg[:train_end], y_reg[train_end:test_end]
         y_tr_clf, y_te_clf = y_clf[:train_end], y_clf[train_end:test_end]
 
-        reg = GradientBoostingRegressor(**MODEL_PARAMS)
+        reg = HistGradientBoostingRegressor(**FINAL_MODEL_PARAMS)
         reg.fit(X_tr, y_tr_reg)
-        reg_pred = reg.predict(X_te)
+        reg_pred = np.clip(reg.predict(X_te), 0, None)
 
         clf = RandomForestClassifier(**CLASSIFIER_PARAMS)
         if y_tr_clf.sum() > 0 and (len(y_tr_clf) - y_tr_clf.sum()) > 0:
             clf.fit(X_tr, y_tr_clf)
             clf_prob = clf.predict_proba(X_te)[:, 1]
             roc = roc_auc_score(y_te_clf, clf_prob) if y_te_clf.sum() > 0 else np.nan
-            f1 = f1_score(y_te_clf, clf_prob >= 0.25, zero_division=0)
+            f1 = f1_score(y_te_clf, clf_prob >= clf_threshold, zero_division=0)
         else:
             clf_prob = np.zeros(len(y_te_clf))
             roc = np.nan
@@ -598,7 +660,15 @@ def atomic_pickle_dump(obj, path):
     try:
         with os.fdopen(fd, 'wb') as f:
             pickle.dump(obj, f)
-        os.replace(tmp, path)
+        try:
+            os.replace(tmp, path)
+        except PermissionError:
+            with open(path, 'wb') as f:
+                pickle.dump(obj, f)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     except BaseException:
         try:
             os.unlink(tmp)
@@ -614,13 +684,31 @@ def atomic_copy2(src, dst):
     os.close(fd)
     try:
         shutil.copy2(src, tmp)
-        os.replace(tmp, dst)
+        try:
+            os.replace(tmp, dst)
+        except PermissionError:
+            shutil.copy2(src, dst)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     except BaseException:
         try:
             os.unlink(tmp)
         except OSError:
             pass
         raise
+
+
+def cleanup_stale_tmp_files(directory, max_age_seconds=3600):
+    now = datetime.datetime.now().timestamp()
+    for tmp_path in Path(directory).glob("tmp*.tmp"):
+        try:
+            age = now - tmp_path.stat().st_mtime
+            if age >= max_age_seconds:
+                tmp_path.unlink()
+        except OSError:
+            pass
 
 
 def main():
@@ -631,6 +719,7 @@ def main():
     data_path = base_dir / "02_data" / "augmented_emergency_data.csv"
     models_dir = base_dir / "03_model" / "saved_models"
     os.makedirs(models_dir, exist_ok=True)
+    cleanup_stale_tmp_files(models_dir)
 
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"No se encontró el dataset: {data_path}")
@@ -756,13 +845,22 @@ def main():
     candidates = {'full': metadata_full, 'pruned': metadata_pruned}
     winner = 'pruned'
     selection_rule = 'temporal_oof_feature_count_search'
+    winner_metadata = candidates[winner]
+    passes_baseline_gate = bool(winner_metadata.get('beats_baseline', False))
 
     for name, metadata in candidates.items():
         metadata['is_primary'] = name == winner
         metadata['selection_rule'] = selection_rule
+        metadata['passes_baseline_gate'] = bool(metadata.get('beats_baseline', False))
+        metadata['baseline_gate_action'] = 'warn_only'
         atomic_pickle_dump(metadata, models_dir / f"metadata_climatic_augmented_{name}.pkl")
 
     winner_prefix = f"_climatic_augmented_{winner}"
+    if not passes_baseline_gate:
+        print(
+            "ADVERTENCIA: el modelo de conteo no supera baseline por MAE. "
+            "Se publica igual como modelo operacional real; baseline queda como comparacion."
+        )
     atomic_copy2(
         models_dir / f"regressor{winner_prefix}.pkl",
         models_dir / "regressor_climatic_augmented.pkl",
@@ -771,8 +869,12 @@ def main():
         models_dir / f"classifier{winner_prefix}.pkl",
         models_dir / "classifier_climatic_augmented.pkl",
     )
-    primary_metadata = candidates[winner].copy()
+    primary_metadata = winner_metadata.copy()
     primary_metadata['selected_variant'] = winner
+    primary_metadata['promoted_model'] = True
+    primary_metadata['passes_baseline_gate'] = passes_baseline_gate
+    primary_metadata['baseline_gate_action'] = 'warn_only'
+    primary_metadata.pop('fallback_model', None)
     atomic_pickle_dump(primary_metadata, models_dir / "metadata_climatic_augmented.pkl")
 
     print(
@@ -796,11 +898,15 @@ def main():
 
     if os.getenv("WALK_FORWARD_EVAL", "1") == "1":
         wf_output = models_dir / "walk_forward_evaluation.csv"
+        split_idx_wf = int(len(df) * 0.8)
+        wf_umbral = float(df['EVENTOS'].iloc[:split_idx_wf].quantile(0.80))
         walk_forward_evaluation(
             df,
             climatic_selected_features,
             models_dir,
             wf_output,
+            umbral_alta=wf_umbral,
+            clf_threshold=float(primary_metadata.get('classification_threshold', 0.5)),
         )
 
 

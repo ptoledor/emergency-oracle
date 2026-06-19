@@ -31,16 +31,26 @@ class CategoryBlendRegressor:
         return np.array([blended.get(col, 0.0) for col in self.feature_cols], dtype=float)
 
     def predict(self, X):
+        missing_direct = [col for col in self.feature_cols if col not in X.columns]
+        if missing_direct:
+            raise KeyError(
+                "Missing direct features for CategoryBlendRegressor: "
+                f"{missing_direct[:10]}"
+            )
         direct_prediction = np.clip(
             self.direct_model.predict(X[self.feature_cols]),
             0,
             None,
         )
         category_prediction = np.zeros(len(X), dtype=float)
-        for details in self.category_models.values():
-            cat_cols = [c for c in details["feature_cols"] if c in X.columns]
-            if len(cat_cols) == 0:
-                continue
+        for category_name, details in self.category_models.items():
+            cat_cols = list(details["feature_cols"])
+            missing_category = [col for col in cat_cols if col not in X.columns]
+            if missing_category:
+                raise KeyError(
+                    f"Missing category features for {category_name}: "
+                    f"{missing_category[:10]}"
+                )
             category_prediction += np.clip(
                 details["model"].predict(X[cat_cols]),
                 0,
@@ -50,3 +60,33 @@ class CategoryBlendRegressor:
             self.weight_direct * direct_prediction
             + (1.0 - self.weight_direct) * category_prediction
         )
+
+
+def resolve_model_path(models_dir, prefix):
+    import json
+    from pathlib import Path
+    
+    models_dir = Path(models_dir)
+    config_path = models_dir / "active_models.json"
+    key = prefix.lstrip("_")
+    
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            if key in config:
+                suffix = config[key]
+                return (
+                    models_dir / f"regressor_{suffix}.pkl",
+                    models_dir / f"classifier_{suffix}.pkl",
+                    models_dir / f"metadata_{suffix}.pkl"
+                )
+        except Exception:
+            pass
+            
+    return (
+        models_dir / f"regressor{prefix}.pkl",
+        models_dir / f"classifier{prefix}.pkl",
+        models_dir / f"metadata{prefix}.pkl"
+    )
+

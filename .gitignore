@@ -3,6 +3,12 @@ __pycache__/
 .pytest_cache/
 .venv/
 .streamlit/secrets.toml
+.streamlit/credentials.toml
+
+# Temp files and logs
+temp_*.py
+*.log
+*.tmp
 
 # Local tools and credentials
 .claude/
@@ -17,6 +23,14 @@ __pycache__/
 !03_model/saved_models/metadata_climatic_augmented_direct31.pkl
 !03_model/saved_models/regressor_climatic_augmented.pkl
 !03_model/saved_models/regressor_climatic_augmented_direct31.pkl
+!03_model/saved_models/classifier_climatic_augmented_kfold.pkl
+!03_model/saved_models/metadata_climatic_augmented_kfold.pkl
+!03_model/saved_models/regressor_climatic_augmented_kfold.pkl
+!03_model/saved_models/classifier_climatic_augmented_kfold10.pkl
+!03_model/saved_models/metadata_climatic_augmented_kfold10.pkl
+!03_model/saved_models/regressor_climatic_augmented_kfold10.pkl
+!03_model/saved_models/kfold10_evaluation.csv
+!03_model/saved_models/kfold10_oof_predictions.csv
 !03_model/saved_models/category_model_optimization.csv
 !03_model/saved_models/category_risk_models.pkl
 !03_model/saved_models/category_risk_models_summary.csv

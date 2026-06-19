@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import requests
 import os
+import time
 import holidays
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,6 +14,23 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 from dedup import mark_duplicates, assign_local_date, DEFAULT_TIMEZONE
 
 PROJECT_TIMEZONE = DEFAULT_TIMEZONE
+
+
+def fetch_json_with_retry(url, timeout=30, retries=3):
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            session = requests.Session()
+            session.trust_env = False
+            response = session.get(url, timeout=timeout)
+            response.raise_for_status()
+            return response.json()
+        except Exception as exc:
+            last_error = exc
+            if attempt == retries:
+                break
+            time.sleep(2 * attempt)
+    raise RuntimeError(f"Error Open-Meteo despues de {retries} intentos: {last_error}")
 
 
 def main():
@@ -58,12 +76,15 @@ def main():
     df_merged = pd.merge(df, codigos_clean, how='left', on='CODIGO_EMERGENCIA')
     print(f"Tweets tras unión limpia: {df_merged.shape[0]} filas")
 
-    # --- Deduplicación DESACTIVADA: cada tweet = un evento ---
-    print("Deduplicación desactivada: cada tweet cuenta como evento.")
+    # --- Deduplicacion DESACTIVADA, filtro de no-incidentes ACTIVADO ---
+    print("Deduplicacion desactivada: cada mensaje incident-like cuenta como evento.")
+    _, incident_flags = mark_duplicates(df_merged, 'Fecha', 'Texto')
     df_merged['_IS_DUPLICATE'] = False
-    df_merged['_IS_INCIDENT_LIKE'] = True
+    df_merged['_IS_INCIDENT_LIKE'] = df_merged.index.map(
+        lambda i: incident_flags.get(i, True)
+    )
     n_total = len(df_merged)
-    n_incident = n_total
+    n_incident = int(df_merged['_IS_INCIDENT_LIKE'].sum())
     n_dup = 0
     print(f"Mensajes: {n_total} total -> {n_incident} incident-like -> "
           f"{n_incident - n_dup} únicos ({n_dup} duplicados removidos)")
@@ -113,7 +134,7 @@ def main():
 
     # Unir eventos totales y por categoría al calendario
     df_daily = pd.merge(df_calendar, df_daily_events, on='FECHA_DIA', how='left')
-    df_daily['DAY_STATE'] = 'observed'
+    df_daily['DAY_STATE'] = 'observed_nonzero'
     df_daily.loc[df_daily['EVENTOS'].isna(), 'DAY_STATE'] = 'no_data'
 
     # --- Marcar coverage_unknown desde el audit si está disponible ---
@@ -125,22 +146,32 @@ def main():
             df_audit['day_state'],
         ))
         audit_states = df_daily['FECHA_DIA'].map(coverage_map)
+        n_zero = int((audit_states == 'observed_zero').sum())
         n_unknown = int((audit_states == 'coverage_unknown').sum())
+        if n_zero > 0:
+            print(f"Preservando {n_zero} dias observed_zero con EVENTOS=0")
         if n_unknown > 0:
             print(f"Marcando {n_unknown} días con coverage_unknown (sin observación confiable)")
+        df_daily.loc[audit_states == 'observed_zero', 'DAY_STATE'] = 'observed_zero'
         df_daily.loc[audit_states == 'coverage_unknown', 'DAY_STATE'] = 'coverage_unknown'
 
-    # coverage_unknown y no_data -> NaN (no se rellenan con 0)
-    df_daily['EVENTOS'] = df_daily['EVENTOS'].where(df_daily['DAY_STATE'] == 'observed', np.nan)
+    # observed_zero queda como 0; coverage_unknown/no_data quedan fuera del entrenamiento.
+    observed_mask = df_daily['DAY_STATE'].isin(['observed_nonzero', 'observed_zero'])
+    df_daily.loc[df_daily['DAY_STATE'] == 'observed_zero', 'EVENTOS'] = 0
+    df_daily['EVENTOS'] = df_daily['EVENTOS'].where(observed_mask, np.nan)
     
     df_daily = pd.merge(df_daily, df_cat_final, on='FECHA_DIA', how='left')
     for col in cols_to_keep + ['N_OTROS']:
-        df_daily[col] = df_daily[col].where(df_daily['DAY_STATE'] == 'observed', np.nan)
+        df_daily[col] = df_daily[col].fillna(0).where(observed_mask, np.nan)
 
-    n_observed = int((df_daily['DAY_STATE'] == 'observed').sum())
+    n_observed = int(observed_mask.sum())
+    n_zero = int((df_daily['DAY_STATE'] == 'observed_zero').sum())
     n_unknown = int((df_daily['DAY_STATE'] == 'coverage_unknown').sum())
-    print(f"Distribución de eventos diarios ({n_observed} observados, {n_unknown} coverage_unknown):")
-    print(df_daily.loc[df_daily['DAY_STATE'] == 'observed', 'EVENTOS'].describe())
+    print(
+        f"Distribucion de eventos diarios "
+        f"({n_observed} observados, {n_zero} ceros, {n_unknown} coverage_unknown):"
+    )
+    print(df_daily.loc[observed_mask, 'EVENTOS'].describe())
 
     # 4. Datos meteorológicos (Historical Forecast API — pronósticos emitidos, no observados)
     lat, lon = -36.731106, -73.11023
@@ -154,7 +185,12 @@ def main():
             cached_version = ""
             if os.path.exists(cache_version_path):
                 cached_version = Path(cache_version_path).read_text(encoding="utf-8").strip()
-            if 'VIENTO_SKEW' in df_cached.columns and 'HUM_SKEW' in df_cached.columns:
+            cache_has_range = (
+                'FECHA_DIA' in df_cached.columns
+                and str(df_cached['FECHA_DIA'].min()) <= min_date_str
+                and str(df_cached['FECHA_DIA'].max()) >= max_date_str
+            )
+            if 'VIENTO_SKEW' in df_cached.columns and 'HUM_SKEW' in df_cached.columns and cache_has_range:
                 if cached_version == WEATHER_CACHE_VERSION:
                     print(f"Cargando clima desde caché (versión={cached_version})...")
                     df_clima = df_cached
@@ -171,10 +207,7 @@ def main():
                f"start_date={min_date_str}&end_date={max_date_str}&"
                f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
                f"timezone=America%2FSantiago&format=json")
-        response = requests.get(url, timeout=30)
-        if response.status_code != 200:
-            raise RuntimeError(f"Error Open-Meteo: {response.text}")
-        data_raw = response.json()
+        data_raw = fetch_json_with_retry(url, timeout=30, retries=3)
         df_hourly = pd.DataFrame(data_raw['hourly'])
         df_hourly['time'] = pd.to_datetime(df_hourly['time'])
         df_hourly['FECHA_DIA'] = df_hourly['time'].dt.strftime('%Y-%m-%d')
@@ -236,19 +269,21 @@ def main():
     
     # Para lag features usamos una versión forward-fill de EVENTOS y categorías
     # (conservando NaN en el target para días coverage_unknown).
-    eventos_ff = df_daily['EVENTOS'].ffill()
-    cat_ff = {col: df_daily[col].ffill() for col in cols_to_keep + ['N_OTROS']}
+    eventos_lag_source = df_daily['EVENTOS'].fillna(0)
+    cat_lag_source = {
+        col: df_daily[col].fillna(0) for col in cols_to_keep + ['N_OTROS']
+    }
     
     # --- Lags de eventos totales ---
     for lag in [1, 2, 3, 7]:
-        df_daily[f'EVENTOS_lag_{lag}'] = eventos_ff.shift(lag)
+        df_daily[f'EVENTOS_lag_{lag}'] = eventos_lag_source.shift(lag)
     
     # --- Lags de categorías clave (solo lag_1) ---
     for col in cols_to_keep:
-        df_daily[f'{col}_lag_1'] = cat_ff[col].shift(1)
+        df_daily[f'{col}_lag_1'] = cat_lag_source[col].shift(1)
     
     # --- Rolling stats de eventos (ventanas de 3 y 7 días, excluyendo hoy) ---
-    eventos_shifted = eventos_ff.shift(1)
+    eventos_shifted = eventos_lag_source.shift(1)
     df_daily['EVENTOS_rolling_mean_3d'] = eventos_shifted.rolling(3, min_periods=1).mean()
     df_daily['EVENTOS_rolling_std_3d'] = eventos_shifted.rolling(3, min_periods=1).std().fillna(0)
     df_daily['EVENTOS_rolling_max_3d'] = eventos_shifted.rolling(3, min_periods=1).max()
@@ -274,6 +309,15 @@ def main():
     # --- Lags de clima ---
     df_daily['VIENTO_MEDIO_lag_1'] = df_daily['VIENTO_MEDIO'].shift(1)
     df_daily['HUM_MEDIA_lag_1'] = df_daily['HUM_MEDIA'].shift(1)
+
+    # --- Interacciones climaticas simples ---
+    df_daily['TEMP_HUM_INDEX'] = df_daily['TEMP_MEDIA'] * df_daily['HUM_MEDIA'] / 100
+    df_daily['VIENTO_LLUVIA_INDEX'] = df_daily['VIENTO_MEDIO'] * df_daily['LLUVIA']
+    df_daily['STORM_COMPOUND_INDEX'] = df_daily['VIENTO_MAX'] * (1 + df_daily['LLUVIA'])
+    df_daily['FIRE_DRY_INDEX_7D'] = (
+        df_daily['TEMP_MAX'] * df_daily['DIAS_SECOS_7D_PREV']
+        / (1 + df_daily['LLUVIA_TOTAL_7D_PREV'])
+    )
 
     # --- Calendario y feriados ---
     chile_holidays = holidays.Chile(years=range(2022, 2027))
@@ -310,10 +354,27 @@ def main():
     # Limpiar filas con NaN de los shifts, coverage_unknown o clima faltante
     df_daily = df_daily.sort_values('FECHA_DIA').reset_index(drop=True)
     df_daily = df_daily.dropna(subset=['EVENTOS']).copy()
-    # Rellenar cualquier NaN restante en features de clima con forward-fill + back-fill del primer valor
-    numeric_cols = df_daily.select_dtypes(include=[np.number]).columns.tolist()
-    numeric_cols = [c for c in numeric_cols if c not in ['EVENTOS']]
-    df_daily[numeric_cols] = df_daily[numeric_cols].ffill().bfill()
+
+    # Drop rows where lag/rolling features are still NaN (first ~30 rows).
+    # These have incomplete history and would otherwise be backfilled with future data.
+    lag_roll_cols = [
+        c for c in df_daily.columns
+        if c.startswith('EVENTOS_lag_') or c.startswith('EVENTOS_rolling_')
+        or c.startswith('LLUVIA_LAG_') or c.startswith('LLUVIA_PROMEDIO_')
+        or c.startswith('LLUVIA_TOTAL_') or c.startswith('LLUVIA_DESV_')
+        or c.startswith('LLUVIA_MAX_') or c.startswith('DIAS_SECOS_')
+        or c.endswith('_lag_1')
+    ]
+    df_daily = df_daily.dropna(subset=lag_roll_cols).reset_index(drop=True)
+
+    # Weather columns: only forward-fill (never backfill to avoid future leakage)
+    weather_cols = [
+        c for c in df_daily.select_dtypes(include=[np.number]).columns
+        if c not in ['EVENTOS'] and c not in lag_roll_cols
+        and not c.startswith('N_') and c not in ['MES', 'DIA_SEMANA', 'ES_FIN_SEMANA', 'ES_FERIADO', 'ES_FERIADO_IRRENUNCIABLE']
+        and not c.startswith('MES_') and not c.startswith('DIA_') and not c.startswith('DANO_')
+    ]
+    df_daily[weather_cols] = df_daily[weather_cols].ffill()
     
     # Conservar los conteos por categoría como objetivos para modelos
     # especializados. Se excluyen explícitamente de los predictores al entrenar.

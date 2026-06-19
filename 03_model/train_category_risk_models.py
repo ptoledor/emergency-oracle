@@ -1,4 +1,9 @@
 import os
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("SKLEARN_NUM_THREADS", "1")
 import pickle
 from pathlib import Path
 
@@ -86,17 +91,33 @@ def main():
 
         y_valid = y_train.iloc[np.flatnonzero(valid)]
         prob_valid = oof_prob[valid]
-        prob_p33 = float(np.quantile(prob_valid, 0.33))
-        prob_p50 = float(np.quantile(prob_valid, 0.50))
-        prob_p66 = float(np.quantile(prob_valid, 0.66))
-        prob_p80 = float(np.quantile(prob_valid, 0.80))
-        pred_alert = (prob_valid > prob_p80).astype(int)
+        calibration_split = max(1, int(len(X_train) * 0.8))
+        X_fit = X_train.iloc[:calibration_split]
+        y_fit = y_train.iloc[:calibration_split]
+        X_cal = X_train.iloc[calibration_split:]
+        y_cal = y_train.iloc[calibration_split:]
+        if y_fit.nunique() >= 2 and len(X_cal) > 0:
+            calibration_model = RandomForestClassifier(**CLASSIFIER_PARAMS)
+            calibration_model.fit(X_fit, y_fit)
+            threshold_probabilities = calibration_model.predict_proba(X_cal)[:, 1]
+            threshold_target = y_cal
+            threshold_source = "temporal_holdout_train_only"
+        else:
+            threshold_probabilities = prob_valid
+            threshold_target = y_valid
+            threshold_source = "temporal_oof_train_only"
+
+        prob_p33 = float(np.quantile(threshold_probabilities, 0.33))
+        prob_p50 = float(np.quantile(threshold_probabilities, 0.50))
+        prob_p66 = float(np.quantile(threshold_probabilities, 0.66))
+        prob_p80 = float(np.quantile(threshold_probabilities, 0.80))
+        pred_alert = (prob_valid >= prob_p80).astype(int)
 
         model = RandomForestClassifier(**CLASSIFIER_PARAMS)
         model.fit(X_train, y_train)
 
         test_prob = model.predict_proba(X_test)[:, 1]
-        test_pred_alert = (test_prob > prob_p80).astype(int)
+        test_pred_alert = (test_prob >= prob_p80).astype(int)
 
         models[group_name] = {
             "model": model,
@@ -160,7 +181,9 @@ def main():
         "target_rule": "group_total_gt_train_p80",
         "probability_rule": "prealert_gt_oof_p50_alert_gt_oof_p80",
         "model_type": "RandomForestClassifier",
-        "threshold_source": "oof_train_only",
+        "threshold_source": "temporal_holdout_train_only",
+            "threshold_calibration_source": threshold_source,
+            "threshold_calibration_samples": int(len(threshold_target)),
         "split_ratio": 0.8,
     }
 

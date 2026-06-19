@@ -22,7 +22,7 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import KFold
+from sklearn.model_selection import RepeatedKFold
 
 from train import (
     CLASSIFIER_PARAMS,
@@ -33,6 +33,7 @@ from train import (
 
 RANDOM_STATE = 42
 N_SPLITS = 5
+N_REPEATS = 10
 PRECISION_TARGET = 0.30
 KFOLD_CLASSIFIER_PARAMS = {
     **CLASSIFIER_PARAMS,
@@ -43,14 +44,6 @@ KFOLD_CLASSIFIER_PARAMS = {
 def pickle_dump(obj, path):
     with Path(path).open("wb") as file:
         pickle.dump(obj, file)
-
-
-def model_suffix(n_splits):
-    return "_kfold" if n_splits == 5 else f"_kfold{n_splits}"
-
-
-def output_stem(n_splits):
-    return "kfold" if n_splits == 5 else f"kfold{n_splits}"
 
 
 def add_weekday_columns(df):
@@ -88,7 +81,7 @@ def load_feature_cols(models_dir, df):
                 f"{metadata_name} references missing features: {missing[:8]}"
             )
         return feature_cols, metadata_name
-    raise FileNotFoundError("No compatible metadata file was found for KFold model")
+    raise FileNotFoundError("No compatible metadata file was found for RepeatedKFold model")
 
 
 def select_recall_controlled_threshold(y_true, probabilities):
@@ -122,7 +115,16 @@ def select_recall_controlled_threshold(y_true, probabilities):
     return float(best_threshold), float(best_precision), float(best_recall)
 
 
-def main(n_splits=N_SPLITS):
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--splits", type=int, default=5)
+    parser.add_argument("--repeats", type=int, default=10)
+    parser.add_argument("--promote", action="store_true", help="Promote this model as active/principal in dashboard.")
+    args = parser.parse_args()
+
+    n_splits = args.splits
+    n_repeats = args.repeats
+
     base_dir = Path(__file__).resolve().parent.parent
     data_path = base_dir / "02_data" / "augmented_emergency_data.csv"
     models_dir = base_dir / "03_model" / "saved_models"
@@ -136,6 +138,18 @@ def main(n_splits=N_SPLITS):
     df = add_weekday_columns(df)
 
     feature_cols, metadata_source = load_feature_cols(models_dir, df)
+    
+    # Agregar variables calendarias deterministas
+    calendar_features = [
+        "MES_SIN", "MES_COS", 
+        "DANO_SIN", "DANO_COS", 
+        "ES_FIN_SEMANA", "ES_FERIADO",
+        "DIA_LUNES", "DIA_MARTES", "DIA_MIERCOLES", "DIA_JUEVES", "DIA_VIERNES", "DIA_SABADO", "DIA_DOMINGO"
+    ]
+    for f_col in calendar_features:
+        if f_col not in feature_cols:
+            feature_cols.append(f_col)
+
     X = df[feature_cols].copy()
     y_reg = pd.to_numeric(df["EVENTOS"], errors="coerce")
     valid = y_reg.notna()
@@ -146,12 +160,20 @@ def main(n_splits=N_SPLITS):
     alert_threshold = float(y_reg.quantile(0.80))
     y_clf = (y_reg > alert_threshold).astype(int)
 
-    reg_predictions = np.full(len(X), np.nan)
-    clf_probabilities = np.full(len(X), np.nan)
+    # Matrices to hold OOF predictions across the repeats.
+    # Dimensions: (samples, repeats)
+    reg_predictions_all = np.zeros((len(X), n_repeats))
+    clf_probabilities_all = np.zeros((len(X), n_repeats))
     fold_rows = []
 
-    splitter = KFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_STATE)
-    for fold, (train_idx, validation_idx) in enumerate(splitter.split(X), start=1):
+    print(f"Starting Repeated K-Fold CV ({n_splits} splits, {n_repeats} repeats)...")
+    splitter = RepeatedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=RANDOM_STATE)
+    
+    total_folds = n_splits * n_repeats
+    for idx, (train_idx, validation_idx) in enumerate(splitter.split(X)):
+        repeat = idx // n_splits
+        fold = (idx % n_splits) + 1
+        
         X_train = X.iloc[train_idx]
         X_validation = X.iloc[validation_idx]
         y_train_reg = y_reg.iloc[train_idx]
@@ -162,7 +184,7 @@ def main(n_splits=N_SPLITS):
         reg_model = HistGradientBoostingRegressor(**FINAL_MODEL_PARAMS)
         reg_model.fit(X_train, y_train_reg)
         fold_reg_predictions = np.clip(reg_model.predict(X_validation), 0, None)
-        reg_predictions[validation_idx] = fold_reg_predictions
+        reg_predictions_all[validation_idx, repeat] = fold_reg_predictions
 
         clf_model = RandomForestClassifier(**KFOLD_CLASSIFIER_PARAMS)
         if y_train_clf.nunique() < 2:
@@ -170,29 +192,43 @@ def main(n_splits=N_SPLITS):
         else:
             clf_model.fit(X_train, y_train_clf)
             fold_probabilities = clf_model.predict_proba(X_validation)[:, 1]
-        clf_probabilities[validation_idx] = fold_probabilities
+        clf_probabilities_all[validation_idx, repeat] = fold_probabilities
+
+        mae_f = float(mean_absolute_error(y_validation_reg, fold_reg_predictions))
+        mse_f = float(mean_squared_error(y_validation_reg, fold_reg_predictions))
+        rmse_f = float(mse_f ** 0.5)
+        r2_f = float(r2_score(y_validation_reg, fold_reg_predictions))
+        roc_auc_f = (
+            float(roc_auc_score(y_validation_clf, fold_probabilities))
+            if y_validation_clf.nunique() == 2
+            else np.nan
+        )
+        brier_f = float(brier_score_loss(y_validation_clf, fold_probabilities))
 
         fold_rows.append(
             {
+                "repeat": repeat + 1,
                 "fold": fold,
                 "train_samples": int(len(train_idx)),
                 "validation_samples": int(len(validation_idx)),
-                "mae": float(mean_absolute_error(y_validation_reg, fold_reg_predictions)),
-                "mse": float(mean_squared_error(y_validation_reg, fold_reg_predictions)),
-                "rmse": float(mean_squared_error(y_validation_reg, fold_reg_predictions) ** 0.5),
-                "r2": float(r2_score(y_validation_reg, fold_reg_predictions)),
-                "roc_auc": (
-                    float(roc_auc_score(y_validation_clf, fold_probabilities))
-                    if y_validation_clf.nunique() == 2
-                    else np.nan
-                ),
-                "brier": float(brier_score_loss(y_validation_clf, fold_probabilities)),
+                "mae": mae_f,
+                "mse": mse_f,
+                "rmse": rmse_f,
+                "r2": r2_f,
+                "roc_auc": roc_auc_f,
+                "brier": brier_f,
             }
         )
+        if (idx + 1) % 20 == 0:
+            print(f"  Processed {idx + 1}/{total_folds} folds...")
+
+    # Calculate average out-of-fold predictions/probabilities across all repeats
+    reg_predictions = reg_predictions_all.mean(axis=1)
+    clf_probabilities = clf_probabilities_all.mean(axis=1)
 
     valid_oof = ~np.isnan(reg_predictions) & ~np.isnan(clf_probabilities)
     if not valid_oof.all():
-        raise RuntimeError("KFold OOF generation left missing predictions")
+        raise RuntimeError("Repeated KFold OOF generation left missing predictions")
 
     threshold, threshold_precision, threshold_recall = select_recall_controlled_threshold(
         y_clf,
@@ -200,11 +236,14 @@ def main(n_splits=N_SPLITS):
     )
     y_clf_pred = (clf_probabilities >= threshold).astype(int)
 
+    # Train final models on entire dataset
+    print("Training final models on full dataset...")
     reg_model_final = HistGradientBoostingRegressor(**FINAL_MODEL_PARAMS)
     reg_model_final.fit(X, y_reg)
     clf_model_final = RandomForestClassifier(**KFOLD_CLASSIFIER_PARAMS)
     clf_model_final.fit(X, y_clf)
 
+    # Calculate feature importances
     importance_model = GradientBoostingRegressor(**MODEL_PARAMS)
     importance_model.fit(X, y_reg)
     feature_importances = {
@@ -214,9 +253,10 @@ def main(n_splits=N_SPLITS):
 
     train_mean = float(y_reg.mean())
     baseline_predictions = np.full(len(y_reg), train_mean)
+    
     metadata = {
-        "model_role": "structural_kfold",
-        "validation_protocol": f"KFold random {n_splits} folds",
+        "model_role": "structural_repeated_kfold",
+        "validation_protocol": f"Repeated {n_splits}-Fold Cross-Validation ({n_repeats} seeds)",
         "operational_use": False,
         "is_primary": False,
         "metadata_source": metadata_source,
@@ -231,6 +271,7 @@ def main(n_splits=N_SPLITS):
         "regressor_type": "HistGradientBoostingRegressor",
         "classifier_type": "RandomForestClassifier",
         "cv_n_splits": n_splits,
+        "cv_n_repeats": n_repeats,
         "cv_shuffle": True,
         "cv_random_state": RANDOM_STATE,
         "train_samples": int(len(X)),
@@ -252,8 +293,9 @@ def main(n_splits=N_SPLITS):
         "brier": float(brier_score_loss(y_clf, clf_probabilities)),
     }
 
+    # Save fold details and OOF predictions
     pd.DataFrame(fold_rows).to_csv(
-        models_dir / f"{output_stem(n_splits)}_evaluation.csv",
+        models_dir / f"repeated_{n_splits}fold_{n_repeats}seeds_evaluation.csv",
         sep=";",
         index=False,
     )
@@ -266,32 +308,38 @@ def main(n_splits=N_SPLITS):
             "ALERTA_TARGET_KFOLD": y_clf,
         }
     ).to_csv(
-        models_dir / f"{output_stem(n_splits)}_oof_predictions.csv",
+        models_dir / f"repeated_{n_splits}fold_{n_repeats}seeds_oof_predictions.csv",
         sep=";",
         index=False,
     )
 
-    suffix = model_suffix(n_splits)
-    pickle_dump(reg_model_final, models_dir / f"regressor_climatic_augmented{suffix}.pkl")
-    pickle_dump(clf_model_final, models_dir / f"classifier_climatic_augmented{suffix}.pkl")
-    pickle_dump(metadata, models_dir / f"metadata_climatic_augmented{suffix}.pkl")
+    pickle_dump(reg_model_final, models_dir / f"regressor_repeated_{n_splits}fold_{n_repeats}seeds.pkl")
+    pickle_dump(clf_model_final, models_dir / f"classifier_repeated_{n_splits}fold_{n_repeats}seeds.pkl")
+    pickle_dump(metadata, models_dir / f"metadata_repeated_{n_splits}fold_{n_repeats}seeds.pkl")
 
-    print(f"KFold structural model saved ({n_splits} folds)")
-    print(f"  MAE OOF: {metadata['mae']:.3f}")
-    print(f"  ROC-AUC OOF: {metadata['roc_auc']:.3f}")
-    print(f"  Brier OOF: {metadata['brier']:.3f}")
+    if args.promote:
+        import json
+        config_path = models_dir / "active_models.json"
+        config = {}
+        if config_path.exists():
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+            except Exception:
+                pass
+        config["climatic_augmented"] = f"repeated_{n_splits}fold_{n_repeats}seeds"
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+        print(f"Promoted repeated_{n_splits}fold_{n_repeats}seeds to principal model.")
+
+    print("Repeated KFold structural model saved successfully.")
+    print(f"  MAE OOF (averaged): {metadata['mae']:.3f}")
+    print(f"  RMSE OOF (averaged): {metadata['rmse']:.3f}")
+    print(f"  R2 OOF (averaged): {metadata['r2']:.3f}")
+    print(f"  ROC-AUC OOF (averaged): {metadata['roc_auc']:.3f}")
+    print(f"  Brier OOF (averaged): {metadata['brier']:.3f}")
     print(f"  Threshold: {metadata['classification_threshold']:.2f}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train structural random KFold model.")
-    parser.add_argument(
-        "--splits",
-        type=int,
-        default=N_SPLITS,
-        help="Number of random KFold splits. Default: 5.",
-    )
-    args = parser.parse_args()
-    if args.splits < 2:
-        raise ValueError("--splits must be >= 2")
-    main(n_splits=args.splits)
+    main()

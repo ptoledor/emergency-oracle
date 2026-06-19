@@ -1,6 +1,13 @@
 import pickle
 import sys
+import os
 from pathlib import Path
+
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("SKLEARN_NUM_THREADS", "1")
 
 import numpy as np
 import pandas as pd
@@ -23,6 +30,7 @@ CATEGORIES = [
     "N_RESCATE_PERS",
     "N_GASES",
     "N_OTROS",
+    "N_EMERGENCIAS_CLIMATICAS",
 ]
 SIZES = [5, 10, 15, 20, 25, 31]
 
@@ -109,7 +117,7 @@ def optimize_category(category, X_train, y_train):
         for size in SIZES:
             features = ranking[:min(size, len(ranking))]
             candidates.append((family, features))
-    results = Parallel(n_jobs=4, backend="threading")(
+    results = Parallel(n_jobs=1, backend="threading")(
         delayed(evaluate_candidate)(
             family,
             features,
@@ -145,7 +153,7 @@ def main():
     # Pool completo de candidatos climáticos (no solo las 31 del modelo total)
     # Excluir lags de eventos/categorías (target leakage) pero permitir lags de clima
     category_target_cols = CATEGORIES
-    event_lag_cols = [c for c in df.columns if c.startswith('EVENTOS_') or c.startswith('N_') and c.endswith('_lag_1')]
+    event_lag_cols = [c for c in df.columns if c.startswith('EVENTOS_') or (c.startswith('N_') and c.endswith('_lag_1'))]
     exclude_cols = ['FECHA_DIA', 'EVENTOS'] + category_target_cols + event_lag_cols
     climatic_candidates = [
         c for c in df.columns if c not in exclude_cols
@@ -308,6 +316,7 @@ def main():
         "blend_test_std": float(np.std(blended_test, ddof=1)),
         "direct_test_mae": float(mean_absolute_error(y_total_test, direct_test)),
         "direct_test_mse": float(mean_squared_error(y_total_test, direct_test)),
+        "direct_test_rmse": float(mean_squared_error(y_total_test, direct_test) ** 0.5),
         "direct_test_r2": float(r2_score(y_total_test, direct_test)),
         "negative_binomial_alpha": negative_binomial_alpha,
         "categories": {
@@ -345,6 +354,7 @@ def main():
     direct_metadata.update({
         "mae": summary["direct_test_mae"],
         "mse": summary["direct_test_mse"],
+        "rmse": summary["direct_test_rmse"],
         "r2": summary["direct_test_r2"],
         "regressor_type": "HistGradientBoostingRegressor",
         "selected_variant": "pruned",
@@ -356,6 +366,7 @@ def main():
     canonical_metadata.update({
         "mae": summary["blend_test_mae"],
         "mse": summary["blend_test_mse"],
+        "rmse": summary["blend_test_rmse"],
         "r2": summary["blend_test_r2"],
         "regressor_type": "CategoryBlendRegressor",
         "selected_variant": "category_blend",
@@ -364,21 +375,38 @@ def main():
         "blend_weight_search_step": summary["blend_weight_search_step"],
         "blend_oof_mae": summary["blend_oof_mae"],
         "blend_oof_r2": summary["blend_oof_r2"],
+        "blend_test_mae": summary["blend_test_mae"],
+        "blend_test_mse": summary["blend_test_mse"],
+        "blend_test_rmse": summary["blend_test_rmse"],
+        "blend_test_r2": summary["blend_test_r2"],
         "negative_binomial_alpha": negative_binomial_alpha,
         "category_model_summary": summary["categories"],
     })
-    for metadata_name in [
-        "metadata_climatic_augmented.pkl",
-        "metadata_climatic_augmented_pruned.pkl",
-    ]:
-        with open(models_dir / metadata_name, "wb") as file:
-            pickle.dump(canonical_metadata, file)
-    for regressor_name in [
-        "regressor_climatic_augmented.pkl",
-        "regressor_climatic_augmented_pruned.pkl",
-    ]:
-        with open(models_dir / regressor_name, "wb") as file:
-            pickle.dump(blended_regressor, file)
+    best_baseline_mae = float(canonical_metadata.get(
+        "best_baseline_mae",
+        min(
+            canonical_metadata.get("median_baseline_mae", np.inf),
+            canonical_metadata.get("rolling_28d_baseline_mae", np.inf),
+            canonical_metadata.get("persistence_baseline_mae", np.inf),
+        ),
+    ))
+    promote_blend = bool(summary["blend_test_mae"] <= best_baseline_mae)
+    canonical_metadata["promoted_model"] = True
+    canonical_metadata["beats_baseline"] = promote_blend
+    canonical_metadata["passes_baseline_gate"] = promote_blend
+    canonical_metadata["baseline_gate_action"] = "warn_only"
+    canonical_metadata["best_baseline_mae"] = best_baseline_mae
+    canonical_metadata.pop("fallback_model", None)
+    canonical_regressor = blended_regressor
+    if not promote_blend:
+        print(
+            "ADVERTENCIA: blend no supera baseline por MAE. "
+            "Se publica igual como modelo operacional real; baseline queda como comparacion."
+        )
+    with open(models_dir / "metadata_climatic_augmented.pkl", "wb") as file:
+        pickle.dump(canonical_metadata, file)
+    with open(models_dir / "regressor_climatic_augmented.pkl", "wb") as file:
+        pickle.dump(canonical_regressor, file)
 
     print("\nResumen:")
     print(pd.Series(summary).drop("categories").to_string())
