@@ -243,3 +243,27 @@
 - Cambio: se eliminaron archivos de bitácora y logs de depuración del proyecto (`st_err.log`, `st_out.log`, etc.) de la raíz del repositorio.
   Contexto: limpieza general.
   Motivo: mantener el espacio de trabajo limpio y profesional.
+
+## 2026-06-19 - Ingeniería de Features Avanzada e Introducción de XGBoost (Breakthrough 12.6% R²)
+
+- Cambio: se agregaron 5 nuevas variables explicativas avanzadas: `ES_PRE_FERIADO` (víspera de feriado), `DIAS_DESDE_ULTIMA_LLUVIA` (días secos acumulados), `VPD` (Vapor Pressure Deficit medio), `VPD_MAX` (Vapor Pressure Deficit máximo), y medias móviles de mayor ventana `EVENTOS_rolling_mean_14d` y `EVENTOS_rolling_mean_30d` en `clean_and_augment.py`.
+  Contexto: requerimiento de aumentar las características predictivas con índices climáticos físicos e indicadores de feriados.
+  Motivo: capturar de forma directa el estrés hídrico de la vegetación (riesgo de incendios forestales) y la inercia de llamados a mediano plazo.
+
+- Cambio: se introdujo soporte de entrenamiento y evaluación nativa de XGBoost (`xgb.XGBRegressor` y `xgb.XGBClassifier`) en `train_repeated_kfold.py` con una validación cruzada estructurada de 5 pliegues y 30 semillas (r5f30s).
+  Contexto: contrastar el desempeño de XGBoost frente a HistGradientBoosting y RandomForest tradicionales.
+  Motivo: XGBoost maneja de forma óptima variables continuas no lineales e interacciones complejas.
+
+- Cambio: se actualizaron el dashboard (`dashboard.py`) y el script CLI (`predict_tomorrow.py`) para calcular dinámicamente y con consistencia temporal todas las nuevas variables explicativas durante el serving e inferencia diaria.
+  Contexto: prevenir crashes por KeyError al alimentar los nuevos modelos con datos parciales de clima.
+  Motivo: asegurar que el serve y el training compartan la misma distribución y definición de variables (evitar train/serve skew).
+
+- Cambio: se reestructuró la pestaña de comparación del dashboard (`tab_compare`) a una grilla limpia de 3 columnas que contrasta los hitos evolutivos: `Repeated 5-Fold (20S) (RF)` (original), `Repeated 5-Fold (30S) (RF)` (nuevas variables) y `Repeated 5-Fold (30S) (XG)` (XGBoost, que ahora es también el oficial). Se removió la columna duplicada del oficial redundante y se agregaron los sufijos de algoritmo (RF y XG) a las etiquetas del comparador y al forecast activo.
+  Contexto: sugerencia del usuario de clarificar los algoritmos usados en la interfaz y eliminar la columna duplicada tras la promoción de XGBoost.
+  Motivo: mantener el comparador centrado, limpio, e informativo sobre la tecnología utilizada.
+
+- Cambio: se promovió el modelo de XGBoost a productivo actualizando `active_models.json` a `repeated_5fold_30seeds_xgboost` y físicamente copiando los archivos a las rutas canónicas del modelo principal (`regressor_climatic_augmented.pkl`, `classifier_climatic_augmented.pkl` y `metadata_climatic_augmented.pkl`).
+  Contexto: instrucción directa del usuario de promover el modelo.
+  Motivo: asegurar redundancia absoluta tanto para la resolución dinámica de configuraciones como para los fallbacks de carga tradicionales.
+
+- Resultado: XGBoost (XG) alcanzó un desempeño récord con un R² OOF de **12.63%** (frente al 9.85% de HistGB/RF con las mismas variables, y 8.85% de la versión anterior de 20S), reduciendo el MAE a **2.215 y mejorando el Brier Score a 0.132.**

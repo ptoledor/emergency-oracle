@@ -12,3 +12,4 @@ tzdata==2025.2
 playwright==1.49.1
 playwright-stealth==1.0.6
 statsmodels==0.14.6
+xgboost==3.3.0

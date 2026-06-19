@@ -2,6 +2,7 @@ import os
 import pickle
 import argparse
 from pathlib import Path
+import xgboost as xgb
 
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -115,10 +116,32 @@ def select_recall_controlled_threshold(y_true, probabilities):
     return float(best_threshold), float(best_precision), float(best_recall)
 
 
+XGB_REGRESSOR_PARAMS = {
+    "n_estimators": 100,
+    "max_depth": 4,
+    "learning_rate": 0.03,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "random_state": 42,
+    "n_jobs": -1,
+}
+
+XGB_CLASSIFIER_PARAMS = {
+    "n_estimators": 100,
+    "max_depth": 4,
+    "learning_rate": 0.03,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "random_state": 42,
+    "n_jobs": -1,
+}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--splits", type=int, default=5)
     parser.add_argument("--repeats", type=int, default=10)
+    parser.add_argument("--model-type", type=str, choices=["histgb_rf", "xgboost"], default="histgb_rf", help="Algorithm type to use.")
     parser.add_argument("--promote", action="store_true", help="Promote this model as active/principal in dashboard.")
     args = parser.parse_args()
 
@@ -148,6 +171,19 @@ def main():
     ]
     for f_col in calendar_features:
         if f_col not in feature_cols:
+            feature_cols.append(f_col)
+
+    # Agregar nuevas variables de data augmentation
+    new_augmented_features = [
+        "ES_PRE_FERIADO",
+        "DIAS_DESDE_ULTIMA_LLUVIA",
+        "VPD",
+        "VPD_MAX",
+        "EVENTOS_rolling_mean_14d",
+        "EVENTOS_rolling_mean_30d"
+    ]
+    for f_col in new_augmented_features:
+        if f_col in df.columns and f_col not in feature_cols:
             feature_cols.append(f_col)
 
     X = df[feature_cols].copy()
@@ -181,12 +217,17 @@ def main():
         y_train_clf = y_clf.iloc[train_idx]
         y_validation_clf = y_clf.iloc[validation_idx]
 
-        reg_model = HistGradientBoostingRegressor(**FINAL_MODEL_PARAMS)
+        if args.model_type == "xgboost":
+            reg_model = xgb.XGBRegressor(**XGB_REGRESSOR_PARAMS)
+            clf_model = xgb.XGBClassifier(**XGB_CLASSIFIER_PARAMS)
+        else:
+            reg_model = HistGradientBoostingRegressor(**FINAL_MODEL_PARAMS)
+            clf_model = RandomForestClassifier(**KFOLD_CLASSIFIER_PARAMS)
+
         reg_model.fit(X_train, y_train_reg)
         fold_reg_predictions = np.clip(reg_model.predict(X_validation), 0, None)
         reg_predictions_all[validation_idx, repeat] = fold_reg_predictions
 
-        clf_model = RandomForestClassifier(**KFOLD_CLASSIFIER_PARAMS)
         if y_train_clf.nunique() < 2:
             fold_probabilities = np.full(len(validation_idx), float(y_train_clf.mean()))
         else:
@@ -238,18 +279,30 @@ def main():
 
     # Train final models on entire dataset
     print("Training final models on full dataset...")
-    reg_model_final = HistGradientBoostingRegressor(**FINAL_MODEL_PARAMS)
-    reg_model_final.fit(X, y_reg)
-    clf_model_final = RandomForestClassifier(**KFOLD_CLASSIFIER_PARAMS)
-    clf_model_final.fit(X, y_clf)
+    if args.model_type == "xgboost":
+        reg_model_final = xgb.XGBRegressor(**XGB_REGRESSOR_PARAMS)
+        reg_model_final.fit(X, y_reg)
+        clf_model_final = xgb.XGBClassifier(**XGB_CLASSIFIER_PARAMS)
+        clf_model_final.fit(X, y_clf)
+        
+        # XGBoost provides feature importances directly
+        feature_importances = {
+            column: float(value)
+            for column, value in zip(feature_cols, reg_model_final.feature_importances_)
+        }
+    else:
+        reg_model_final = HistGradientBoostingRegressor(**FINAL_MODEL_PARAMS)
+        reg_model_final.fit(X, y_reg)
+        clf_model_final = RandomForestClassifier(**KFOLD_CLASSIFIER_PARAMS)
+        clf_model_final.fit(X, y_clf)
 
-    # Calculate feature importances
-    importance_model = GradientBoostingRegressor(**MODEL_PARAMS)
-    importance_model.fit(X, y_reg)
-    feature_importances = {
-        column: float(value)
-        for column, value in zip(feature_cols, importance_model.feature_importances_)
-    }
+        # Calculate feature importances
+        importance_model = GradientBoostingRegressor(**MODEL_PARAMS)
+        importance_model.fit(X, y_reg)
+        feature_importances = {
+            column: float(value)
+            for column, value in zip(feature_cols, importance_model.feature_importances_)
+        }
 
     train_mean = float(y_reg.mean())
     baseline_predictions = np.full(len(y_reg), train_mean)
@@ -293,9 +346,11 @@ def main():
         "brier": float(brier_score_loss(y_clf, clf_probabilities)),
     }
 
+    model_suffix = "_xgboost" if args.model_type == "xgboost" else ""
+
     # Save fold details and OOF predictions
     pd.DataFrame(fold_rows).to_csv(
-        models_dir / f"repeated_{n_splits}fold_{n_repeats}seeds_evaluation.csv",
+        models_dir / f"repeated_{n_splits}fold_{n_repeats}seeds{model_suffix}_evaluation.csv",
         sep=";",
         index=False,
     )
@@ -308,14 +363,19 @@ def main():
             "ALERTA_TARGET_KFOLD": y_clf,
         }
     ).to_csv(
-        models_dir / f"repeated_{n_splits}fold_{n_repeats}seeds_oof_predictions.csv",
+        models_dir / f"repeated_{n_splits}fold_{n_repeats}seeds{model_suffix}_oof_predictions.csv",
         sep=";",
         index=False,
     )
 
-    pickle_dump(reg_model_final, models_dir / f"regressor_repeated_{n_splits}fold_{n_repeats}seeds.pkl")
-    pickle_dump(clf_model_final, models_dir / f"classifier_repeated_{n_splits}fold_{n_repeats}seeds.pkl")
-    pickle_dump(metadata, models_dir / f"metadata_repeated_{n_splits}fold_{n_repeats}seeds.pkl")
+    pickle_dump(reg_model_final, models_dir / f"regressor_repeated_{n_splits}fold_{n_repeats}seeds{model_suffix}.pkl")
+    pickle_dump(clf_model_final, models_dir / f"classifier_repeated_{n_splits}fold_{n_repeats}seeds{model_suffix}.pkl")
+    
+    # Update regressor/classifier type description in metadata
+    metadata["regressor_type"] = "XGBRegressor" if args.model_type == "xgboost" else "HistGradientBoostingRegressor"
+    metadata["classifier_type"] = "XGBClassifier" if args.model_type == "xgboost" else "RandomForestClassifier"
+    
+    pickle_dump(metadata, models_dir / f"metadata_repeated_{n_splits}fold_{n_repeats}seeds{model_suffix}.pkl")
 
     if args.promote:
         import json
@@ -327,10 +387,10 @@ def main():
                     config = json.load(f)
             except Exception:
                 pass
-        config["climatic_augmented"] = f"repeated_{n_splits}fold_{n_repeats}seeds"
+        config["climatic_augmented"] = f"repeated_{n_splits}fold_{n_repeats}seeds{model_suffix}"
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
-        print(f"Promoted repeated_{n_splits}fold_{n_repeats}seeds to principal model.")
+        print(f"Promoted repeated_{n_splits}fold_{n_repeats}seeds{model_suffix} to principal model.")
 
     print("Repeated KFold structural model saved successfully.")
     print(f"  MAE OOF (averaged): {metadata['mae']:.3f}")

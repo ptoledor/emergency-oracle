@@ -956,6 +956,29 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
         'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
     }
 
+    # Initialize last_30_events from df for rolling mean features
+    last_30_events = []
+    try:
+        df_hist = df[df['FECHA_DIA'] < start_date.strftime('%Y-%m-%d')].sort_values('FECHA_DIA')
+        if len(df_hist) >= 30:
+            last_30_events = list(df_hist['EVENTOS'].tail(30).fillna(0).values)
+        else:
+            hist_mean = df['EVENTOS'].mean() if not df.empty else 1.5
+            last_30_events = [hist_mean] * 30
+    except Exception:
+        last_30_events = [1.5] * 30
+
+    # Initialize DIAS_DESDE_ULTIMA_LLUVIA
+    try:
+        prev_date_str = (start_date - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        df_prev = df[df['FECHA_DIA'] == prev_date_str]
+        if not df_prev.empty and not pd.isna(df_prev['DIAS_DESDE_ULTIMA_LLUVIA'].values[0]):
+            current_dias_desde_lluvia = float(df_prev['DIAS_DESDE_ULTIMA_LLUVIA'].values[0])
+        else:
+            current_dias_desde_lluvia = 10.0
+    except Exception:
+        current_dias_desde_lluvia = 10.0
+
     for j in range(6):
         d = start_date + datetime.timedelta(days=j)
         d_str = d.strftime('%Y-%m-%d')
@@ -989,7 +1012,25 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             for i in range(1, 31)
         }
 
-        # Construct weather-only feature vector
+        # Determine DIAS_DESDE_ULTIMA_LLUVIA
+        if j == 0:
+            last_day_rain = rain_history[1]
+        else:
+            last_day_rain = predictions[-1]['Lluvia']
+            
+        if last_day_rain > 0.1:
+            current_dias_desde_lluvia = 0.0
+        else:
+            current_dias_desde_lluvia += 1.0
+
+        # Construct feature vector
+        weekday = d.weekday()
+        chile_holidays = holidays.Chile(years=[d.year, (d + datetime.timedelta(days=1)).year])
+        d_str_format = d.strftime('%Y-%m-%d')
+        tomorrow_str_format = (d + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        mes = d.month
+        dia_del_ano = d.timetuple().tm_yday
+
         features = {
             'TEMP_MAX': temp_max,
             'TEMP_MIN': temp_min,
@@ -1008,7 +1049,34 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             'LLUVIA': lluvia,
             'VIENTO_MEDIO_lag_1': viento_medio_lag_1,
             'HUM_MEDIA_lag_1': hum_media_lag_1,
+            'ES_FERIADO': 1 if d_str_format in chile_holidays else 0,
+            'ES_PRE_FERIADO': 1 if tomorrow_str_format in chile_holidays else 0,
+            'ES_FIN_SEMANA': 1 if weekday in [5, 6] else 0,
+            'MES_SIN': np.sin(2 * np.pi * mes / 12),
+            'MES_COS': np.cos(2 * np.pi * mes / 12),
+            'DIA_SIN': np.sin(2 * np.pi * weekday / 7),
+            'DIA_COS': np.cos(2 * np.pi * weekday / 7),
+            'DANO_SIN': np.sin(2 * np.pi * dia_del_ano / 365),
+            'DANO_COS': np.cos(2 * np.pi * dia_del_ano / 365),
+            'DIA_LUNES': 1 if weekday == 0 else 0,
+            'DIA_MARTES': 1 if weekday == 1 else 0,
+            'DIA_MIERCOLES': 1 if weekday == 2 else 0,
+            'DIA_JUEVES': 1 if weekday == 3 else 0,
+            'DIA_VIERNES': 1 if weekday == 4 else 0,
+            'DIA_SABADO': 1 if weekday == 5 else 0,
+            'DIA_DOMINGO': 1 if weekday == 6 else 0,
+            'DIAS_DESDE_ULTIMA_LLUVIA': current_dias_desde_lluvia,
+            'EVENTOS_rolling_mean_14d': float(np.mean(last_30_events[-14:])),
+            'EVENTOS_rolling_mean_30d': float(np.mean(last_30_events[-30:])),
         }
+
+        # Vapor Pressure Deficit (VPD)
+        es_media = 0.6108 * np.exp((17.27 * temp_media) / (temp_media + 237.3))
+        features['VPD'] = es_media * (1 - hum_media / 100)
+        
+        es_max = 0.6108 * np.exp((17.27 * temp_max) / (temp_max + 237.3))
+        features['VPD_MAX'] = es_max * (1 - hum_min / 100)
+
         for lag in [1, 2, 3, 5, 7, 10, 14]:
             features[f'LLUVIA_LAG_{lag}D'] = rain_history[lag]
         for window in [3, 7, 14, 30]:
@@ -1046,6 +1114,10 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
                 group_X = pd.DataFrame([features])[group_features]
                 group_model = force_single_thread_model(details["model"])
                 category_risk_probs[group_name] = float(group_model.predict_proba(group_X)[0, 1])
+
+        # Update last_30_events for the next prediction day
+        last_30_events.append(pred_count)
+        last_30_events.pop(0)
 
         predictions.append({
             'Fecha': d,
@@ -1818,7 +1890,9 @@ with tab_forecast:
             unsafe_allow_html=True,
         )
         current_model_name = format_model_name(metadata_aug.get("validation_protocol", "Modelo Climático Aumentado"))
-        st.markdown(f"**Modelo:** {current_model_name}")
+        is_xgb = "xgboost" in str(metadata_aug.get("regressor_type", "")).lower()
+        suffix = " (XG)" if is_xgb else " (RF)"
+        st.markdown(f"**Modelo:** {current_model_name}{suffix}")
 
         percentile_summary_html = render_percentile_table([
             build_percentile_row("Nivel de actividad (predicciones)", train_predictions, as_probability=False),
@@ -2346,7 +2420,7 @@ with tab_compare:
     st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
     st.markdown('<div class="chart-title">Comparación de Modelos de Interés</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="chart-subtitle">Comparación de desempeño y variables explicativas entre el modelo Repeated 5-Fold (20 semillas), el modelo Repeated 5-Fold (30 semillas) y el modelo oficial activo.</div>',
+        '<div class="chart-subtitle">Comparación de desempeño y variables explicativas entre el modelo Repeated 5-Fold (20S) (RF), el modelo Repeated 5-Fold (30S) (RF) y el modelo Repeated 5-Fold (30S) (XG).</div>',
         unsafe_allow_html=True,
     )
 
@@ -2379,10 +2453,25 @@ with tab_compare:
         if (models_dir / "metadata_repeated_5fold_30seeds.pkl").exists():
             st.warning(f"No se pudo cargar el modelo de comparación Repeated 5-Fold (30S): {e}")
 
+    # Cargar Repeated 5-Fold (30 semillas) XGBoost de referencia
+    metadata_r5k_30_xgb = None
+    df_imp_r5k_30_xgb = None
+    try:
+        with open(models_dir / "metadata_repeated_5fold_30seeds_xgboost.pkl", "rb") as f:
+            metadata_r5k_30_xgb = pickle.load(f)
+        if "feature_importances" in metadata_r5k_30_xgb:
+            df_imp_r5k_30_xgb = pd.DataFrame({
+                'Feature': list(metadata_r5k_30_xgb['feature_importances'].keys()),
+                'Importance': list(metadata_r5k_30_xgb['feature_importances'].values())
+            }).sort_values(by='Importance', ascending=True)
+    except Exception as e:
+        if (models_dir / "metadata_repeated_5fold_30seeds_xgboost.pkl").exists():
+            st.warning(f"No se pudo cargar el modelo de comparación Repeated 5-Fold (30S) (XGBoost): {e}")
+
     col_met1, col_met2, col_met3 = st.columns(3)
     with col_met1:
         if metadata_r5k_20 is not None:
-            r5k_20_name = format_model_name(metadata_r5k_20.get("validation_protocol", "Repeated 5-Fold (20S)"))
+            r5k_20_name = f"{format_model_name(metadata_r5k_20.get('validation_protocol', 'Repeated 5-Fold (20S)'))} (RF)"
             render_model_metrics(
                 metadata_r5k_20,
                 r5k_20_name,
@@ -2392,27 +2481,29 @@ with tab_compare:
             st.info("Metadata de Repeated 5-Fold (20S) no disponible.")
     with col_met2:
         if metadata_r5k_30 is not None:
-            r5k_30_name = format_model_name(metadata_r5k_30.get("validation_protocol", "Repeated 5-Fold (30S)"))
+            r5k_30_name = f"{format_model_name(metadata_r5k_30.get('validation_protocol', 'Repeated 5-Fold (30S)'))} (RF)"
             render_model_metrics(
                 metadata_r5k_30,
                 r5k_30_name,
                 "#8b5cf6",
             )
         else:
-            st.info("Metadata de Repeated 5-Fold (30S) no disponible (en entrenamiento...).")
+            st.info("Metadata de Repeated 5-Fold (30S) no disponible.")
     with col_met3:
-        val_proto = metadata_aug.get("validation_protocol", "Modelo Oficial")
-        active_name = format_model_name(val_proto)
-        render_model_metrics(
-            metadata_aug,
-            f"{active_name} (Oficial)",
-            "#e11d48",
-        )
+        if metadata_r5k_30_xgb is not None:
+            r5k_30_xgb_name = f"{format_model_name(metadata_r5k_30_xgb.get('validation_protocol', 'Repeated 5-Fold (30S)'))} (XG)"
+            render_model_metrics(
+                metadata_r5k_30_xgb,
+                r5k_30_xgb_name,
+                "#f59e0b",
+            )
+        else:
+            st.info("Metadata de Repeated 5-Fold (30S) (XGBoost) no disponible.")
 
     col_imp1, col_imp2, col_imp3 = st.columns(3)
     with col_imp1:
         if df_imp_r5k_20 is not None:
-            r5k_20_name = format_model_name(metadata_r5k_20.get("validation_protocol", "Repeated 5-Fold (20S)"))
+            r5k_20_name = f"{format_model_name(metadata_r5k_20.get('validation_protocol', 'Repeated 5-Fold (20S)'))} (RF)"
             render_importance_chart(
                 df_imp_r5k_20,
                 f"Importancia · {r5k_20_name}",
@@ -2423,7 +2514,7 @@ with tab_compare:
             st.info("Importancias de variables no disponibles.")
     with col_imp2:
         if df_imp_r5k_30 is not None:
-            r5k_30_name = format_model_name(metadata_r5k_30.get("validation_protocol", "Repeated 5-Fold (30S)"))
+            r5k_30_name = f"{format_model_name(metadata_r5k_30.get('validation_protocol', 'Repeated 5-Fold (30S)'))} (RF)"
             render_importance_chart(
                 df_imp_r5k_30,
                 f"Importancia · {r5k_30_name}",
@@ -2433,12 +2524,14 @@ with tab_compare:
         else:
             st.info("Importancias de variables no disponibles.")
     with col_imp3:
-        val_proto = metadata_aug.get("validation_protocol", "Modelo Oficial")
-        active_name = format_model_name(val_proto)
-        render_importance_chart(
-            df_imp_aug,
-            f"Importancia · {active_name} (Oficial)",
-            "#e11d48",
-            key="importance_comparison_active",
-        )
+        if df_imp_r5k_30_xgb is not None:
+            r5k_30_xgb_name = f"{format_model_name(metadata_r5k_30_xgb.get('validation_protocol', 'Repeated 5-Fold (30S)'))} (XG)"
+            render_importance_chart(
+                df_imp_r5k_30_xgb,
+                f"Importancia · {r5k_30_xgb_name}",
+                "#f59e0b",
+                key="importance_r5k_seeds30_xgb",
+            )
+        else:
+            st.info("Importancias de variables no disponibles.")
 

@@ -290,6 +290,8 @@ def main():
     df_daily['EVENTOS_rolling_mean_7d'] = eventos_shifted.rolling(7, min_periods=1).mean()
     df_daily['EVENTOS_rolling_std_7d'] = eventos_shifted.rolling(7, min_periods=1).std().fillna(0)
     df_daily['EVENTOS_rolling_max_7d'] = eventos_shifted.rolling(7, min_periods=1).max()
+    df_daily['EVENTOS_rolling_mean_14d'] = eventos_shifted.rolling(14, min_periods=1).mean()
+    df_daily['EVENTOS_rolling_mean_30d'] = eventos_shifted.rolling(30, min_periods=1).mean()
 
     # --- Lluvia: memoria hídrica multiescala, siempre excluyendo hoy ---
     for lag in [1, 2, 3, 5, 7, 10, 14]:
@@ -306,6 +308,20 @@ def main():
             lluvia_shifted.le(0.1).rolling(window, min_periods=window).sum()
         )
 
+    # --- Días desde la última lluvia ---
+    dias_desde_lluvia = []
+    count = 0
+    for rain in lluvia_shifted:
+        if pd.isna(rain):
+            dias_desde_lluvia.append(np.nan)
+        elif rain > 0.1:
+            count = 0
+            dias_desde_lluvia.append(count)
+        else:
+            count += 1
+            dias_desde_lluvia.append(count)
+    df_daily['DIAS_DESDE_ULTIMA_LLUVIA'] = dias_desde_lluvia
+
     # --- Lags de clima ---
     df_daily['VIENTO_MEDIO_lag_1'] = df_daily['VIENTO_MEDIO'].shift(1)
     df_daily['HUM_MEDIA_lag_1'] = df_daily['HUM_MEDIA'].shift(1)
@@ -318,6 +334,13 @@ def main():
         df_daily['TEMP_MAX'] * df_daily['DIAS_SECOS_7D_PREV']
         / (1 + df_daily['LLUVIA_TOTAL_7D_PREV'])
     )
+
+    # --- Índice de Déficit de Presión de Vapor (VPD) ---
+    es_media = 0.6108 * np.exp((17.27 * df_daily['TEMP_MEDIA']) / (df_daily['TEMP_MEDIA'] + 237.3))
+    df_daily['VPD'] = es_media * (1 - df_daily['HUM_MEDIA'] / 100)
+    
+    es_max = 0.6108 * np.exp((17.27 * df_daily['TEMP_MAX']) / (df_daily['TEMP_MAX'] + 237.3))
+    df_daily['VPD_MAX'] = es_max * (1 - df_daily['HUM_MIN'] / 100)
 
     # --- Calendario y feriados ---
     chile_holidays = holidays.Chile(years=range(2022, 2027))
@@ -341,6 +364,12 @@ def main():
 
     df_daily['ES_FERIADO'] = df_daily['FECHA_DIA'].apply(lambda x: 1 if x in chile_holidays else 0)
     df_daily['ES_FERIADO_IRRENUNCIABLE'] = df_daily.apply(determinar_irrenunciable, axis=1)
+    
+    # Pre-feriado: si el día de mañana es feriado
+    df_daily['ES_PRE_FERIADO'] = df_daily['FECHA_DIA'].apply(
+        lambda x: 1 if (datetime.strptime(x, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d') in chile_holidays else 0
+    )
+    
     df_daily['DIA_DEL_ANO'] = df_daily['FECHA_DT'].dt.dayofyear
 
     # --- Codificación cíclica (captura estacionalidad sin discontinuidades) ---
@@ -363,7 +392,7 @@ def main():
         or c.startswith('LLUVIA_LAG_') or c.startswith('LLUVIA_PROMEDIO_')
         or c.startswith('LLUVIA_TOTAL_') or c.startswith('LLUVIA_DESV_')
         or c.startswith('LLUVIA_MAX_') or c.startswith('DIAS_SECOS_')
-        or c.endswith('_lag_1')
+        or c.endswith('_lag_1') or c == 'DIAS_DESDE_ULTIMA_LLUVIA'
     ]
     df_daily = df_daily.dropna(subset=lag_roll_cols).reset_index(drop=True)
 

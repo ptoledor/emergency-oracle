@@ -206,20 +206,25 @@ def main():
     print(f"Último dato en dataset local: {max_date_in_dataset}")
     print(f"Fecha a predecir: {target_date}")
 
-    # Calcular las fechas de los lags (necesitamos hasta lag_7)
+    # Calcular las fechas de los lags (necesitamos hasta lag_30 para las medias móviles de 14 y 30 días)
     lag_dates = [target_date - datetime.timedelta(days=i) for i in range(7, 0, -1)]
     lag_dates_str = [d.strftime('%Y-%m-%d') for d in lag_dates]
     
-    print(f"Cálculo de lags usando fechas (desde lag_7 a lag_1): {lag_dates_str}")
+    lag_dates_30 = [target_date - datetime.timedelta(days=i) for i in range(30, 0, -1)]
+    lag_dates_30_str = [d.strftime('%Y-%m-%d') for d in lag_dates_30]
+    
+    print(f"Cálculo de lags usando fechas (desde lag_30 a lag_1): {lag_dates_30_str}")
 
     # Obtener conteos de eventos y categorías
-    lag_counts, category_lags = get_events_and_categories_for_dates(raw_tweets_path, claves_cbt_path, lag_dates_str)
+    lag_counts_30, category_lags = get_events_and_categories_for_dates(raw_tweets_path, claves_cbt_path, lag_dates_30_str)
     
     train_mean = float(metadata.get('train_target_mean', 5.71))
-    imputed_lag_counts = [
+    imputed_lag_counts_30 = [
         val if date <= max_date_in_dataset else train_mean
-        for val, date in zip(lag_counts, lag_dates_str)
+        for val, date in zip(lag_counts_30, lag_dates_30_str)
     ]
+    
+    imputed_lag_counts = imputed_lag_counts_30[-7:]
     
     eventos_lag_7 = imputed_lag_counts[0]
     eventos_lag_3 = imputed_lag_counts[4]
@@ -235,6 +240,9 @@ def main():
     eventos_rolling_std_7d = np.std(imputed_lag_counts, ddof=1)
     eventos_rolling_max_7d = np.max(imputed_lag_counts)
 
+    eventos_rolling_mean_14d = np.mean(imputed_lag_counts_30[-14:])
+    eventos_rolling_mean_30d = np.mean(imputed_lag_counts_30[-30:])
+
     print(f"Conteo de eventos en lags principales:")
     print(f"  - Hace 7 días ({lag_dates_str[0]}): {eventos_lag_7:.2f} (imputado={lag_dates_str[0] > max_date_in_dataset})")
     print(f"  - Hace 3 días ({lag_dates_str[4]}): {eventos_lag_3:.2f} (imputado={lag_dates_str[4] > max_date_in_dataset})")
@@ -242,6 +250,8 @@ def main():
     print(f"  - Ayer/Hoy ({lag_dates_str[6]}): {eventos_lag_1:.2f} (imputado={lag_dates_str[6] > max_date_in_dataset})")
     print(f"  - Media móvil 3 días: {eventos_rolling_mean_3d:.2f} (std={eventos_rolling_std_3d:.2f})")
     print(f"  - Media móvil 7 días: {eventos_rolling_mean_7d:.2f} (std={eventos_rolling_std_7d:.2f})")
+    print(f"  - Media móvil 14 días: {eventos_rolling_mean_14d:.2f}")
+    print(f"  - Media móvil 30 días: {eventos_rolling_mean_30d:.2f}")
     print(f"Conteo de categorías lag_1 (Ayer/Hoy): {category_lags}")
 
     # Obtener clima para la fecha objetivo y los lags usando datos horarios
@@ -399,6 +409,40 @@ def main():
     dano_sin = np.sin(2 * np.pi * dia_del_ano / 365)
     dano_cos = np.cos(2 * np.pi * dia_del_ano / 365)
 
+    # Count days since last rain from rain_history
+    dias_desde_lluvia = 0
+    for i in range(1, 31):
+        if rain_history[i] > 0.1:
+            break
+        dias_desde_lluvia += 1
+        
+    if dias_desde_lluvia == 30:
+        try:
+            augmented_path = PROJECT_ROOT / "02_data" / "augmented_emergency_data.csv"
+            if augmented_path.exists():
+                df_aug = pd.read_csv(augmented_path, sep=';')
+                t30_str = (target_date - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
+                df_t30 = df_aug[df_aug['FECHA_DIA'] == t30_str]
+                if not df_t30.empty and not pd.isna(df_t30['DIAS_DESDE_ULTIMA_LLUVIA'].values[0]):
+                    dias_desde_lluvia += int(df_t30['DIAS_DESDE_ULTIMA_LLUVIA'].values[0])
+        except Exception:
+            pass
+
+    # VPD and VPD_MAX
+    temp_media = clima_data['TEMP_MEDIA']
+    hum_media = clima_data['HUM_MEDIA']
+    temp_max = clima_data['TEMP_MAX']
+    hum_min = clima_data['HUM_MIN']
+    
+    es_media = 0.6108 * np.exp((17.27 * temp_media) / (temp_media + 237.3))
+    vpd = es_media * (1 - hum_media / 100)
+    
+    es_max = 0.6108 * np.exp((17.27 * temp_max) / (temp_max + 237.3))
+    vpd_max = es_max * (1 - hum_min / 100)
+
+    tomorrow_date_str = (target_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+    es_pre_feriado = 1 if tomorrow_date_str in chile_holidays else 0
+
     # Crear el vector de características
     features = {
         'TEMP_MAX': clima_data['TEMP_MAX'],
@@ -444,7 +488,13 @@ def main():
         'DIA_SIN': dia_sin,
         'DIA_COS': dia_cos,
         'DANO_SIN': dano_sin,
-        'DANO_COS': dano_cos
+        'DANO_COS': dano_cos,
+        'ES_PRE_FERIADO': es_pre_feriado,
+        'DIAS_DESDE_ULTIMA_LLUVIA': dias_desde_lluvia,
+        'VPD': vpd,
+        'VPD_MAX': vpd_max,
+        'EVENTOS_rolling_mean_14d': eventos_rolling_mean_14d,
+        'EVENTOS_rolling_mean_30d': eventos_rolling_mean_30d
     }
     weekday_columns = [
         'DIA_LUNES', 'DIA_MARTES', 'DIA_MIERCOLES', 'DIA_JUEVES',
