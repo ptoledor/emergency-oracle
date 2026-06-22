@@ -6,6 +6,7 @@ import pickle
 import os
 import requests
 import datetime
+import time
 import holidays
 import model_components
 from pathlib import Path
@@ -424,7 +425,24 @@ def format_model_name(proto):
     return name
 
 
+def model_algorithm_suffix(metadata):
+    """Return the UI suffix for the regressor declared in model metadata."""
+    regressor_type = str((metadata or {}).get("regressor_type", "")).lower()
+    return " (XG)" if "xgb" in regressor_type else " (RF)"
+
+
 def secondary_level(probability, p33_threshold=None, p66_threshold=None, p80_threshold=None):
+    thresholds = (p33_threshold, p66_threshold, p80_threshold)
+    if all(value is not None and np.isfinite(value) for value in thresholds):
+        p33, p66, p80 = (float(value) for value in thresholds)
+        if p33 <= p66 <= p80 and p80 > 0:
+            if probability > p80:
+                return "Muy Alta", "activity-alert"
+            if probability > p66:
+                return "Alta", "activity-high"
+            if probability > p33:
+                return "Normal", "activity-normal"
+            return "Baja", "activity-low"
     if probability > 0.60:
         return "Muy Alta", "activity-alert"
     if probability > 0.40:
@@ -721,6 +739,35 @@ def load_category_risk_artifact():
 category_risk_artifact = load_category_risk_artifact()
 
 
+@st.cache_resource
+def load_fifth_company_artifact():
+    path = models_dir / "fifth_company_models.pkl"
+    if not path.exists():
+        return None
+    with path.open("rb") as stream:
+        artifact = pickle.load(stream)
+    artifact["regressor"] = force_single_thread_model(artifact["regressor"])
+    artifact["classifier"] = force_single_thread_model(artifact["classifier"])
+    return artifact
+
+
+fifth_company_artifact = load_fifth_company_artifact()
+if df is not None and fifth_company_artifact:
+    try:
+        fifth_metadata = fifth_company_artifact["metadata"]
+        fifth_features = fifth_metadata["feature_cols"]
+        fifth_X = df[fifth_features]
+        df["PRED_5TA_CIA"] = np.clip(
+            fifth_company_artifact["regressor"].predict(fifth_X), 0, None
+        )
+        df["PROB_5TA_CIA_ALTA"] = fifth_company_artifact[
+            "classifier"
+        ].predict_proba(fifth_X)[:, 1]
+    except Exception:
+        df["PRED_5TA_CIA"] = np.nan
+        df["PROB_5TA_CIA_ALTA"] = np.nan
+
+
 def category_risk_label(probability, p33_threshold, p66_threshold, p80_threshold):
     if probability is None or np.isnan(probability):
         return "Sin modelo", "activity-low"
@@ -880,12 +927,7 @@ def get_weather_for_range(start_date, is_historical):
                f"timezone=America%2FSantiago&past_days=30&forecast_days=10")
                
     try:
-        session = requests.Session()
-        session.trust_env = False
-        res = session.get(url, timeout=30)
-        if res.status_code != 200:
-            raise RuntimeError(f"Error al descargar clima desde Open-Meteo: {res.text}")
-        hourly = res.json()['hourly']
+        hourly = fetch_json_with_retry(url, timeout=30, retries=3)['hourly']
         hourly['_source'] = ['open_meteo'] * len(hourly.get('time', []))
         return hourly
     except Exception:
@@ -895,13 +937,14 @@ def get_weather_for_range(start_date, is_historical):
 def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weather_data=None):
     # Load models and metadata
     try:
-        with open(models_dir / f"regressor{prefix}.pkl", "rb") as f:
+        reg_path, clf_path, meta_path = model_components.resolve_model_path(models_dir, prefix)
+        with open(reg_path, "rb") as f:
             reg_model = pickle.load(f)
         reg_model = force_single_thread_model(reg_model)
-        with open(models_dir / f"classifier{prefix}.pkl", "rb") as f:
+        with open(clf_path, "rb") as f:
             clf_model = pickle.load(f)
         clf_model = force_single_thread_model(clf_model)
-        with open(models_dir / f"metadata{prefix}.pkl", "rb") as f:
+        with open(meta_path, "rb") as f:
             metadata = pickle.load(f)
     except Exception as e:
         st.error(f"Error al cargar modelos: {e}")
@@ -979,6 +1022,8 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
     except Exception:
         current_dias_desde_lluvia = 10.0
 
+    direct_horizon_model = hasattr(reg_model, "predict_horizon")
+    origin_event_history = list(last_30_events)
     for j in range(6):
         d = start_date + datetime.timedelta(days=j)
         d_str = d.strftime('%Y-%m-%d')
@@ -1066,8 +1111,8 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             'DIA_SABADO': 1 if weekday == 5 else 0,
             'DIA_DOMINGO': 1 if weekday == 6 else 0,
             'DIAS_DESDE_ULTIMA_LLUVIA': current_dias_desde_lluvia,
-            'EVENTOS_rolling_mean_14d': float(np.mean(last_30_events[-14:])),
-            'EVENTOS_rolling_mean_30d': float(np.mean(last_30_events[-30:])),
+            'EVENTOS_rolling_mean_14d': float(np.mean((origin_event_history if direct_horizon_model else last_30_events)[-14:])),
+            'EVENTOS_rolling_mean_30d': float(np.mean((origin_event_history if direct_horizon_model else last_30_events)[-30:])),
         }
 
         # Vapor Pressure Deficit (VPD)
@@ -1102,11 +1147,16 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
         X_pred = X_all[metadata['feature_cols']]
 
         # Predict
-        if hasattr(reg_model, "category_models"):
+        if direct_horizon_model:
+            pred_count = float(np.clip(reg_model.predict_horizon(X_pred, j + 1)[0], 0, None))
+        elif hasattr(reg_model, "category_models"):
             pred_count = float(np.clip(reg_model.predict(X_all)[0], 0, None))
         else:
             pred_count = float(np.clip(reg_model.predict(X_pred)[0], 0, None))
-        prob_high = float(clf_model.predict_proba(X_pred)[0, 1])
+        if hasattr(clf_model, "predict_proba_horizon"):
+            prob_high = float(clf_model.predict_proba_horizon(X_pred, j + 1)[0, 1])
+        else:
+            prob_high = float(clf_model.predict_proba(X_pred)[0, 1])
         category_risk_probs = {}
         if category_risk_artifact:
             for group_name, details in category_risk_artifact.get("models", {}).items():
@@ -1115,9 +1165,22 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
                 group_model = force_single_thread_model(details["model"])
                 category_risk_probs[group_name] = float(group_model.predict_proba(group_X)[0, 1])
 
+        fifth_company_count = np.nan
+        fifth_company_probability = np.nan
+        if fifth_company_artifact:
+            fifth_metadata = fifth_company_artifact["metadata"]
+            fifth_X = X_all[fifth_metadata["feature_cols"]]
+            fifth_company_count = float(np.clip(
+                fifth_company_artifact["regressor"].predict(fifth_X)[0], 0, None
+            ))
+            fifth_company_probability = float(
+                fifth_company_artifact["classifier"].predict_proba(fifth_X)[0, 1]
+            )
+
         # Update last_30_events for the next prediction day
-        last_30_events.append(pred_count)
-        last_30_events.pop(0)
+        if not direct_horizon_model:
+            last_30_events.append(pred_count)
+            last_30_events.pop(0)
 
         predictions.append({
             'Fecha': d,
@@ -1135,6 +1198,8 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             ),
             'Prob_Incendio_Alto': category_risk_probs.get("incendio", np.nan),
             'Prob_Climaticas_Alto': category_risk_probs.get("climaticas", np.nan),
+            'Pred_5ta_Cia': fifth_company_count,
+            'Prob_5ta_Cia_Alta': fifth_company_probability,
             'Temp_Max': temp_max,
             'Temp_Media': temp_media,
             'Hum_Media': hum_media,
@@ -1804,6 +1869,7 @@ with tab_forecast:
         )
         historical_fire_probabilities = risk_probability_series('PROB_INCENDIO_ALTO')
         historical_climate_probabilities = risk_probability_series('PROB_CLIMATICAS_ALTO')
+        historical_fifth_probabilities = risk_probability_series('PROB_5TA_CIA_ALTA')
 
         rescate_details = risk_model_details("rescate_vehicular", "rescate")
         incendio_details = risk_model_details("incendio")
@@ -1817,6 +1883,10 @@ with tab_forecast:
         climate_probability_p33 = float(climaticas_details.get("probability_p33", 0.0))
         climate_probability_p66 = float(climaticas_details.get("probability_p66", 0.0))
         climate_probability_p80 = float(climaticas_details.get("probability_p80", 0.0))
+        fifth_details = (fifth_company_artifact or {}).get("metadata", {})
+        fifth_probability_p33 = float(fifth_details.get("probability_p33", 0.0))
+        fifth_probability_p66 = float(fifth_details.get("probability_p66", 0.0))
+        fifth_probability_p80 = float(fifth_details.get("probability_p80", 0.0))
         rescue_alert_rate = float(rescate_details.get("oof_alert_rate", 0.0))
         fire_alert_rate = float(incendio_details.get("oof_alert_rate", 0.0))
 
@@ -1859,6 +1929,12 @@ with tab_forecast:
                 climate_probability_p66,
                 climate_probability_p80,
             )
+            fifth_label, fifth_class = category_risk_label(
+                p.get('Prob_5ta_Cia_Alta', np.nan),
+                fifth_probability_p33,
+                fifth_probability_p66,
+                fifth_probability_p80,
+            )
             forecast_cards.append(
                 f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
                     <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Dia']}</div>
@@ -1873,7 +1949,8 @@ with tab_forecast:
                         &#128680; Sobredemanda: <strong>{p['Prob_Alta']*100:.0f}%</strong> <span class="metric-delta {badge_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{badge_text}</span><br/>
                         &#128663; R.Vehicular: <strong>{probability_percent(p.get('Prob_RVehicular_Alto', np.nan))}</strong> <span class="metric-delta {rescue_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{rescue_label}</span><br/>
                         &#128293; Incendio: <strong>{probability_percent(p.get('Prob_Incendio_Alto', np.nan))}</strong> <span class="metric-delta {fire_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{fire_label}</span><br/>
-                        &#9928;&#65039; Climáticas: <strong>{probability_percent(p.get('Prob_Climaticas_Alto', np.nan))}</strong> <span class="metric-delta {climate_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{climate_label}</span>
+                        &#9928;&#65039; Climáticas: <strong>{probability_percent(p.get('Prob_Climaticas_Alto', np.nan))}</strong> <span class="metric-delta {climate_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{climate_label}</span><br/>
+                        &#128664; 5ta Cía: <strong>{p.get('Pred_5ta_Cia', np.nan):.1f} desp.</strong> · <strong>{probability_percent(p.get('Prob_5ta_Cia_Alta', np.nan))}</strong> <span class="metric-delta {fifth_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{fifth_label}</span>
                         <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.35;" />
                         &#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong><br/>
                         &#127777;&#65039; Media: <strong>{p['Temp_Media']:.1f}&deg;C</strong><br/>
@@ -1890,8 +1967,7 @@ with tab_forecast:
             unsafe_allow_html=True,
         )
         current_model_name = format_model_name(metadata_aug.get("validation_protocol", "Modelo Climático Aumentado"))
-        is_xgb = "xgboost" in str(metadata_aug.get("regressor_type", "")).lower()
-        suffix = " (XG)" if is_xgb else " (RF)"
+        suffix = model_algorithm_suffix(metadata_aug)
         st.markdown(f"**Modelo:** {current_model_name}{suffix}")
 
         percentile_summary_html = render_percentile_table([
@@ -1900,6 +1976,7 @@ with tab_forecast:
             build_percentile_row("Probabilidad de R.Vehicular", historical_rescue_probabilities, as_probability=True),
             build_percentile_row("Probabilidad de incendio", historical_fire_probabilities, as_probability=True),
             build_percentile_row("Probabilidad de climaticas", historical_climate_probabilities, as_probability=True),
+            build_percentile_row("Probabilidad de sobredemanda 5ta Cía", historical_fifth_probabilities, as_probability=True),
         ])
         st.markdown(
             f"""<div class="responsive-grid responsive-grid-4" style="margin-top: 1rem; margin-bottom: 1rem;">
@@ -2420,118 +2497,63 @@ with tab_compare:
     st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
     st.markdown('<div class="chart-title">Comparación de Modelos de Interés</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="chart-subtitle">Comparación de desempeño y variables explicativas entre el modelo Repeated 5-Fold (20S) (RF), el modelo Repeated 5-Fold (30S) (RF) y el modelo Repeated 5-Fold (30S) (XG).</div>',
+        '<div class="chart-subtitle">Modelo oficial continuo frente al candidato XGBoost que se compromete con el entero no negativo más cercano.</div>',
         unsafe_allow_html=True,
     )
 
-    # Cargar Repeated 5-Fold (20 semillas) de referencia
-    metadata_r5k_20 = None
-    df_imp_r5k_20 = None
+    candidate_metadata = None
+    candidate_importance = None
     try:
-        with open(models_dir / "metadata_repeated_5fold_20seeds.pkl", "rb") as f:
-            metadata_r5k_20 = pickle.load(f)
-        if "feature_importances" in metadata_r5k_20:
-            df_imp_r5k_20 = pd.DataFrame({
-                'Feature': list(metadata_r5k_20['feature_importances'].keys()),
-                'Importance': list(metadata_r5k_20['feature_importances'].values())
+        with open(models_dir / "metadata_integer_repeated_5fold_30seeds_xgboost.pkl", "rb") as f:
+            candidate_metadata = pickle.load(f)
+        if "feature_importances" in candidate_metadata:
+            candidate_importance = pd.DataFrame({
+                'Feature': list(candidate_metadata['feature_importances'].keys()),
+                'Importance': list(candidate_metadata['feature_importances'].values())
             }).sort_values(by='Importance', ascending=True)
     except Exception as e:
-        st.warning(f"No se pudo cargar el modelo de comparación Repeated 5-Fold (20S): {e}")
+        if (models_dir / "metadata_integer_repeated_5fold_30seeds_xgboost.pkl").exists():
+            st.warning(f"No se pudo cargar el candidato XGBoost de salida entera: {e}")
 
-    # Cargar Repeated 5-Fold (30 semillas) de referencia
-    metadata_r5k_30 = None
-    df_imp_r5k_30 = None
-    try:
-        with open(models_dir / "metadata_repeated_5fold_30seeds.pkl", "rb") as f:
-            metadata_r5k_30 = pickle.load(f)
-        if "feature_importances" in metadata_r5k_30:
-            df_imp_r5k_30 = pd.DataFrame({
-                'Feature': list(metadata_r5k_30['feature_importances'].keys()),
-                'Importance': list(metadata_r5k_30['feature_importances'].values())
-            }).sort_values(by='Importance', ascending=True)
-    except Exception as e:
-        if (models_dir / "metadata_repeated_5fold_30seeds.pkl").exists():
-            st.warning(f"No se pudo cargar el modelo de comparación Repeated 5-Fold (30S): {e}")
+    official_name = (
+        f"{format_model_name((metadata_aug or {}).get('validation_protocol', 'Modelo oficial'))}"
+        f"{model_algorithm_suffix(metadata_aug)} · OFICIAL"
+    )
+    candidate_name = None
+    if candidate_metadata is not None:
+        candidate_name = (
+            f"{format_model_name(candidate_metadata.get('validation_protocol', 'Repeated 5-Fold (30S) · Integer Output'))}"
+            f"{model_algorithm_suffix(candidate_metadata)} · CANDIDATO"
+        )
 
-    # Cargar Repeated 5-Fold (30 semillas) XGBoost de referencia
-    metadata_r5k_30_xgb = None
-    df_imp_r5k_30_xgb = None
-    try:
-        with open(models_dir / "metadata_repeated_5fold_30seeds_xgboost.pkl", "rb") as f:
-            metadata_r5k_30_xgb = pickle.load(f)
-        if "feature_importances" in metadata_r5k_30_xgb:
-            df_imp_r5k_30_xgb = pd.DataFrame({
-                'Feature': list(metadata_r5k_30_xgb['feature_importances'].keys()),
-                'Importance': list(metadata_r5k_30_xgb['feature_importances'].values())
-            }).sort_values(by='Importance', ascending=True)
-    except Exception as e:
-        if (models_dir / "metadata_repeated_5fold_30seeds_xgboost.pkl").exists():
-            st.warning(f"No se pudo cargar el modelo de comparación Repeated 5-Fold (30S) (XGBoost): {e}")
+    col_official, col_candidate = st.columns(2)
+    with col_official:
+        render_model_metrics(metadata_aug, official_name, "#2563eb")
+    with col_candidate:
+        if candidate_metadata is not None:
+            render_model_metrics(candidate_metadata, candidate_name, "#f59e0b")
+        else:
+            st.info("Metadata del candidato XGBoost de salida entera no disponible.")
 
-    col_met1, col_met2, col_met3 = st.columns(3)
-    with col_met1:
-        if metadata_r5k_20 is not None:
-            r5k_20_name = f"{format_model_name(metadata_r5k_20.get('validation_protocol', 'Repeated 5-Fold (20S)'))} (RF)"
-            render_model_metrics(
-                metadata_r5k_20,
-                r5k_20_name,
-                "#10b981",
+    col_imp_official, col_imp_candidate = st.columns(2)
+    with col_imp_official:
+        if df_imp_aug is not None and not df_imp_aug.empty:
+            render_importance_chart(
+                df_imp_aug,
+                f"Importancia · {official_name}",
+                "#2563eb",
+                key="importance_official_xgb",
             )
         else:
-            st.info("Metadata de Repeated 5-Fold (20S) no disponible.")
-    with col_met2:
-        if metadata_r5k_30 is not None:
-            r5k_30_name = f"{format_model_name(metadata_r5k_30.get('validation_protocol', 'Repeated 5-Fold (30S)'))} (RF)"
-            render_model_metrics(
-                metadata_r5k_30,
-                r5k_30_name,
-                "#8b5cf6",
-            )
-        else:
-            st.info("Metadata de Repeated 5-Fold (30S) no disponible.")
-    with col_met3:
-        if metadata_r5k_30_xgb is not None:
-            r5k_30_xgb_name = f"{format_model_name(metadata_r5k_30_xgb.get('validation_protocol', 'Repeated 5-Fold (30S)'))} (XG)"
-            render_model_metrics(
-                metadata_r5k_30_xgb,
-                r5k_30_xgb_name,
+            st.info("Importancias del modelo oficial no disponibles.")
+    with col_imp_candidate:
+        if candidate_importance is not None and not candidate_importance.empty:
+            render_importance_chart(
+                candidate_importance,
+                f"Importancia · {candidate_name}",
                 "#f59e0b",
+                key="importance_candidate_integer_xgb",
             )
         else:
-            st.info("Metadata de Repeated 5-Fold (30S) (XGBoost) no disponible.")
-
-    col_imp1, col_imp2, col_imp3 = st.columns(3)
-    with col_imp1:
-        if df_imp_r5k_20 is not None:
-            r5k_20_name = f"{format_model_name(metadata_r5k_20.get('validation_protocol', 'Repeated 5-Fold (20S)'))} (RF)"
-            render_importance_chart(
-                df_imp_r5k_20,
-                f"Importancia · {r5k_20_name}",
-                "#10b981",
-                key="importance_r5k_seeds20",
-            )
-        else:
-            st.info("Importancias de variables no disponibles.")
-    with col_imp2:
-        if df_imp_r5k_30 is not None:
-            r5k_30_name = f"{format_model_name(metadata_r5k_30.get('validation_protocol', 'Repeated 5-Fold (30S)'))} (RF)"
-            render_importance_chart(
-                df_imp_r5k_30,
-                f"Importancia · {r5k_30_name}",
-                "#8b5cf6",
-                key="importance_r5k_seeds30",
-            )
-        else:
-            st.info("Importancias de variables no disponibles.")
-    with col_imp3:
-        if df_imp_r5k_30_xgb is not None:
-            r5k_30_xgb_name = f"{format_model_name(metadata_r5k_30_xgb.get('validation_protocol', 'Repeated 5-Fold (30S)'))} (XG)"
-            render_importance_chart(
-                df_imp_r5k_30_xgb,
-                f"Importancia · {r5k_30_xgb_name}",
-                "#f59e0b",
-                key="importance_r5k_seeds30_xgb",
-            )
-        else:
-            st.info("Importancias de variables no disponibles.")
+            st.info("Importancias del candidato no disponibles.")
 

@@ -14,6 +14,19 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 from dedup import mark_duplicates, assign_local_date, DEFAULT_TIMEZONE
 
 PROJECT_TIMEZONE = DEFAULT_TIMEZONE
+FIFTH_COMPANY_UNIT_PATTERN = r"(?<![A-Z0-9])(?:B|RB|RX|MX|BX)[- ]?5(?![A-Z0-9])"
+FIFTH_COMPANY_UNIT_CAPTURE_PATTERN = r"(?<![A-Z0-9])(B|RB|RX|MX|BX)[- ]?5(?![A-Z0-9])"
+
+
+def fifth_company_dispatch_mask(text):
+    """Identify dispatches containing a known 5th Company apparatus."""
+    without_urls = text.fillna("").str.replace(r"https?://\S+", "", regex=True)
+    return without_urls.str.contains(
+        FIFTH_COMPANY_UNIT_PATTERN,
+        case=False,
+        regex=True,
+        na=False,
+    )
 
 
 def fetch_json_with_retry(url, timeout=30, retries=3):
@@ -43,6 +56,7 @@ def main():
     weather_cache_path = base_dir / "02_data" / "weather_archive_talcahuano.csv"
     output_data_path = base_dir / "02_data" / "augmented_emergency_data.csv"
     audit_target_path = base_dir / "05_research" / "data_quality" / "output" / "daily_target_audit.csv"
+    fifth_company_audit_path = base_dir / "02_data" / "fifth_company_dispatch_audit.csv"
 
     if not os.path.exists(raw_tweets_path):
         raise FileNotFoundError(f"No se encontró el archivo de tweets: {raw_tweets_path}")
@@ -99,6 +113,34 @@ def main():
     # === CONTEO TOTAL DE EVENTOS POR DÍA (solo incident-like únicos) ===
     df_incidents = df_merged[df_merged['_IS_INCIDENT_LIKE'] & ~df_merged['_IS_DUPLICATE']].copy()
     df_daily_events = df_incidents.groupby('FECHA_DIA').size().reset_index(name='EVENTOS')
+    df_incidents['_IS_5TA_CIA'] = fifth_company_dispatch_mask(df_incidents['Texto'])
+    fifth_audit = df_incidents.loc[
+        df_incidents['_IS_5TA_CIA'], ['Fecha', 'FECHA_DIA', 'Texto']
+    ].copy()
+    fifth_text_without_urls = fifth_audit['Texto'].fillna('').str.replace(
+        r"https?://\S+", "", regex=True
+    )
+    fifth_audit['UNIDADES_5TA'] = fifth_text_without_urls.apply(
+        lambda value: ','.join(sorted({
+            f"{match.upper()}-5"
+            for match in pd.Series([value.upper()]).str.findall(
+                FIFTH_COMPANY_UNIT_CAPTURE_PATTERN,
+                flags=0,
+            ).iloc[0]
+        }))
+    )
+    fifth_audit.to_csv(fifth_company_audit_path, sep=';', index=False)
+    df_daily_fifth = (
+        df_incidents.groupby('FECHA_DIA')['_IS_5TA_CIA']
+        .sum()
+        .astype(float)
+        .reset_index(name='N_5TA_CIA')
+    )
+    print(
+        "Despachos 5ta Cia: "
+        f"{int(df_incidents['_IS_5TA_CIA'].sum())} mensajes incident-like; "
+        "unidades B-5, RB-5, RX-5, MX-5 y alias preventivo BX-5"
+    )
     
     # === CONTEOS POR CATEGORÍA DE EMERGENCIA POR DÍA ===
     # Definir las categorías principales que pueden tener efecto predictivo
@@ -134,6 +176,7 @@ def main():
 
     # Unir eventos totales y por categoría al calendario
     df_daily = pd.merge(df_calendar, df_daily_events, on='FECHA_DIA', how='left')
+    df_daily = pd.merge(df_daily, df_daily_fifth, on='FECHA_DIA', how='left')
     df_daily['DAY_STATE'] = 'observed_nonzero'
     df_daily.loc[df_daily['EVENTOS'].isna(), 'DAY_STATE'] = 'no_data'
 
@@ -161,6 +204,7 @@ def main():
     df_daily['EVENTOS'] = df_daily['EVENTOS'].where(observed_mask, np.nan)
     
     df_daily = pd.merge(df_daily, df_cat_final, on='FECHA_DIA', how='left')
+    df_daily['N_5TA_CIA'] = df_daily['N_5TA_CIA'].fillna(0).where(observed_mask, np.nan)
     for col in cols_to_keep + ['N_OTROS']:
         df_daily[col] = df_daily[col].fillna(0).where(observed_mask, np.nan)
 

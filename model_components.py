@@ -62,6 +62,82 @@ class CategoryBlendRegressor:
         )
 
 
+class WalkForwardRegimeClassifier:
+    """Horizon-specific high-activity classifiers used by direct forecasts."""
+
+    def __init__(self, horizon_models, feature_cols):
+        self.horizon_models = dict(horizon_models)
+        self.feature_cols = list(feature_cols)
+        self.feature_names_in_ = np.asarray(self.feature_cols, dtype=object)
+
+    def _model(self, horizon):
+        horizon = int(horizon)
+        if horizon not in self.horizon_models:
+            raise KeyError(f"No classifier available for forecast horizon {horizon}")
+        return self.horizon_models[horizon]
+
+    def predict_proba_horizon(self, X, horizon):
+        missing = [column for column in self.feature_cols if column not in X.columns]
+        if missing:
+            raise KeyError(f"Missing classifier features: {missing[:10]}")
+        return self._model(horizon).predict_proba(X[self.feature_cols])
+
+    def predict_proba(self, X):
+        return self.predict_proba_horizon(X, 1)
+
+
+class WalkForwardRegimeRegressor:
+    """Mixture of normal/high count regressors selected by activity probability."""
+
+    def __init__(self, horizon_models, feature_cols):
+        self.horizon_models = dict(horizon_models)
+        self.feature_cols = list(feature_cols)
+        self.feature_names_in_ = np.asarray(self.feature_cols, dtype=object)
+        self.feature_importances_ = self._aggregate_importances()
+
+    def _models(self, horizon):
+        horizon = int(horizon)
+        if horizon not in self.horizon_models:
+            raise KeyError(f"No regressor available for forecast horizon {horizon}")
+        return self.horizon_models[horizon]
+
+    def _aggregate_importances(self):
+        importances = []
+        for details in self.horizon_models.values():
+            normal = getattr(details["normal"], "feature_importances_", None)
+            high = getattr(details["high"], "feature_importances_", None)
+            if normal is not None and high is not None:
+                importances.append((np.asarray(normal) + np.asarray(high)) / 2.0)
+        return np.mean(importances, axis=0) if importances else None
+
+    def predict_horizon(self, X, horizon):
+        missing = [column for column in self.feature_cols if column not in X.columns]
+        if missing:
+            raise KeyError(f"Missing regressor features: {missing[:10]}")
+        details = self._models(horizon)
+        aligned = X[self.feature_cols]
+        probability = details["classifier"].predict_proba(aligned)[:, 1]
+        normal = np.clip(details["normal"].predict(aligned), 0, None)
+        high = np.clip(details["high"].predict(aligned), 0, None)
+        return (1.0 - probability) * normal + probability * high
+
+    def predict(self, X):
+        return self.predict_horizon(X, 1)
+
+
+class IntegerRoundedRegressor:
+    """Operational candidate that commits expected counts to nearest integers."""
+
+    def __init__(self, base_model):
+        self.base_model = base_model
+        self.feature_importances_ = getattr(base_model, "feature_importances_", None)
+        self.feature_names_in_ = getattr(base_model, "feature_names_in_", None)
+
+    def predict(self, X):
+        expected = np.clip(np.asarray(self.base_model.predict(X), dtype=float), 0, None)
+        return np.floor(expected + 0.5).astype(int)
+
+
 def resolve_model_path(models_dir, prefix):
     import json
     from pathlib import Path

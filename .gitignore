@@ -35,3 +35,12 @@ temp_*.py
 !03_model/saved_models/category_risk_models.pkl
 !03_model/saved_models/category_risk_models_summary.csv
 !03_model/saved_models/feature_subset_search.csv
+!03_model/saved_models/active_models.json
+!03_model/saved_models/regressor_integer_repeated_5fold_30seeds_xgboost.pkl
+!03_model/saved_models/classifier_integer_repeated_5fold_30seeds_xgboost.pkl
+!03_model/saved_models/metadata_integer_repeated_5fold_30seeds_xgboost.pkl
+!03_model/saved_models/integer_repeated_5fold_30seeds_xgboost_oof_predictions.csv
+!03_model/saved_models/fifth_company_models.pkl
+!03_model/saved_models/fifth_company_fold_metrics.csv
+!03_model/saved_models/fifth_company_oof_predictions.csv
+!03_model/saved_models/fifth_company_model_summary.csv
