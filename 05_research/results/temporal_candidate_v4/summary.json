@@ -1,0 +1,47 @@
+{
+  "protocol": "inner temporal model selection + final 25% holdout",
+  "base_count_candidate": "rolling_median_42d",
+  "selected_residual_model": "gbr_abs",
+  "selected_correction_scale": 1.0,
+  "feature_count": 58,
+  "development_origin_count": 805,
+  "holdout_origin_count": 269,
+  "holdout_pair_count": 1614,
+  "holdout_start_date": "2025-06-20",
+  "candidate_count": {
+    "mae": 2.079470752446603,
+    "rmse": 2.5843618168882543,
+    "r2": -0.025929575126178328
+  },
+  "candidate_risk": {
+    "brier": 0.12680357552492852,
+    "roc_auc": 0.5677401746724892
+  },
+  "baselines": {
+    "persistence": {
+      "mae": 2.774473358116481,
+      "rmse": 3.520518718116645,
+      "r2": -0.9038127607784494
+    },
+    "rolling_28d": {
+      "mae": 2.1486988847583643,
+      "rmse": 2.618512071285102,
+      "r2": -0.053222379380106766
+    },
+    "risk_90d": {
+      "brier": 0.12680357552492852,
+      "roc_auc": 0.5677401746724892
+    }
+  },
+  "promotion_gate": {
+    "passes": true,
+    "best_count_baseline": "rolling_28d",
+    "best_count_baseline_mae": 2.1486988847583643,
+    "count_relative_improvement": 0.032218629051667495,
+    "brier_relative_change": 0.0,
+    "horizons_improved": 6,
+    "horizons_required": 4,
+    "reasons": []
+  },
+  "operational_use": false
+}

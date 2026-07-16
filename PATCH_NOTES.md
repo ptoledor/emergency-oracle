@@ -1,5 +1,19 @@
 # Patch Notes
 
+## 2026-07-16 - Búsqueda temporal H1-H6 con holdout final
+
+- Cambio: se agregó `search_temporal_candidates.py`, que compara reglas de recencia, mediana, EWMA, estacionalidad semanal y blends sin usar información posterior al origen.
+  Contexto: el candidato XGBoost de dos regímenes obtuvo MAE 2.586 y fue peor que la media móvil de 28 días en los seis horizontes.
+  Motivo: buscar primero señales simples y robustas antes de aumentar complejidad del modelo.
+
+- Cambio: la selección se realiza en los primeros 75% de orígenes evaluables y el gate se calcula exclusivamente sobre el 25% temporal final.
+  Contexto: escoger y reportar el mejor candidato sobre las mismas fechas produciría optimismo por selección múltiple.
+  Motivo: conservar un tramo final intacto para confirmar que la mejora se generaliza.
+
+- Cambio: el workflow de GitHub Actions ejecuta la búsqueda, las pruebas del gate y publica leaderboard, métricas H1-H6 y predicciones del holdout como artefactos.
+  Contexto: el entrenamiento debe poder repetirse online sin alterar `active_models.json`.
+  Motivo: iterar de forma auditable y sin promover modelos automáticamente.
+
 ## 2026-06-22 - Target y sobredemanda de 5ta Cía
 
 - Cambio: el pipeline detecta despachos de 5ta Cía mediante `B-5/B5`, `RB-5/RB5`, `RX-5`, `MX-5` y el alias preventivo `BX-5/BX5`, eliminando URLs antes del matching.
@@ -298,101 +312,3 @@
 - Cambio: la pestaña `Comparación de Modelos` (Tab 6) se expandió a una grilla de 5 columnas que compara `Baseline Media`, `Operacional` (blend), `5KFold`, `10KFold` y `15KFold`.
   Contexto: el usuario solicitó que esta pestaña compare estos modelos específicos de interés.
   Motivo: centralizar la comparación cruzada en un solo lugar.
-
-## 2026-06-19 - Repeated 5-Fold CV y Limpieza del Dashboard
-
-- Cambio: se removió la pestaña "Predicción Robusta" (antigua Tab 2) de `dashboard.py`.
-  Contexto: el usuario solicitó limpiar el dashboard eliminando este panel de predicción robusta alternativo.
-  Motivo: simplificar la interfaz gráfica y enfocar al operador en el Forecast principal.
-
-- Cambio: las pestañas de navegación en `dashboard.py` ahora usan nombres descriptivos explícitos (`tab_forecast`, `tab_stats`, `tab_history`, `tab_seasonal`, `tab_compare`) en lugar de variables genéricas indexadas (`tab1`..`tab6`).
-  Contexto: al eliminar la segunda pestaña, la indexación manual de variables tabulares se volvía propensa a errores por desplazamientos.
-  Motivo: mejorar la legibilidad del código y prevenir bugs futuros por cambios en el orden o cantidad de pestañas.
-
-- Cambio: se implementó y ejecutó el script `03_model/train_repeated_kfold.py` para entrenar un modelo con validación Repeated 5-Fold utilizando 10 semillas aleatorias diferentes (50 particiones en total).
-  Contexto: solicitud del usuario de explorar la estabilidad estructural del modelo mediante validación cruzada repetida con 10 semillas.
-  Motivo: obtener métricas de validación Out-Of-Fold más robustas y estables que promedien la influencia del ruido aleatorio en la división de los pliegues.
-
-- Resultado: generación de los artefactos de modelo `regressor_climatic_augmented_repeated_kfold.pkl`, `classifier_climatic_augmented_repeated_kfold.pkl`, `metadata_climatic_augmented_repeated_kfold.pkl`, `repeated_kfold_evaluation.csv` (métricas de las 50 corridas) y `repeated_kfold_oof_predictions.csv` (predicciones OOF suavizadas por promedio).
-  Contexto: entrenamiento exitoso del modelo repeated K-Fold.
-  Motivo: proveer persistencia a las estadísticas de la validación cruzada repetida para su visualización y auditoría posterior.
-
-- Cambio: se integró el modelo Repeated 5KFold en la pestaña de comparación de modelos de `dashboard.py` expandiendo las grillas de métricas y gráficos de importancia a 6 columnas (`Baseline Media`, `Operacional` (blend), `5KFold`, `10KFold`, `15KFold` y `Repeated 5KFold`).
-  Contexto: solicitud del usuario de explorar el desempeño de este modelo comparándolo con el resto del ecosistema de validaciones.
-  Motivo: visualizar si el Repeated KFold logra mejorar el rendimiento y estabilizar el ranking de importancia de variables frente a KFold de una sola semilla.
-
-- Cambio: se restauraron las funciones auxiliares de visualización y métricas (`render_model_metrics`, `build_constant_regressor_metadata`, `build_operational_display_metadata`, `build_classification_metadata`, `render_metric_explanations` y `render_importance_chart`) que habían sido eliminadas accidentalmente al borrar el bloque de la pestaña robusta.
-  Contexto: NameError al iniciar el dashboard.
-  Motivo: estas funciones se encontraban declaradas físicamente dentro del bloque de la pestaña robusta y son consumidas por el resto de pestañas.
-
-## 2026-06-19 - Promoción del Modelo Oficial y Depuración de Legacy
-
-- Cambio: el modelo Repeated 5-Fold (10 semillas) fue promovido como el modelo oficial del proyecto, sobrescribiendo los archivos de modelo principal (`regressor_climatic_augmented.pkl`, `classifier_climatic_augmented.pkl` y `metadata_climatic_augmented.pkl`).
-  Contexto: el usuario decidió establecer Repeated 5-Fold como el modelo operacional principal.
-  Motivo: alinear todas las predicciones de producción e inferencia CLI con el modelo de validación repetida más estable.
-
-- Cambio: se eliminaron todos los modelos legacy (blend operacional original, 5KFold, 10KFold y 15KFold) de los cargadores y las vistas comparativas en el dashboard.
-  Contexto: requerimiento del usuario de remover todos los otros modelos de las comparativas.
-  Motivo: limpiar la pantalla de comparaciones y evitar ruidos metodológicos al comparar múltiples modelos obsoletos.
-
-- Cambio: la vista de comparación de modelos (`tab_compare`) se redujo a una grilla limpia de 2 columnas que enfrenta a `Baseline Media` contra `Repeated 5KFold (Oficial)`.
-  Contexto: simplificación solicitada por el usuario.
-  Motivo: focalizar la comparación visual en la mejora neta aportada por el modelo robusto oficial respecto a una media naive.
-
-- Cambio: se corrigió una ordenación alfabética incondicional de variables explicativas en `load_data_and_predict` al cargar modelos `HistGradientBoostingRegressor` puros.
-  Contexto: NameError/ValueError en predicciones si el modelo oficial no es un regresor blend de categorías.
-  Motivo: garantizar que las variables se pasen en el orden exacto en que el modelo fue entrenado en `train_repeated_kfold.py`.
-
-- Cambio: se agregó un parámetro opcional `key` a `render_importance_chart` y se pasaron claves únicas (`key="importance_forecast"` y `key="importance_comparison"`) en sus respectivas llamadas.
-  Contexto: StreamlitDuplicateElementId al renderizar el dashboard.
-  Motivo: Streamlit genera IDs automáticos a partir del tipo de elemento y sus parámetros. Al dibujar el mismo gráfico Plotly con la misma importancia de variables en múltiples pestañas, Streamlit generaba un ID duplicado causando el colapso de la aplicación.
-
-- Cambio: se actualizaron los rangos de clasificación en `secondary_level` para utilizar límites fijos de probabilidad: 0-20% (Baja), 20-40% (Normal), 40-60% (Alta) y >60% (Muy Alta).
-  Contexto: solicitud del usuario de ajustar las etiquetas del modelo principal de sobredemanda y modelos secundarios de categorías.
-  Motivo: simplificar y homogeneizar las alertas operativas usando rangos de probabilidad absolutos fáciles de interpretar en lugar de percentiles variables.
-
-## 2026-06-19 - Entrenamiento de r5f30s, Depuración General y Migración a .agents
-
-- Cambio: se entrenó un nuevo modelo Repeated 5-Fold con 30 semillas (r5f30s), logrando un R² OOF del 8.98% y mejorando las métricas sobre el modelo de 20 semillas.
-  Contexto: solicitud del usuario de explorar si 30 semillas logran una mejor generalización y estabilidad.
-  Motivo: reducir la varianza de la validación cruzada y obtener un modelo con mayor capacidad predictiva estructurada.
-
-- Cambio: se reestructuró la pestaña de comparación del dashboard para presentar una grilla de 3 columnas que compara directamente el modelo anterior (Repeated 5-Fold 20S), el nuevo modelo (Repeated 5-Fold 30S) y el modelo oficial activo.
-  Contexto: requerimiento del usuario de analizar los dos modelos lado a lado e integrarlos en el comparador.
-  Motivo: facilitar la toma de decisiones sobre la promoción del modelo a producción.
-
-- Cambio: se limpiaron todos los archivos del directorio de modelos guardados (saved_models) que pertenecían a configuraciones obsoletas o secundarias (ej. splits simples de 10 y 15 folds, configuraciones repetidas antiguas de 10 y 20 folds), conservando solo el modelo principal de 20 semillas y el de 30 semillas.
-  Contexto: solicitud del usuario de eliminar archivos innecesarios.
-  Motivo: reducir el uso de disco del repositorio y evitar confusiones con artefactos legacy en desuso.
-
-- Cambio: se migraron y unificaron todos los instructivos y handoffs de agentes (`agends.md` y `FLUJO_ENTRENAMIENTO.md`) hacia `.agents/AGENTS.md`, eliminando los archivos duplicados de la raíz.
-  Contexto: orden y organización de la documentación del proyecto.
-  Motivo: concentrar todas las reglas de trabajo, políticas de datos y especificaciones del proyecto en la carpeta oficial de personalizaciones del agente (.agents).
-
-- Cambio: se eliminaron archivos de bitácora y logs de depuración del proyecto (`st_err.log`, `st_out.log`, etc.) de la raíz del repositorio.
-  Contexto: limpieza general.
-  Motivo: mantener el espacio de trabajo limpio y profesional.
-
-## 2026-06-19 - Ingeniería de Features Avanzada e Introducción de XGBoost (Breakthrough 12.6% R²)
-
-- Cambio: se agregaron 5 nuevas variables explicativas avanzadas: `ES_PRE_FERIADO` (víspera de feriado), `DIAS_DESDE_ULTIMA_LLUVIA` (días secos acumulados), `VPD` (Vapor Pressure Deficit medio), `VPD_MAX` (Vapor Pressure Deficit máximo), y medias móviles de mayor ventana `EVENTOS_rolling_mean_14d` y `EVENTOS_rolling_mean_30d` en `clean_and_augment.py`.
-  Contexto: requerimiento de aumentar las características predictivas con índices climáticos físicos e indicadores de feriados.
-  Motivo: capturar de forma directa el estrés hídrico de la vegetación (riesgo de incendios forestales) y la inercia de llamados a mediano plazo.
-
-- Cambio: se introdujo soporte de entrenamiento y evaluación nativa de XGBoost (`xgb.XGBRegressor` y `xgb.XGBClassifier`) en `train_repeated_kfold.py` con una validación cruzada estructurada de 5 pliegues y 30 semillas (r5f30s).
-  Contexto: contrastar el desempeño de XGBoost frente a HistGradientBoosting y RandomForest tradicionales.
-  Motivo: XGBoost maneja de forma óptima variables continuas no lineales e interacciones complejas.
-
-- Cambio: se actualizaron el dashboard (`dashboard.py`) y el script CLI (`predict_tomorrow.py`) para calcular dinámicamente y con consistencia temporal todas las nuevas variables explicativas durante el serving e inferencia diaria.
-  Contexto: prevenir crashes por KeyError al alimentar los nuevos modelos con datos parciales de clima.
-  Motivo: asegurar que el serve y el training compartan la misma distribución y definición de variables (evitar train/serve skew).
-
-- Cambio: se reestructuró la pestaña de comparación del dashboard (`tab_compare`) a una grilla limpia de 3 columnas que contrasta los hitos evolutivos: `Repeated 5-Fold (20S) (RF)` (original), `Repeated 5-Fold (30S) (RF)` (nuevas variables) y `Repeated 5-Fold (30S) (XG)` (XGBoost, que ahora es también el oficial). Se removió la columna duplicada del oficial redundante y se agregaron los sufijos de algoritmo (RF y XG) a las etiquetas del comparador y al forecast activo.
-  Contexto: sugerencia del usuario de clarificar los algoritmos usados en la interfaz y eliminar la columna duplicada tras la promoción de XGBoost.
-  Motivo: mantener el comparador centrado, limpio, e informativo sobre la tecnología utilizada.
-
-- Cambio: se promovió el modelo de XGBoost a productivo actualizando `active_models.json` a `repeated_5fold_30seeds_xgboost` y físicamente copiando los archivos a las rutas canónicas del modelo principal (`regressor_climatic_augmented.pkl`, `classifier_climatic_augmented.pkl` y `metadata_climatic_augmented.pkl`).
-  Contexto: instrucción directa del usuario de promover el modelo.
-  Motivo: asegurar redundancia absoluta tanto para la resolución dinámica de configuraciones como para los fallbacks de carga tradicionales.
-
-- Resultado: XGBoost (XG) alcanzó un desempeño récord con un R² OOF de **12.63%** (frente al 9.85% de HistGB/RF con las mismas variables, y 8.85% de la versión anterior de 20S), reduciendo el MAE a **2.215 y mejorando el Brier Score a 0.132.**
