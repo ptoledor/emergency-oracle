@@ -8,16 +8,18 @@ on:
       - opened
       - synchronize
       - reopened
-  push:
-    branches:
-      - agent/temporal-backtest-gate
+    paths:
+      - "03_model/**"
+      - "05_research/model_validation/tests/**"
+      - "requirements.txt"
+      - ".github/workflows/train-temporal-backtest.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: temporal-backtest-${{ github.ref }}
+  group: temporal-backtest-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -26,7 +28,7 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      - name: Checkout candidate branch
+      - name: Checkout candidate code
         uses: actions/checkout@v4
 
       - name: Set up Python
