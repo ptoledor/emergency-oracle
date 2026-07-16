@@ -5,7 +5,7 @@
 - Cambio: el badge principal deja de usar percentiles internos del modelo y pasa a cortes estables por llamados esperados: `Baja <4`, `Normal 4–<6`, `Alta 6–<8` y `Muy alta ≥8`.
   Motivo: impedir que una prediccion cercana a 5,7 sea rotulada como muy alta solo por pertenecer al 20% superior de una distribucion comprimida.
 
-- Cambio: `Pulso 1–100` conserva su lectura relativa e independiente. El dashboard muestra una leyenda breve con los cuatro cortes operacionales.
+- Cambio: se retira `Pulso 1–100` de las tarjetas para evitar una segunda escala que compita con el conteo y el nivel operacional.
 
 ## 2026-07-16 - Compatibilidad con hot-reload de Streamlit
 
@@ -34,7 +34,7 @@
   Metodo: percentiles 5 y 95 de los 720 residuos fuera de muestra del backtest walk-forward; el limite inferior se trunca en cero y los extremos se redondean hacia afuera.
   Motivo: comunicar incertidumbre sobre el resultado futuro sin presentar una desviacion estandar simetrica ni confundirla con un intervalo de confianza del promedio.
 
-- Cambio: se retira del Forecast la probabilidad general de sobredemanda y sus resumenes; el conteo, el Pulso y el nivel operacional pasan a concentrar la lectura de carga diaria.
+- Cambio: se retira del Forecast la probabilidad general de sobredemanda y sus resumenes; el conteo y el nivel operacional pasan a concentrar la lectura de carga diaria.
 
 ## 2026-07-16 - Rafaga media en Forecast
 

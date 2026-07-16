@@ -471,18 +471,6 @@ def secondary_level(probability, p33_threshold=None, p66_threshold=None, p80_thr
     return "Baja", "activity-low"
 
 
-def empirical_activity_score(reference_predictions, predicted_events):
-    reference = pd.to_numeric(reference_predictions, errors="coerce").dropna().to_numpy()
-    if not len(reference):
-        return 50
-    percentile = 100.0 * np.searchsorted(
-        np.sort(reference),
-        float(predicted_events),
-        side="right",
-    ) / len(reference)
-    return int(np.clip(np.rint(percentile), 1, 100))
-
-
 @st.cache_data
 def load_prediction_interval_90(model_suffix):
     if not model_suffix:
@@ -1966,10 +1954,6 @@ with tab_forecast:
             activity_text, activity_class = operational_activity_level(
                 p['Prediccion']
             )
-            activity_score = empirical_activity_score(
-                train_predictions,
-                p['Prediccion'],
-            )
             uncertainty_html = ""
             if prediction_interval_90:
                 interval_low = max(
@@ -2025,7 +2009,6 @@ with tab_forecast:
                     <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Prediccion']:.1f}</div>
                     <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.5rem;">llamadas</div>
                     {uncertainty_html}
-                    <div style="font-size: 0.72rem; color: var(--text); margin-bottom: 0.45rem;">Pulso <strong>{activity_score}/100</strong></div>
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 0.35rem; margin-bottom: 0.6rem;">
                         <div class="metric-delta {activity_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{activity_text}</div>
                     </div>
