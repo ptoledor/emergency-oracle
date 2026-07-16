@@ -58,7 +58,7 @@ jobs:
           OMP_NUM_THREADS: "1"
           LOKY_MAX_CPU_COUNT: "1"
           SKLEARN_NUM_THREADS: "1"
-        run: python 03_model/search_temporal_candidates_v2.py
+        run: python 03_model/search_temporal_candidates_v2_fixed.py
 
       - name: Publish metrics summary
         if: always()
