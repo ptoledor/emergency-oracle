@@ -53,12 +53,12 @@ jobs:
             -p "test_*.py" \
             -v
 
-      - name: Search leakage-safe H1-H6 candidates
+      - name: Search horizon-specific robust candidates
         env:
           OMP_NUM_THREADS: "1"
           LOKY_MAX_CPU_COUNT: "1"
           SKLEARN_NUM_THREADS: "1"
-        run: python 03_model/search_temporal_candidates.py
+        run: python 03_model/search_temporal_candidates_v2.py
 
       - name: Publish metrics summary
         if: always()
@@ -68,11 +68,11 @@ jobs:
           import os
           from pathlib import Path
 
-          path = Path("03_model/saved_models/temporal_candidate_search_summary.json")
+          path = Path("03_model/saved_models/temporal_candidate_search_v2_summary.json")
           summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
           if not path.exists():
               summary_path.write_text(
-                  "## Temporal candidate search\n\nSearch did not produce a summary file.\n",
+                  "## Temporal candidate search v2\n\nSearch did not produce a summary file.\n",
                   encoding="utf-8",
               )
               raise SystemExit(0)
@@ -81,11 +81,10 @@ jobs:
           count = data.get("candidate_count", {})
           risk = data.get("candidate_risk", {})
           gate = data.get("promotion_gate", {})
-          baselines = data.get("baselines", {})
           lines = [
-              "## Temporal H1-H6 candidate search",
+              "## Temporal H1-H6 candidate search v2",
               "",
-              f"**Count candidate:** `{data.get('selected_count_candidate')}`",
+              f"**Count candidates:** `{data.get('selected_count_candidates')}`",
               "",
               f"**Risk candidate:** `{data.get('selected_risk_candidate')}`",
               "",
@@ -96,12 +95,6 @@ jobs:
               f"| R² | {count.get('r2', float('nan')):.4f} |",
               f"| ROC-AUC | {risk.get('roc_auc', float('nan')):.4f} |",
               f"| Brier | {risk.get('brier', float('nan')):.4f} |",
-              "",
-              "### Baselines",
-              "",
-              "```json",
-              json.dumps(baselines, indent=2, ensure_ascii=False),
-              "```",
               "",
               "### Promotion gate",
               "",
@@ -116,12 +109,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: temporal-candidate-search-${{ github.sha }}
+          name: temporal-candidate-search-v2-${{ github.sha }}
           path: |
-            03_model/saved_models/temporal_candidate_search_summary.json
-            03_model/saved_models/temporal_candidate_search_horizon_metrics.csv
-            03_model/saved_models/temporal_candidate_search_count_leaderboard.csv
-            03_model/saved_models/temporal_candidate_search_risk_leaderboard.csv
-            03_model/saved_models/temporal_candidate_search_holdout_predictions.csv
+            03_model/saved_models/temporal_candidate_search_v2_summary.json
+            03_model/saved_models/temporal_candidate_search_v2_horizon_metrics.csv
+            03_model/saved_models/temporal_candidate_search_v2_leaderboard.csv
+            03_model/saved_models/temporal_candidate_search_v2_holdout_predictions.csv
           if-no-files-found: warn
           retention-days: 7
