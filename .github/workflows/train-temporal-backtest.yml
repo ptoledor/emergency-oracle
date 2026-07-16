@@ -1,6 +1,13 @@
 name: Train temporal H1-H6 candidate
 
 on:
+  pull_request:
+    branches:
+      - master
+    types:
+      - opened
+      - synchronize
+      - reopened
   push:
     branches:
       - agent/temporal-backtest-gate
@@ -52,10 +59,11 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           path = Path("03_model/saved_models/walkforward_regime_direct6_xgboost_summary.json")
-          summary_path = Path(__import__("os").environ["GITHUB_STEP_SUMMARY"])
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
           if not path.exists():
               summary_path.write_text(
                   "## Temporal backtest\n\nTraining did not produce a summary file.\n",
