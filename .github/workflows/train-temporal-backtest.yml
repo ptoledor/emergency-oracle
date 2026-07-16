@@ -120,7 +120,8 @@ jobs:
           path: |
             03_model/saved_models/temporal_candidate_search_summary.json
             03_model/saved_models/temporal_candidate_search_horizon_metrics.csv
-            03_model/saved_models/temporal_candidate_search_leaderboard.csv
+            03_model/saved_models/temporal_candidate_search_count_leaderboard.csv
+            03_model/saved_models/temporal_candidate_search_risk_leaderboard.csv
             03_model/saved_models/temporal_candidate_search_holdout_predictions.csv
           if-no-files-found: warn
           retention-days: 7
