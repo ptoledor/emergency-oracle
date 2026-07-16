@@ -53,12 +53,12 @@ jobs:
             -p "test_*.py" \
             -v
 
-      - name: Search stable global robust candidate
+      - name: Search residual-correction candidate
         env:
           OMP_NUM_THREADS: "1"
           LOKY_MAX_CPU_COUNT: "1"
           SKLEARN_NUM_THREADS: "1"
-        run: python 03_model/search_temporal_candidates_v3.py
+        run: python 03_model/search_temporal_candidates_v4.py
 
       - name: Publish metrics summary
         if: always()
@@ -68,11 +68,11 @@ jobs:
           import os
           from pathlib import Path
 
-          path = Path("03_model/saved_models/temporal_candidate_search_v3_summary.json")
+          path = Path("03_model/saved_models/temporal_candidate_search_v4_summary.json")
           summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
           if not path.exists():
               summary_path.write_text(
-                  "## Temporal candidate search v3\n\nSearch did not produce a summary file.\n",
+                  "## Temporal candidate search v4\n\nSearch did not produce a summary file.\n",
                   encoding="utf-8",
               )
               raise SystemExit(0)
@@ -82,11 +82,13 @@ jobs:
           risk = data.get("candidate_risk", {})
           gate = data.get("promotion_gate", {})
           lines = [
-              "## Temporal H1-H6 candidate search v3",
+              "## Temporal H1-H6 candidate search v4",
               "",
-              f"**Count candidate:** `{data.get('selected_count_candidate')}`",
+              f"**Base:** `{data.get('base_count_candidate')}`",
               "",
-              f"**Risk candidate:** `{data.get('selected_risk_candidate')}`",
+              f"**Residual model:** `{data.get('selected_residual_model')}`",
+              "",
+              f"**Correction scale:** `{data.get('selected_correction_scale')}`",
               "",
               "| Metric | Holdout candidate |",
               "|---|---:|",
@@ -109,11 +111,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: temporal-candidate-search-v3-${{ github.sha }}
+          name: temporal-candidate-search-v4-${{ github.sha }}
           path: |
-            03_model/saved_models/temporal_candidate_search_v3_summary.json
-            03_model/saved_models/temporal_candidate_search_v3_horizon_metrics.csv
-            03_model/saved_models/temporal_candidate_search_v3_leaderboard.csv
-            03_model/saved_models/temporal_candidate_search_v3_holdout_predictions.csv
+            03_model/saved_models/temporal_candidate_search_v4_summary.json
+            03_model/saved_models/temporal_candidate_search_v4_horizon_metrics.csv
+            03_model/saved_models/temporal_candidate_search_v4_leaderboard.csv
+            03_model/saved_models/temporal_candidate_search_v4_holdout_predictions.csv
+            03_model/saved_models/temporal_candidate_search_v4_features.json
           if-no-files-found: warn
           retention-days: 7
