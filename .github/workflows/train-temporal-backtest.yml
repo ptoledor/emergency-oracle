@@ -1,4 +1,4 @@
-name: Train temporal H1-H6 candidate
+name: Search temporal H1-H6 candidates
 
 on:
   pull_request:
@@ -11,7 +11,6 @@ on:
     paths:
       - "03_model/**"
       - "05_research/model_validation/tests/**"
-      - "requirements.txt"
       - ".github/workflows/train-temporal-backtest.yml"
   workflow_dispatch:
 
@@ -19,13 +18,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: temporal-backtest-${{ github.event.pull_request.number || github.ref }}
+  group: temporal-search-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
-  train:
+  search:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
 
     steps:
       - name: Checkout candidate code
@@ -37,7 +36,7 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install temporal training dependencies
+      - name: Install temporal search dependencies
         run: |
           python -m pip install --upgrade pip
           pip install \
@@ -45,8 +44,7 @@ jobs:
             pandas==2.3.2 \
             scipy==1.16.2 \
             scikit-learn==1.7.2 \
-            joblib==1.5.2 \
-            xgboost==3.3.0
+            joblib==1.5.2
 
       - name: Run temporal gate tests
         run: |
@@ -55,12 +53,12 @@ jobs:
             -p "test_*.py" \
             -v
 
-      - name: Train leakage-aware H1-H6 candidate
+      - name: Search leakage-safe H1-H6 candidates
         env:
           OMP_NUM_THREADS: "1"
           LOKY_MAX_CPU_COUNT: "1"
           SKLEARN_NUM_THREADS: "1"
-        run: python 03_model/train_walkforward_regime.py
+        run: python 03_model/search_temporal_candidates.py
 
       - name: Publish metrics summary
         if: always()
@@ -70,28 +68,34 @@ jobs:
           import os
           from pathlib import Path
 
-          path = Path("03_model/saved_models/walkforward_regime_direct6_xgboost_summary.json")
+          path = Path("03_model/saved_models/temporal_candidate_search_summary.json")
           summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
           if not path.exists():
               summary_path.write_text(
-                  "## Temporal backtest\n\nTraining did not produce a summary file.\n",
+                  "## Temporal candidate search\n\nSearch did not produce a summary file.\n",
                   encoding="utf-8",
               )
               raise SystemExit(0)
 
           data = json.loads(path.read_text(encoding="utf-8"))
+          count = data.get("candidate_count", {})
+          risk = data.get("candidate_risk", {})
           gate = data.get("promotion_gate", {})
           baselines = data.get("baselines", {})
           lines = [
-              "## Temporal H1-H6 backtest",
+              "## Temporal H1-H6 candidate search",
               "",
-              "| Metric | Candidate |",
+              f"**Count candidate:** `{data.get('selected_count_candidate')}`",
+              "",
+              f"**Risk candidate:** `{data.get('selected_risk_candidate')}`",
+              "",
+              "| Metric | Holdout candidate |",
               "|---|---:|",
-              f"| MAE | {data.get('mae', float('nan')):.4f} |",
-              f"| RMSE | {data.get('rmse', float('nan')):.4f} |",
-              f"| R² | {data.get('r2', float('nan')):.4f} |",
-              f"| ROC-AUC | {data.get('roc_auc', float('nan')):.4f} |",
-              f"| Brier | {data.get('brier', float('nan')):.4f} |",
+              f"| MAE | {count.get('mae', float('nan')):.4f} |",
+              f"| RMSE | {count.get('rmse', float('nan')):.4f} |",
+              f"| R² | {count.get('r2', float('nan')):.4f} |",
+              f"| ROC-AUC | {risk.get('roc_auc', float('nan')):.4f} |",
+              f"| Brier | {risk.get('brier', float('nan')):.4f} |",
               "",
               "### Baselines",
               "",
@@ -108,18 +112,15 @@ jobs:
           summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
           PY
 
-      - name: Upload training results
+      - name: Upload search results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: temporal-h1-h6-results-${{ github.sha }}
+          name: temporal-candidate-search-${{ github.sha }}
           path: |
-            03_model/saved_models/walkforward_regime_direct6_xgboost_summary.json
-            03_model/saved_models/walkforward_regime_direct6_xgboost_horizon_metrics.csv
-            03_model/saved_models/walkforward_regime_direct6_xgboost_fold_metrics.csv
-            03_model/saved_models/walkforward_regime_direct6_xgboost_oof_predictions.csv
-            03_model/saved_models/regressor_walkforward_regime_direct6_xgboost.pkl
-            03_model/saved_models/classifier_walkforward_regime_direct6_xgboost.pkl
-            03_model/saved_models/metadata_walkforward_regime_direct6_xgboost.pkl
+            03_model/saved_models/temporal_candidate_search_summary.json
+            03_model/saved_models/temporal_candidate_search_horizon_metrics.csv
+            03_model/saved_models/temporal_candidate_search_leaderboard.csv
+            03_model/saved_models/temporal_candidate_search_holdout_predictions.csv
           if-no-files-found: warn
           retention-days: 7
