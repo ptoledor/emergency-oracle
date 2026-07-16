@@ -207,7 +207,15 @@ def main():
     )
     if args.promote:
         (models_dir / "active_models.json").write_text(
-            json.dumps({"climatic_augmented": SUFFIX}, indent=2), encoding="utf-8"
+            json.dumps({
+                "climatic_augmented": SUFFIX,
+                "principal_backups": [
+                    "climatic_augmented",
+                    "signal_xgb_d3_flexible",
+                    SUFFIX,
+                ],
+            }, indent=2),
+            encoding="utf-8",
         )
     print(json.dumps({
         "suffix": SUFFIX, "promoted": args.promote,

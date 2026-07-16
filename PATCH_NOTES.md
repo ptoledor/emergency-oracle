@@ -13,6 +13,8 @@
 
 - Verificacion: inferencia CLI con 118 variables sin faltantes y Streamlit AppTest sin excepciones ni errores. El comparador usa `active_models.json` para rotular correctamente el XGBoost anterior y el ensemble oficial.
 
+- Respaldo: el registro de modelos principales conserva solo tres generaciones: `climatic_augmented` (base original), `signal_xgb_d3_flexible` (oficial anterior) y `signal_hydro_ensemble_v2` (nuevo oficial). Los modelos de riesgo por categoria y 5ta Compania permanecen como auxiliares necesarios para sus tarjetas, no como generaciones del predictor principal.
+
 ## 2026-07-16 - Rango predictivo en Forecast
 
 - Cambio: cada tarjeta muestra en formato discreto un `Rango probable 80%` para el conteo diario.

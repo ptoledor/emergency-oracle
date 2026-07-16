@@ -585,14 +585,14 @@ def load_data_and_predict(active_model_config=None, model_mtimes=None):
     
     # Cargar modelos y metadata
     try:
-        # 1. Modelo directo optimizado de 31 variables para comparacion
+        # 1. Modelo base original, conservado como respaldo y referencia
         reg_model_base = None
         metadata_base = None
         try:
-            with open(models_dir / "regressor_climatic_augmented_direct31.pkl", "rb") as f:
+            with open(models_dir / "regressor_climatic_augmented.pkl", "rb") as f:
                 reg_model_base = pickle.load(f)
             reg_model_base = force_single_thread_model(reg_model_base)
-            with open(models_dir / "metadata_climatic_augmented_direct31.pkl", "rb") as f:
+            with open(models_dir / "metadata_climatic_augmented.pkl", "rb") as f:
                 metadata_base = pickle.load(f)
             
             # Realizar predicciones históricas base (alineando features)
@@ -602,7 +602,7 @@ def load_data_and_predict(active_model_config=None, model_mtimes=None):
                 if missing > 0:
                     raise KeyError(f"{missing} features missing in dataset for base model")
             X_base = df[base_features]
-            df['PRED_EVENTOS_DIRECT31'] = reg_model_base.predict(X_base)
+            df['PRED_EVENTOS_BASE'] = reg_model_base.predict(X_base)
             
             # Extraer importancia base
             importances_base = getattr(reg_model_base, 'feature_importances_', None)
@@ -610,23 +610,23 @@ def load_data_and_predict(active_model_config=None, model_mtimes=None):
                 try:
                     from sklearn.inspection import permutation_importance
                     importances_base = permutation_importance(
-                        reg_model_base, X_base, df['PRED_EVENTOS_DIRECT31'],
+                        reg_model_base, X_base, df['PRED_EVENTOS_BASE'],
                         n_repeats=5, random_state=42, n_jobs=-1
                     ).importances_mean
                 except Exception:
                     from sklearn.ensemble import GradientBoostingRegressor
                     imp_model = GradientBoostingRegressor(n_estimators=100, max_depth=4, random_state=42)
-                    imp_model.fit(X_base, df['PRED_EVENTOS_DIRECT31'])
+                    imp_model.fit(X_base, df['PRED_EVENTOS_BASE'])
                     importances_base = imp_model.feature_importances_
             df_imp_base = pd.DataFrame({
                 'Feature': base_features,
                 'Importance': importances_base
             }).sort_values(by='Importance', ascending=True)
         except (KeyError, Exception) as e:
-            print(f"Base model not compatible with current data: {e}. Skipping base model comparison.")
+            print(f"Original base model not compatible with current data: {e}. Skipping base model comparison.")
             reg_model_base = None
             metadata_base = None
-            df['PRED_EVENTOS_DIRECT31'] = np.nan
+            df['PRED_EVENTOS_BASE'] = np.nan
             df_imp_base = pd.DataFrame({'Feature': [], 'Importance': []})
         
         # 2. Modelo principal optimizado por categorias (CategoryBlendRegressor)
@@ -2102,7 +2102,7 @@ with tab_forecast:
         )
         current_model_name = format_model_name(metadata_aug.get("validation_protocol", "Modelo Climático Aumentado"))
         suffix = model_algorithm_suffix(metadata_aug)
-        st.markdown(f"**Modelo:** {current_model_name}{suffix}")
+        st.markdown(f"**Modelo oficial:** {current_model_name}{suffix} · NUEVO")
 
         percentile_summary_html = render_percentile_table([
             build_percentile_row("Nivel de actividad (predicciones)", train_predictions, as_probability=False),
@@ -2341,17 +2341,21 @@ with tab_stats:
     st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
     st.markdown('<div class="chart-title">Estadísticas del Modelo en Forecast</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="chart-subtitle">Desempeño y estructura del modelo robusto oficial de validación Repeated 5-Fold utilizado en el Forecast diario.</div>',
+        '<div class="chart-subtitle">Desempeño y estructura del modelo oficial utilizado actualmente en el Forecast diario.</div>',
         unsafe_allow_html=True,
     )
-    st.info("Modelo robusto Repeated 5KFold: validación cruzada estructurada repetida 10 veces sobre 5 pliegues.")
+    stats_model_name = (
+        f"{format_model_name((metadata_aug or {}).get('validation_protocol', 'Modelo oficial'))}"
+        f"{model_algorithm_suffix(metadata_aug)} · OFICIAL"
+    )
+    st.info("Ensemble hidrometeorológico validado con seis bloques temporales walk-forward de 120 días.")
 
     col_stats_forecast = st.columns(1)[0]
     with col_stats_forecast:
         if metadata_aug is not None:
             render_model_metrics(
                 metadata_aug,
-                "Repeated 5KFold (Oficial)",
+                stats_model_name,
                 "#e11d48",
             )
         else:
@@ -2368,7 +2372,7 @@ with tab_stats:
         if df_imp_aug is not None and not df_imp_aug.empty:
             render_importance_chart(
                 df_imp_aug,
-                "Importancia · Repeated 5KFold (Oficial)",
+                f"Importancia · {stats_model_name}",
                 "#e11d48",
                 key="importance_forecast",
             )
