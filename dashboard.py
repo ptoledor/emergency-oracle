@@ -8,7 +8,15 @@ import requests
 import datetime
 import time
 import holidays
+import importlib
 import model_components
+
+# Streamlit puede reejecutar dashboard.py dentro de un proceso que conserva en
+# sys.modules una version anterior de este modulo. Recargar solo cuando falta
+# una clase requerida evita que pickle vea el artefacto nuevo con codigo viejo.
+if not hasattr(model_components, "HydroObjectiveEnsembleRegressor"):
+    model_components = importlib.reload(model_components)
+
 from signal_features import (
     CATEGORY_LAG_FEATURES,
     OPEN_METEO_HOURLY_QUERY,
@@ -544,7 +552,7 @@ def add_brier_if_missing(metadata, events, probabilities):
 # 7. Carga de datos y modelos
 @st.cache_data
 def load_data_and_predict(active_model_config=None, model_mtimes=None):
-    cache_version = "model-data-v4-hydro-ensemble-features"
+    cache_version = "model-data-v5-hydro-hot-reload-compat"
     if not os.path.exists(data_path):
         return None, None, None, None, None, None, None, None, None
     df = pd.read_csv(data_path, sep=';')

@@ -1,5 +1,11 @@
 # Patch Notes
 
+## 2026-07-16 - Compatibilidad con hot-reload de Streamlit
+
+- Correccion: si el proceso de Streamlit conserva en `sys.modules` una version anterior de `model_components`, el dashboard recarga el modulo antes de deserializar el ensemble. Esto evita `Can't get attribute 'HydroObjectiveEnsembleRegressor'` durante un despliegue sin reinicio completo del worker.
+
+- Cambio: se incrementa la version de cache de datos/modelos para descartar cualquier resultado parcial del despliegue anterior.
+
 ## 2026-07-16 - Ensemble hidrometeorologico multiobjetivo
 
 - Cambio: se promueve `signal_hydro_ensemble_v2`, un ensemble de cuatro cabezas XGBoost: 30% del modelo anterior, 40% squared-error depth 2, 15% Poisson y 15% quantile median. Una calibracion final expande moderadamente la dispersion (`1.15x`) sin agregar aleatoriedad.
