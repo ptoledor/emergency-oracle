@@ -177,6 +177,11 @@ def main():
         for column, value in zip(features, regressor.feature_importances_)
     }
     count_metrics = metrics(evaluation_y, candidate_count)
+    residuals = evaluation_y.to_numpy(dtype=float) - candidate_count
+    interval_lower_offset, interval_upper_offset = np.quantile(
+        residuals,
+        [0.10, 0.90],
+    )
     official_temporal_metrics = metrics(evaluation_y, official_count)
     official_threshold, _, _, _ = select_threshold(
         evaluation_high,
@@ -262,6 +267,16 @@ def main():
         "negative_binomial_alpha": negative_binomial_alpha,
         "activity_score_method": "empirical_cdf_walk_forward_oof",
         "activity_prediction_reference": np.sort(candidate_count).tolist(),
+        "prediction_interval_80": {
+            "method": "walk_forward_residual_quantiles",
+            "lower_offset": float(interval_lower_offset),
+            "upper_offset": float(interval_upper_offset),
+            "samples": int(len(residuals)),
+            "empirical_coverage": float(np.mean(
+                (residuals >= interval_lower_offset)
+                & (residuals <= interval_upper_offset)
+            )),
+        },
         **high_day_metrics,
         **bootstrap,
     }

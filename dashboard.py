@@ -484,6 +484,38 @@ def empirical_activity_score(reference_predictions, predicted_events):
     return int(np.clip(np.rint(percentile), 1, 100))
 
 
+@st.cache_data
+def load_prediction_interval_80(model_suffix):
+    if not model_suffix:
+        return None
+    oof_path = models_dir / f"{model_suffix}_oof_predictions.csv"
+    if not oof_path.exists():
+        return None
+    try:
+        oof = pd.read_csv(oof_path, sep=";")
+        prediction_columns = [
+            column for column in oof.columns
+            if column.startswith("PRED_EVENTOS_")
+            and column.endswith("_OOF")
+            and "OFFICIAL" not in column
+        ]
+        if "EVENTOS" not in oof.columns or not prediction_columns:
+            return None
+        actual = pd.to_numeric(oof["EVENTOS"], errors="coerce")
+        predicted = pd.to_numeric(oof[prediction_columns[0]], errors="coerce")
+        residuals = (actual - predicted).dropna()
+        if len(residuals) < 30:
+            return None
+        lower_offset, upper_offset = residuals.quantile([0.10, 0.90])
+        return {
+            "lower_offset": float(lower_offset),
+            "upper_offset": float(upper_offset),
+            "samples": int(len(residuals)),
+        }
+    except Exception:
+        return None
+
+
 def force_single_thread_model(model):
     if hasattr(model, "n_jobs"):
         model.n_jobs = 1
@@ -1955,6 +1987,8 @@ with tab_forecast:
         st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario de Llamados Talcahuano</h5></div>', unsafe_allow_html=True)
         
         train_events = df_train['EVENTOS'].astype(float)
+        active_count_suffix = active_model_config.get("climatic_augmented")
+        prediction_interval_80 = load_prediction_interval_80(active_count_suffix)
         activity_p33_threshold = float(train_predictions.quantile(0.33))
         activity_p66_threshold = float(train_predictions.quantile(0.66))
         activity_p80_threshold = float(train_predictions.quantile(0.80))
@@ -1977,6 +2011,30 @@ with tab_forecast:
                 train_predictions,
                 p['Prediccion'],
             )
+            uncertainty_html = ""
+            if prediction_interval_80:
+                interval_low = max(
+                    0,
+                    int(np.floor(
+                        p['Prediccion']
+                        + prediction_interval_80['lower_offset']
+                    )),
+                )
+                interval_high = max(
+                    interval_low,
+                    int(np.ceil(
+                        p['Prediccion']
+                        + prediction_interval_80['upper_offset']
+                    )),
+                )
+                uncertainty_html = (
+                    '<div title="Intervalo predictivo empírico basado en '
+                    f'{prediction_interval_80["samples"]} errores walk-forward" '
+                    'style="font-size: 0.56rem; color: var(--text-dim); '
+                    'margin-bottom: 0.45rem;">'
+                    f'Rango probable 80%: <strong>{interval_low}–{interval_high}</strong>'
+                    '</div>'
+                )
             rescue_label, rescue_class = category_risk_label(
                 p.get('Prob_Rescate_Alto', np.nan),
                 rescue_probability_p33,
@@ -2007,6 +2065,7 @@ with tab_forecast:
                     <div style="font-size: 0.8rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem;">{p['Fecha'].strftime('%d-%b')}</div>
                     <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Prediccion']:.1f}</div>
                     <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.5rem;">llamadas</div>
+                    {uncertainty_html}
                     <div style="font-size: 0.72rem; color: var(--text); margin-bottom: 0.45rem;">Pulso <strong>{activity_score}/100</strong></div>
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 0.35rem; margin-bottom: 0.6rem;">
                         <div class="metric-delta {activity_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{activity_text}</div>
