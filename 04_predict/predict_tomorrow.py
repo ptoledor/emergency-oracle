@@ -24,6 +24,7 @@ if str(PROJECT_ROOT / "02_data") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "02_data"))
 
 from dedup import mark_duplicates, assign_local_date, DEFAULT_TIMEZONE
+from signal_features import OPEN_METEO_HOURLY_QUERY, aggregate_weather_daily
 
 
 def project_today():
@@ -276,7 +277,7 @@ def main():
         print("Obteniendo pronóstico del clima en tiempo real desde Open-Meteo...")
         url = (f"https://api.open-meteo.com/v1/forecast?"
                f"latitude={lat}&longitude={lon}&"
-               f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
+               f"hourly={OPEN_METEO_HOURLY_QUERY}&"
                f"timezone=America%2FSantiago&past_days=30&forecast_days=10")
         fallback_start = target_date - datetime.timedelta(days=30)
         fallback_end = max(target_date, today_date + datetime.timedelta(days=9))
@@ -288,38 +289,14 @@ def main():
                f"latitude={lat}&longitude={lon}&"
                f"start_date={(target_date - datetime.timedelta(days=30)).strftime('%Y-%m-%d')}&"
                f"end_date={target_date_str}&"
-               f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
+               f"hourly={OPEN_METEO_HOURLY_QUERY}&"
                f"timezone=America%2FSantiago&format=json")
         fallback_start = target_date - datetime.timedelta(days=30)
         fallback_end = target_date
         df_hourly = fetch_weather_hourly(url, fallback_start, fallback_end)
 
-    df_hourly['time'] = pd.to_datetime(df_hourly['time'])
-    df_hourly['FECHA_DIA'] = df_hourly['time'].dt.strftime('%Y-%m-%d')
-    
-    # Agrupar y agregar
-    df_clima = df_hourly.groupby('FECHA_DIA').agg(
-        TEMP_MAX=('temperature_2m', 'max'),
-        TEMP_MIN=('temperature_2m', 'min'),
-        TEMP_MEDIA=('temperature_2m', 'mean'),
-        TEMP_SKEW=('temperature_2m', get_skew),
-        TEMP_KURT=('temperature_2m', get_kurt),
-        
-        HUM_MAX=('relative_humidity_2m', 'max'),
-        HUM_MIN=('relative_humidity_2m', 'min'),
-        HUM_MEDIA=('relative_humidity_2m', 'mean'),
-        HUM_SKEW=('relative_humidity_2m', get_skew),
-        HUM_KURT=('relative_humidity_2m', get_kurt),
-        
-        VIENTO_MAX=('wind_speed_10m', 'max'),
-        VIENTO_MEDIO=('wind_speed_10m', 'mean'),
-        VIENTO_SKEW=('wind_speed_10m', get_skew),
-        VIENTO_KURT=('wind_speed_10m', get_kurt),
-        
-        LLUVIA=('precipitation', 'sum')
-    ).reset_index()
-    
-    df_clima = df_clima.set_index('FECHA_DIA')
+    df_clima = aggregate_weather_daily(df_hourly)
+    df_clima.index = pd.to_datetime(df_clima.index).strftime('%Y-%m-%d')
     
     # Extraer variables del día objetivo
     target_row = df_clima.loc[target_date_str]
@@ -343,6 +320,9 @@ def main():
         
         'LLUVIA': float(target_row['LLUVIA'])
     }
+    for feature_name, feature_value in target_row.items():
+        if str(feature_name).startswith('WX_'):
+            clima_data[str(feature_name)] = float(feature_value)
     
     # Lags (weather lags)
     lag_1_str = (target_date - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
@@ -513,6 +493,9 @@ def main():
         'FIRE_DRY_INDEX_7D',
     ]:
         features[name] = clima_data[name]
+    for name, value in clima_data.items():
+        if name.startswith('WX_'):
+            features[name] = value
 
     # Convertir a DataFrame con todas las features construidas
     X_all = pd.DataFrame([features])

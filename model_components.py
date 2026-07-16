@@ -138,6 +138,30 @@ class IntegerRoundedRegressor:
         return np.floor(expected + 0.5).astype(int)
 
 
+class RegressorProbabilityClassifier:
+    """Calibrated high-activity probability derived from a count regressor."""
+
+    def __init__(self, regressor, coefficient, intercept, feature_cols):
+        self.regressor = regressor
+        self.coefficient = float(coefficient)
+        self.intercept = float(intercept)
+        self.feature_cols = list(feature_cols)
+        self.feature_names_in_ = np.asarray(self.feature_cols, dtype=object)
+
+    def predict_proba(self, X):
+        missing = [column for column in self.feature_cols if column not in X.columns]
+        if missing:
+            raise KeyError(f"Missing calibrated classifier features: {missing[:10]}")
+        count = np.clip(
+            np.asarray(self.regressor.predict(X[self.feature_cols]), dtype=float),
+            0,
+            None,
+        )
+        logit = np.clip(self.intercept + self.coefficient * count, -35, 35)
+        high_probability = 1.0 / (1.0 + np.exp(-logit))
+        return np.column_stack([1.0 - high_probability, high_probability])
+
+
 def resolve_model_path(models_dir, prefix):
     import json
     from pathlib import Path

@@ -1,5 +1,45 @@
 # Patch Notes
 
+## 2026-07-16 - Rafaga media en Forecast
+
+- Cambio: las tarjetas de Forecast muestran `Ráfaga media` desde `WX_GUST_MEAN`, separada de `Viento medio`.
+  Contexto: `VIENTO_MAX` conserva su definicion de entrenamiento basada en velocidad sostenida maxima.
+  Motivo: exponer la intensidad promedio de las rachas horarias sin introducir train/serve skew en el modelo activo; `WX_GUST_MAX` permanece como variable interna del modelo.
+
+## 2026-07-16 - Promocion del modelo de alta resolucion en Streamlit
+
+- Cambio: `active_models.json` activa `signal_xgb_d3_flexible` como modelo `climatic_augmented`; su metadata queda marcada `operational_use=true`, `is_primary=true` y `promoted_model=true` tras aprobacion explicita del usuario.
+  Contexto: el candidato ya habia superado al modelo anterior en RMSE, R2, resolucion y deteccion del top 20% bajo seis bloques walk-forward.
+  Motivo: usar el nuevo modelo en Forecast sin depender de copias sobre las rutas canonicas.
+
+- Cambio: se agrego `signal_features.py` como fuente compartida de las 20 señales WX avanzadas y los lags/rolling de eventos. Dashboard y CLI solicitan las mismas variables horarias de Open-Meteo, aplican fallbacks deterministas y construyen las 108 columnas en el orden de entrenamiento.
+  Contexto: el candidato consumia forecast historico, lluvia extrema, rachas, presion, VPD, CAPE, ET0, historial de eventos y categorias que el serving anterior no calculaba por completo.
+  Motivo: eliminar train/serve skew antes de activar el modelo.
+
+- Cambio: las predicciones historicas de Streamlit fusionan `historical_forecast_features.csv`; el forecast de seis dias actualiza recursivamente conteos y lags de categorias mediante proporciones recientes. Comparacion de Modelos muestra `ANTERIOR` vs. el nuevo `OFICIAL` con el mismo protocolo temporal.
+
+- Verificacion: `predict_tomorrow.py --date 2026-04-16` produjo conteo y probabilidad con las 108 variables; Streamlit AppTest renderizo cinco pestañas, el Pulso y la etiqueta del modelo activo con cero excepciones, warnings de interfaz o errores.
+
+## 2026-07-16 - Candidato XGBoost de alta resolucion y Pulso 1-100
+
+- Cambio: se creo un benchmark walk-forward reproducible de seis bloques expansivos de 120 dias para evaluar simultaneamente error, deteccion de dias altos y resolucion de la señal. Se probaron 46 combinaciones viables de familias/objetivos y grupos de variables, mas calibraciones secuenciales y ablations dirigidas; `RandomForestRegressor(criterion="absolute_error")` se descarto por costo computacional no viable.
+  Contexto: el modelo oficial concentra 73,9% de las predicciones temporales entre 4 y 5,x y conserva solo 30,3% de la desviacion real.
+  Motivo: evitar seleccionar extremos llamativos que empeoren la prediccion y comparar todos los candidatos sobre exactamente los mismos dias futuros.
+
+- Resultado: el candidato `signal_xgb_d3_flexible` usa XGBoost squared-error y 108 variables operacionales, incluyendo historia reciente y 20 señales de forecast historico con cobertura completa. En 720 dias walk-forward obtiene MAE 2,254, RMSE 2,926, R2 0,137 y AUC de ranking de conteo 0,658, frente a MAE 2,267, RMSE 3,017, R2 0,082 y AUC 0,653 del oficial temporal.
+  Contexto: la mejora de MAE es pequeña y no concluyente en bootstrap por bloques, pero la mejora de MSE tiene 95,9% de soporte; gana MAE en tres de seis bloques.
+  Motivo: conservar una lectura honesta de la incertidumbre estadistica en vez de sobredimensionar una diferencia de 0,013 eventos.
+
+- Resultado de resolucion: el ratio de variabilidad sube de 30,3% a 39,4%, las salidas 4-5,x bajan de 73,9% a 63,3% y el top 20% del score mejora precision de dias >7 desde 31,3% a 38,2% y recall desde 33,8% a 41,4%.
+
+- Cambio: la probabilidad de sobredemanda del candidato se calibra con Platt scaling sobre el score de conteo mediante `RegressorProbabilityClassifier`. En backtest temporal obtiene ROC-AUC 0,639 y Brier 0,144, frente a 0,592 y 0,150 del clasificador oficial equivalente.
+  Motivo: reutilizar el ranking mas informativo del conteo y evitar una segunda cabeza XGBoost que solo obtuvo AUC 0,625.
+
+- Cambio: Forecast agrega `Pulso 1-100`, percentil empirico del conteo previsto, manteniendo visibles las llamadas esperadas. Comparacion de Modelos muestra Oficial vs. Candidato con metricas walk-forward comparables, ratio de variabilidad, frecuencia 4-5 y precision/recall del top 20%.
+  Motivo: ofrecer una señal dinamica y dopaminica sin convertir ruido aleatorio en un conteo falso.
+
+- Gate: los artefactos `regressor_signal_xgb_d3_flexible.pkl`, `classifier_signal_xgb_d3_flexible.pkl` y `metadata_signal_xgb_d3_flexible.pkl` se guardaron como candidato. El modelo oficial y `active_models.json` no fueron modificados; cualquier promocion requiere confirmacion explicita del usuario.
+
 ## 2026-06-22 - Target y sobredemanda de 5ta Cía
 
 - Cambio: el pipeline detecta despachos de 5ta Cía mediante `B-5/B5`, `RB-5/RB5`, `RX-5`, `MX-5` y el alias preventivo `BX-5/BX5`, eliminando URLs antes del matching.

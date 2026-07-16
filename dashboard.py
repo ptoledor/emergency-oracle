@@ -9,6 +9,12 @@ import datetime
 import time
 import holidays
 import model_components
+from signal_features import (
+    CATEGORY_LAG_FEATURES,
+    OPEN_METEO_HOURLY_QUERY,
+    aggregate_weather_daily,
+    event_history_features,
+)
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from sklearn.metrics import brier_score_loss
@@ -466,6 +472,18 @@ def activity_level(predicted_events, p33_threshold, p66_threshold, p80_threshold
     return "ACTIVIDAD MUY ALTA", "activity-alert"
 
 
+def empirical_activity_score(reference_predictions, predicted_events):
+    reference = pd.to_numeric(reference_predictions, errors="coerce").dropna().to_numpy()
+    if not len(reference):
+        return 50
+    percentile = 100.0 * np.searchsorted(
+        np.sort(reference),
+        float(predicted_events),
+        side="right",
+    ) / len(reference)
+    return int(np.clip(np.rint(percentile), 1, 100))
+
+
 def force_single_thread_model(model):
     if hasattr(model, "n_jobs"):
         model.n_jobs = 1
@@ -490,11 +508,30 @@ def add_brier_if_missing(metadata, events, probabilities):
 # 7. Carga de datos y modelos
 @st.cache_data
 def load_data_and_predict(active_model_config=None, model_mtimes=None):
-    cache_version = "model-data-v2-single-thread-category-risk"
+    cache_version = "model-data-v3-signal-weather-features"
     if not os.path.exists(data_path):
         return None, None, None, None, None, None, None, None, None
     df = pd.read_csv(data_path, sep=';')
     df = df.sort_values('FECHA_DIA').reset_index(drop=True)
+    signal_weather_path = (
+        base_dir / "05_research" / "data" / "historical_forecast_features.csv"
+    )
+    if signal_weather_path.exists():
+        signal_weather = pd.read_csv(signal_weather_path, sep=';')
+        signal_weather['FECHA_DIA'] = pd.to_datetime(
+            signal_weather['FECHA_DIA']
+        ).dt.strftime('%Y-%m-%d')
+        df['FECHA_DIA'] = pd.to_datetime(df['FECHA_DIA']).dt.strftime('%Y-%m-%d')
+        signal_columns = [
+            column for column in signal_weather.columns
+            if column == 'FECHA_DIA' or column not in df.columns
+        ]
+        df = df.merge(
+            signal_weather[signal_columns],
+            on='FECHA_DIA',
+            how='left',
+            validate='one_to_one',
+        )
     weekday_columns = {
         0: 'DIA_LUNES',
         1: 'DIA_MARTES',
@@ -916,14 +953,14 @@ def get_weather_for_range(start_date, is_historical):
                f"latitude={lat}&longitude={lon}&"
                f"start_date={q_start.strftime('%Y-%m-%d')}&"
                f"end_date={q_end.strftime('%Y-%m-%d')}&"
-               f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
+               f"hourly={OPEN_METEO_HOURLY_QUERY}&"
                f"timezone=America%2FSantiago&format=json")
     else:
         # Real-time mode: start_date is today in America/Santiago.
         # Se requieren 30 días previos para variables de memoria hídrica.
         url = (f"https://api.open-meteo.com/v1/forecast?"
                f"latitude={lat}&longitude={lon}&"
-               f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
+               f"hourly={OPEN_METEO_HOURLY_QUERY}&"
                f"timezone=America%2FSantiago&past_days=30&forecast_days=10")
                
     try:
@@ -971,27 +1008,7 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
         return np.mean((vals - mean)**4) / (std_safe**4) - 3
 
     weather_hourly = pd.DataFrame(weather_data)
-    weather_hourly['time'] = pd.to_datetime(weather_hourly['time'])
-    weather_hourly['FECHA_DIA'] = weather_hourly['time'].dt.date
-
-    # Group by FECHA_DIA to aggregate hourly data daily
-    weather_df = weather_hourly.groupby('FECHA_DIA').agg(
-        TEMP_MAX=('temperature_2m', 'max'),
-        TEMP_MIN=('temperature_2m', 'min'),
-        TEMP_MEDIA=('temperature_2m', 'mean'),
-        TEMP_SKEW=('temperature_2m', get_skew),
-        TEMP_KURT=('temperature_2m', get_kurt),
-        HUM_MAX=('relative_humidity_2m', 'max'),
-        HUM_MIN=('relative_humidity_2m', 'min'),
-        HUM_MEDIA=('relative_humidity_2m', 'mean'),
-        HUM_SKEW=('relative_humidity_2m', get_skew),
-        HUM_KURT=('relative_humidity_2m', get_kurt),
-        VIENTO_MAX=('wind_speed_10m', 'max'),
-        VIENTO_MEDIO=('wind_speed_10m', 'mean'),
-        VIENTO_SKEW=('wind_speed_10m', get_skew),
-        VIENTO_KURT=('wind_speed_10m', get_kurt),
-        LLUVIA=('precipitation', 'sum')
-    )
+    weather_df = aggregate_weather_daily(weather_hourly)
 
     predictions = []
     DIAS_ES = {
@@ -1001,6 +1018,7 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
 
     # Initialize last_30_events from df for rolling mean features
     last_30_events = []
+    df_hist = pd.DataFrame()
     try:
         df_hist = df[df['FECHA_DIA'] < start_date.strftime('%Y-%m-%d')].sort_values('FECHA_DIA')
         if len(df_hist) >= 30:
@@ -1010,6 +1028,25 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             last_30_events = [hist_mean] * 30
     except Exception:
         last_30_events = [1.5] * 30
+
+    category_source_by_lag = {
+        "N_INCENDIO_ESTR_lag_1": "N_INCENDIO_ESTR",
+        "N_INCENDIO_FOREST_lag_1": "N_INCENDIO_FOREST",
+        "N_RESCATE_VEH_lag_1": "N_RESCATE_VEH",
+        "N_RESCATE_PERS_lag_1": "N_RESCATE_PERS",
+        "N_EMERGENCIAS_CLIMATICAS_lag_1": "N_EMERGENCIAS_CLIMATICAS",
+        "N_GASES_lag_1": "N_GASES",
+    }
+    current_category_lags = {column: 0.0 for column in CATEGORY_LAG_FEATURES}
+    category_shares = {column: 0.0 for column in CATEGORY_LAG_FEATURES}
+    if not df_hist.empty:
+        latest = df_hist.iloc[-1]
+        recent = df_hist.tail(30)
+        recent_total = float(recent['EVENTOS'].sum())
+        for lag_column, source_column in category_source_by_lag.items():
+            current_category_lags[lag_column] = float(latest.get(source_column, 0.0))
+            if recent_total > 0:
+                category_shares[lag_column] = float(recent[source_column].sum() / recent_total)
 
     # Initialize DIAS_DESDE_ULTIMA_LLUVIA
     try:
@@ -1097,6 +1134,8 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             'ES_FERIADO': 1 if d_str_format in chile_holidays else 0,
             'ES_PRE_FERIADO': 1 if tomorrow_str_format in chile_holidays else 0,
             'ES_FIN_SEMANA': 1 if weekday in [5, 6] else 0,
+            'MES': mes,
+            'DIA_SEMANA': weekday,
             'MES_SIN': np.sin(2 * np.pi * mes / 12),
             'MES_COS': np.cos(2 * np.pi * mes / 12),
             'DIA_SIN': np.sin(2 * np.pi * weekday / 7),
@@ -1114,6 +1153,24 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             'EVENTOS_rolling_mean_14d': float(np.mean((origin_event_history if direct_horizon_model else last_30_events)[-14:])),
             'EVENTOS_rolling_mean_30d': float(np.mean((origin_event_history if direct_horizon_model else last_30_events)[-30:])),
         }
+        irrenunciable_dates = {(1, 1), (5, 1), (9, 18), (9, 19), (12, 25)}
+        holiday_name = chile_holidays.get(d_str_format)
+        features['ES_FERIADO_IRRENUNCIABLE'] = int(
+            (d.month, d.day) in irrenunciable_dates
+            or bool(
+                holiday_name
+                and (
+                    "elecciones" in holiday_name.lower()
+                    or "plebiscito" in holiday_name.lower()
+                )
+            )
+        )
+        history = origin_event_history if direct_horizon_model else last_30_events
+        features.update(event_history_features(history))
+        features.update(current_category_lags)
+        for feature_name, feature_value in w_d.items():
+            if str(feature_name).startswith('WX_'):
+                features[str(feature_name)] = float(feature_value)
 
         # Vapor Pressure Deficit (VPD)
         es_media = 0.6108 * np.exp((17.27 * temp_media) / (temp_media + 237.3))
@@ -1181,6 +1238,10 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
         if not direct_horizon_model:
             last_30_events.append(pred_count)
             last_30_events.pop(0)
+            current_category_lags = {
+                column: float(pred_count * category_shares[column])
+                for column in CATEGORY_LAG_FEATURES
+            }
 
         predictions.append({
             'Fecha': d,
@@ -1204,6 +1265,7 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             'Temp_Media': temp_media,
             'Hum_Media': hum_media,
             'Viento_Medio': viento_medio,
+            'Rafaga_Media': float(w_d.get('WX_GUST_MEAN', viento_medio)),
             'Lluvia': lluvia,
         })
 
@@ -1911,6 +1973,10 @@ with tab_forecast:
                 activity_p66_threshold,
                 activity_p80_threshold,
             )
+            activity_score = empirical_activity_score(
+                train_predictions,
+                p['Prediccion'],
+            )
             rescue_label, rescue_class = category_risk_label(
                 p.get('Prob_Rescate_Alto', np.nan),
                 rescue_probability_p33,
@@ -1941,6 +2007,7 @@ with tab_forecast:
                     <div style="font-size: 0.8rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem;">{p['Fecha'].strftime('%d-%b')}</div>
                     <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Prediccion']:.1f}</div>
                     <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.5rem;">llamadas</div>
+                    <div style="font-size: 0.72rem; color: var(--text); margin-bottom: 0.45rem;">Pulso <strong>{activity_score}/100</strong></div>
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 0.35rem; margin-bottom: 0.6rem;">
                         <div class="metric-delta {activity_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{activity_text}</div>
                     </div>
@@ -1955,7 +2022,8 @@ with tab_forecast:
                         &#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong><br/>
                         &#127777;&#65039; Media: <strong>{p['Temp_Media']:.1f}&deg;C</strong><br/>
                         &#128167; Humedad: <strong>{p['Hum_Media']:.0f}%</strong><br/>
-                        &#128168; Viento: <strong>{p['Viento_Medio']:.1f} km/h</strong><br/>
+                        &#128168; Viento medio: <strong>{p['Viento_Medio']:.1f} km/h</strong><br/>
+                        &#128168; Ráfaga media: <strong>{p['Rafaga_Media']:.1f} km/h</strong><br/>
                         &#127783;&#65039; Lluvia: <strong>{p['Lluvia']:.1f} mm</strong>
                     </div>
                 </div>"""
@@ -2040,6 +2108,10 @@ def render_model_metrics(metadata, title, color):
         ("MAE", "mae", lambda value: f"{value:.2f} eventos"),
         ("RMSE", "rmse", lambda value: f"{value:.2f}"),
         ("R2", "r2", lambda value: f"{value * 100:.1f}%"),
+        ("Ratio variabilidad", "std_ratio", lambda value: f"{value * 100:.1f}%"),
+        ("Salidas 4-5", "boring_4_5_share", lambda value: f"{value * 100:.1f}%"),
+        ("Precision top 20%", "top20_precision", lambda value: f"{value * 100:.1f}%"),
+        ("Recall top 20%", "top20_recall", lambda value: f"{value * 100:.1f}%"),
         ("Brier", "brier", lambda value: f"{value:.3f}"),
         ("ROC-AUC", "roc_auc", lambda value: f"{value * 100:.1f}%"),
         ("Accuracy", "accuracy", lambda value: f"{value * 100:.1f}%"),
@@ -2432,7 +2504,7 @@ if False:  # Vista comparativa antigua, conservada temporalmente como referencia
                 <li style="margin-bottom: 0.4rem;"><strong>TEMP_SKEW / TEMP_KURT:</strong> Asimetría y curtosis de la temperatura calculadas sobre las 24 lecturas horarias. La asimetría mide si el perfil térmico intra-diario se sesga hacia calor o frío extremo, y la curtosis mide la volatilidad y apuntamiento térmico.</li>
                 <li style="margin-bottom: 0.4rem;"><strong>HUM_MAX, HUM_MIN, HUM_MEDIA:</strong> Niveles de humedad relativa máxima, mínima y media pronosticados. La baja humedad relativa (&lt;30%) es clave en la regla del 30-30-30 de propagación de incendios.</li>
                 <li style="margin-bottom: 0.4rem;"><strong>HUM_SKEW / HUM_KURT:</strong> Asimetría y curtosis de la humedad relativa calculadas sobre las 24 lecturas horarias. Explican la persistencia y velocidad de desecación del combustible fino forestal, indicando si la humedad cae de golpe o se mantiene persistentemente baja.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>VIENTO_MAX, VIENTO_MEDIO:</strong> Velocidad máxima (rachas) y promedio del viento estimadas en km/h. Es uno de los factores de propagación y caídas de árboles más críticos en la península.</li>
+                <li style="margin-bottom: 0.4rem;"><strong>VIENTO_MAX, VIENTO_MEDIO, WX_GUST_MAX, WX_GUST_MEAN:</strong> Velocidad sostenida máxima, promedio, ráfaga máxima y ráfaga media estimadas en km/h. La tarjeta de Forecast muestra la ráfaga media por separado; es uno de los factores de propagación y caídas de árboles más críticos en la península.</li>
                 <li style="margin-bottom: 0.4rem;"><strong>VIENTO_SKEW / VIENTO_KURT:</strong> Asimetría y curtosis de la velocidad del viento calculadas sobre las 24 lecturas horarias. Capturan ráfagas o rachas extremas de viento de corta duración (picos de asimetría y colas anchas de curtosis) que las medias diarias ocultan por completo.</li>
                 <li style="margin-bottom: 0.4rem;"><strong>LLUVIA:</strong> Cantidad total de precipitaciones proyectadas en milímetros (mm). Actúa como un supresor directo de incendios forestales pero incrementa accidentes y problemas en techos.</li>
                 <li style="margin-bottom: 0.4rem;"><strong>Contribución al Coeficiente R² Positivo:</strong> Juntas, estas 6 variables de forma de los perfiles horarios meteorológicos acumulan el <strong>16.54%</strong> del peso total en el Modelo Climático con Inercia de Actividad. Al capturar la dinámica intra-diaria fina del clima, permiten que el modelo supere el ruido intrínseco y logre un R² de <strong>+1.3%</strong> en test (comparado con el -1.4% del modelo base).</li>
@@ -2504,7 +2576,7 @@ with tab_compare:
     candidate_metadata = None
     candidate_importance = None
     try:
-        with open(models_dir / "metadata_integer_repeated_5fold_30seeds_xgboost.pkl", "rb") as f:
+        with open(models_dir / "metadata_signal_xgb_d3_flexible.pkl", "rb") as f:
             candidate_metadata = pickle.load(f)
         if "feature_importances" in candidate_metadata:
             candidate_importance = pd.DataFrame({
@@ -2512,28 +2584,44 @@ with tab_compare:
                 'Importance': list(candidate_metadata['feature_importances'].values())
             }).sort_values(by='Importance', ascending=True)
     except Exception as e:
-        if (models_dir / "metadata_integer_repeated_5fold_30seeds_xgboost.pkl").exists():
-            st.warning(f"No se pudo cargar el candidato XGBoost de salida entera: {e}")
+        if (models_dir / "metadata_signal_xgb_d3_flexible.pkl").exists():
+            st.warning(f"No se pudo cargar el candidato XGBoost de alta resolucion: {e}")
+
+    official_compare_metadata = metadata_aug
+    candidate_is_active = bool(
+        candidate_metadata
+        and candidate_metadata.get("is_primary")
+        and candidate_metadata.get("promoted_model")
+    )
+    if candidate_metadata is not None:
+        temporal_official = candidate_metadata.get("official_temporal_metrics")
+        if temporal_official:
+            official_compare_metadata = dict(metadata_aug or {})
+            official_compare_metadata.update(temporal_official)
+            official_compare_metadata["validation_protocol"] = "Walk-forward 6x120 dias"
+            official_compare_metadata["is_primary"] = not candidate_is_active
 
     official_name = (
-        f"{format_model_name((metadata_aug or {}).get('validation_protocol', 'Modelo oficial'))}"
-        f"{model_algorithm_suffix(metadata_aug)} · OFICIAL"
+        f"{format_model_name((official_compare_metadata or {}).get('validation_protocol', 'Modelo oficial'))}"
+        f"{model_algorithm_suffix(official_compare_metadata)}"
+        f" · {'ANTERIOR' if candidate_is_active else 'OFICIAL'}"
     )
     candidate_name = None
     if candidate_metadata is not None:
         candidate_name = (
-            f"{format_model_name(candidate_metadata.get('validation_protocol', 'Repeated 5-Fold (30S) · Integer Output'))}"
-            f"{model_algorithm_suffix(candidate_metadata)} · CANDIDATO"
+            f"{format_model_name(candidate_metadata.get('validation_protocol', 'Walk-forward 6x120 dias'))}"
+            f"{model_algorithm_suffix(candidate_metadata)}"
+            f" · {'OFICIAL' if candidate_is_active else 'CANDIDATO'}"
         )
 
     col_official, col_candidate = st.columns(2)
     with col_official:
-        render_model_metrics(metadata_aug, official_name, "#2563eb")
+        render_model_metrics(official_compare_metadata, official_name, "#2563eb")
     with col_candidate:
         if candidate_metadata is not None:
             render_model_metrics(candidate_metadata, candidate_name, "#f59e0b")
         else:
-            st.info("Metadata del candidato XGBoost de salida entera no disponible.")
+            st.info("Metadata del candidato XGBoost de alta resolucion no disponible.")
 
     col_imp_official, col_imp_candidate = st.columns(2)
     with col_imp_official:
@@ -2552,7 +2640,7 @@ with tab_compare:
                 candidate_importance,
                 f"Importancia · {candidate_name}",
                 "#f59e0b",
-                key="importance_candidate_integer_xgb",
+                key="importance_candidate_signal_xgb",
             )
         else:
             st.info("Importancias del candidato no disponibles.")
