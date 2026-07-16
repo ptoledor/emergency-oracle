@@ -1,5 +1,18 @@
 # Patch Notes
 
+## 2026-07-16 - Ensemble hidrometeorologico multiobjetivo
+
+- Cambio: se promueve `signal_hydro_ensemble_v2`, un ensemble de cuatro cabezas XGBoost: 30% del modelo anterior, 40% squared-error depth 2, 15% Poisson y 15% quantile median. Una calibracion final expande moderadamente la dispersion (`1.15x`) sin agregar aleatoriedad.
+  Motivo: producir una senal mas variable y estimulante, pero exigir simultaneamente mejor MAE, RMSE, R2 y ranking fuera de muestra.
+
+- Cambio: se agregan diez senales hidrometeorologicas con paridad entre entrenamiento y serving: lluvia, chubascos, horas de chubasco/tormenta/trueno, nivel de congelacion y bulbo humedo. El dashboard y la CLI las calculan desde Open-Meteo con fallbacks deterministas.
+
+- Resultado walk-forward, seis bloques de 120 dias: MAE baja de 2.254 a 2.236, RMSE de 2.926 a 2.909, R2 sube de 0.137 a 0.146 y AUC de ranking del conteo de 0.658 a 0.664. El ratio de variabilidad sube de 39.4% a 40.2% y la concentracion en 4-5,x baja de 63.3% a 62.5%; precision y recall top-20% se mantienen.
+
+- Robustez: mejora MAE y RMSE en cinco de seis bloques; el bootstrap movil por bloques entrega 99.3% de soporte para la mejora de MAE y 91.4% para MSE. Tambien mejora en conjunto sobre los dos bloques temporales mas recientes.
+
+- Verificacion: inferencia CLI con 118 variables sin faltantes y Streamlit AppTest sin excepciones ni errores. El comparador usa `active_models.json` para rotular correctamente el XGBoost anterior y el ensemble oficial.
+
 ## 2026-07-16 - Rango predictivo en Forecast
 
 - Cambio: cada tarjeta muestra en formato discreto un `Rango probable 80%` para el conteo diario.

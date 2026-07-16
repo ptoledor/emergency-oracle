@@ -49,3 +49,7 @@ temp_*.py
 !03_model/saved_models/classifier_signal_xgb_d3_flexible.pkl
 !03_model/saved_models/metadata_signal_xgb_d3_flexible.pkl
 !03_model/saved_models/signal_xgb_d3_flexible_oof_predictions.csv
+!03_model/saved_models/regressor_signal_hydro_ensemble_v2.pkl
+!03_model/saved_models/classifier_signal_hydro_ensemble_v2.pkl
+!03_model/saved_models/metadata_signal_hydro_ensemble_v2.pkl
+!03_model/saved_models/signal_hydro_ensemble_v2_oof_predictions.csv

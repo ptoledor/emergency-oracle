@@ -434,7 +434,11 @@ def format_model_name(proto):
 def model_algorithm_suffix(metadata):
     """Return the UI suffix for the regressor declared in model metadata."""
     regressor_type = str((metadata or {}).get("regressor_type", "")).lower()
-    return " (XG)" if "xgb" in regressor_type else " (RF)"
+    if "xgb" in regressor_type or "ensemble" in regressor_type:
+        return " (XG)"
+    if "forest" in regressor_type or regressor_type.startswith("rf"):
+        return " (RF)"
+    return ""
 
 
 def secondary_level(probability, p33_threshold=None, p66_threshold=None, p80_threshold=None):
@@ -540,15 +544,18 @@ def add_brier_if_missing(metadata, events, probabilities):
 # 7. Carga de datos y modelos
 @st.cache_data
 def load_data_and_predict(active_model_config=None, model_mtimes=None):
-    cache_version = "model-data-v3-signal-weather-features"
+    cache_version = "model-data-v4-hydro-ensemble-features"
     if not os.path.exists(data_path):
         return None, None, None, None, None, None, None, None, None
     df = pd.read_csv(data_path, sep=';')
     df = df.sort_values('FECHA_DIA').reset_index(drop=True)
-    signal_weather_path = (
-        base_dir / "05_research" / "data" / "historical_forecast_features.csv"
-    )
-    if signal_weather_path.exists():
+    signal_weather_paths = [
+        base_dir / "05_research" / "data" / "historical_forecast_features.csv",
+        base_dir / "05_research" / "data" / "historical_forecast_features_v2.csv",
+    ]
+    for signal_weather_path in signal_weather_paths:
+        if not signal_weather_path.exists():
+            continue
         signal_weather = pd.read_csv(signal_weather_path, sep=';')
         signal_weather['FECHA_DIA'] = pd.to_datetime(
             signal_weather['FECHA_DIA']
@@ -1201,7 +1208,7 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
         features.update(event_history_features(history))
         features.update(current_category_lags)
         for feature_name, feature_value in w_d.items():
-            if str(feature_name).startswith('WX_'):
+            if str(feature_name).startswith(('WX_', 'WX2_')):
                 features[str(feature_name)] = float(feature_value)
 
         # Vapor Pressure Deficit (VPD)
@@ -2628,79 +2635,68 @@ with tab_compare:
     st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
     st.markdown('<div class="chart-title">Comparación de Modelos de Interés</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="chart-subtitle">Modelo oficial continuo frente al candidato XGBoost que se compromete con el entero no negativo más cercano.</div>',
+        '<div class="chart-subtitle">Modelo XGBoost anterior frente al ensemble hidrometeorológico oficial.</div>',
         unsafe_allow_html=True,
     )
 
-    candidate_metadata = None
-    candidate_importance = None
+    previous_metadata = None
+    previous_importance = None
     try:
         with open(models_dir / "metadata_signal_xgb_d3_flexible.pkl", "rb") as f:
-            candidate_metadata = pickle.load(f)
-        if "feature_importances" in candidate_metadata:
-            candidate_importance = pd.DataFrame({
-                'Feature': list(candidate_metadata['feature_importances'].keys()),
-                'Importance': list(candidate_metadata['feature_importances'].values())
+            previous_metadata = pickle.load(f)
+        if "feature_importances" in previous_metadata:
+            previous_importance = pd.DataFrame({
+                'Feature': list(previous_metadata['feature_importances'].keys()),
+                'Importance': list(previous_metadata['feature_importances'].values())
             }).sort_values(by='Importance', ascending=True)
     except Exception as e:
         if (models_dir / "metadata_signal_xgb_d3_flexible.pkl").exists():
-            st.warning(f"No se pudo cargar el candidato XGBoost de alta resolucion: {e}")
+            st.warning(f"No se pudo cargar el modelo XGBoost anterior: {e}")
 
-    official_compare_metadata = metadata_aug
-    candidate_is_active = bool(
-        candidate_metadata
-        and candidate_metadata.get("is_primary")
-        and candidate_metadata.get("promoted_model")
+    current_metadata = metadata_aug
+    current_importance = df_imp_aug
+    hydro_is_active = (
+        active_model_config.get("climatic_augmented") == "signal_hydro_ensemble_v2"
     )
-    if candidate_metadata is not None:
-        temporal_official = candidate_metadata.get("official_temporal_metrics")
-        if temporal_official:
-            official_compare_metadata = dict(metadata_aug or {})
-            official_compare_metadata.update(temporal_official)
-            official_compare_metadata["validation_protocol"] = "Walk-forward 6x120 dias"
-            official_compare_metadata["is_primary"] = not candidate_is_active
-
-    official_name = (
-        f"{format_model_name((official_compare_metadata or {}).get('validation_protocol', 'Modelo oficial'))}"
-        f"{model_algorithm_suffix(official_compare_metadata)}"
-        f" · {'ANTERIOR' if candidate_is_active else 'OFICIAL'}"
+    previous_name = (
+        f"{format_model_name((previous_metadata or {}).get('validation_protocol', 'Modelo anterior'))}"
+        f"{model_algorithm_suffix(previous_metadata)}"
+        f" · {'ANTERIOR' if hydro_is_active else 'OFICIAL'}"
     )
-    candidate_name = None
-    if candidate_metadata is not None:
-        candidate_name = (
-            f"{format_model_name(candidate_metadata.get('validation_protocol', 'Walk-forward 6x120 dias'))}"
-            f"{model_algorithm_suffix(candidate_metadata)}"
-            f" · {'OFICIAL' if candidate_is_active else 'CANDIDATO'}"
-        )
+    current_name = (
+        f"{format_model_name((current_metadata or {}).get('validation_protocol', 'Hydro ensemble'))}"
+        f"{model_algorithm_suffix(current_metadata)}"
+        f" · {'OFICIAL' if hydro_is_active else 'CANDIDATO'}"
+    )
 
-    col_official, col_candidate = st.columns(2)
-    with col_official:
-        render_model_metrics(official_compare_metadata, official_name, "#2563eb")
-    with col_candidate:
-        if candidate_metadata is not None:
-            render_model_metrics(candidate_metadata, candidate_name, "#f59e0b")
+    col_previous, col_current = st.columns(2)
+    with col_previous:
+        if previous_metadata is not None:
+            render_model_metrics(previous_metadata, previous_name, "#2563eb")
         else:
-            st.info("Metadata del candidato XGBoost de alta resolucion no disponible.")
+            st.info("Metadata del modelo XGBoost anterior no disponible.")
+    with col_current:
+        render_model_metrics(current_metadata, current_name, "#f59e0b")
 
-    col_imp_official, col_imp_candidate = st.columns(2)
-    with col_imp_official:
-        if df_imp_aug is not None and not df_imp_aug.empty:
+    col_imp_previous, col_imp_current = st.columns(2)
+    with col_imp_previous:
+        if previous_importance is not None and not previous_importance.empty:
             render_importance_chart(
-                df_imp_aug,
-                f"Importancia · {official_name}",
+                previous_importance,
+                f"Importancia · {previous_name}",
                 "#2563eb",
-                key="importance_official_xgb",
+                key="importance_previous_signal_xgb",
             )
         else:
-            st.info("Importancias del modelo oficial no disponibles.")
-    with col_imp_candidate:
-        if candidate_importance is not None and not candidate_importance.empty:
+            st.info("Importancias del modelo anterior no disponibles.")
+    with col_imp_current:
+        if current_importance is not None and not current_importance.empty:
             render_importance_chart(
-                candidate_importance,
-                f"Importancia · {candidate_name}",
+                current_importance,
+                f"Importancia · {current_name}",
                 "#f59e0b",
-                key="importance_candidate_signal_xgb",
+                key="importance_current_hydro_ensemble",
             )
         else:
-            st.info("Importancias del candidato no disponibles.")
+            st.info("Importancias del ensemble no disponibles.")
 

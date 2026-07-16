@@ -321,7 +321,7 @@ def main():
         'LLUVIA': float(target_row['LLUVIA'])
     }
     for feature_name, feature_value in target_row.items():
-        if str(feature_name).startswith('WX_'):
+        if str(feature_name).startswith(('WX_', 'WX2_')):
             clima_data[str(feature_name)] = float(feature_value)
     
     # Lags (weather lags)
@@ -494,7 +494,7 @@ def main():
     ]:
         features[name] = clima_data[name]
     for name, value in clima_data.items():
-        if name.startswith('WX_'):
+        if name.startswith(('WX_', 'WX2_')):
             features[name] = value
 
     # Convertir a DataFrame con todas las features construidas

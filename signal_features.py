@@ -19,6 +19,11 @@ OPEN_METEO_HOURLY_VARIABLES = [
     "cape",
     "soil_moisture_0_to_1cm",
     "et0_fao_evapotranspiration",
+    "rain",
+    "showers",
+    "weather_code",
+    "freezing_level_height",
+    "wet_bulb_temperature_2m",
 ]
 OPEN_METEO_HOURLY_QUERY = ",".join(OPEN_METEO_HOURLY_VARIABLES)
 
@@ -33,6 +38,8 @@ CATEGORY_LAG_FEATURES = [
 
 
 def _numeric(frame, column, fallback):
+    if not np.isscalar(fallback):
+        fallback = pd.Series(fallback, index=frame.index, dtype=float)
     if column in frame:
         values = pd.to_numeric(frame[column], errors="coerce")
         return values.fillna(fallback)
@@ -78,6 +85,30 @@ def ensure_advanced_hourly_columns(hourly):
         "et0_fao_evapotranspiration",
         0.0,
     ).clip(lower=0.0)
+    frame["rain"] = _numeric(frame, "rain", precipitation).clip(lower=0.0)
+    frame["showers"] = _numeric(frame, "showers", 0.0).clip(lower=0.0)
+    frame["weather_code"] = _numeric(
+        frame,
+        "weather_code",
+        np.where(precipitation > 0.1, 61.0, 0.0),
+    ).clip(lower=0.0)
+    frame["freezing_level_height"] = _numeric(
+        frame,
+        "freezing_level_height",
+        np.clip(1500.0 + 120.0 * temperature, 0.0, None),
+    ).clip(lower=0.0)
+    wet_bulb = (
+        temperature * np.arctan(0.151977 * np.sqrt(humidity + 8.313659))
+        + np.arctan(temperature + humidity)
+        - np.arctan(humidity - 1.676331)
+        + 0.00391838 * humidity ** 1.5 * np.arctan(0.023101 * humidity)
+        - 4.686035
+    )
+    frame["wet_bulb_temperature_2m"] = _numeric(
+        frame,
+        "wet_bulb_temperature_2m",
+        wet_bulb,
+    )
     return frame
 
 
@@ -103,6 +134,9 @@ def aggregate_weather_daily(hourly):
     frame["_low_humidity_hour"] = (
         frame["relative_humidity_2m"] < 30.0
     ).astype(float)
+    frame["_wx2_shower_hour"] = (frame["showers"] > 0.1).astype(float)
+    frame["_wx2_storm_hour"] = (frame["weather_code"] >= 80).astype(float)
+    frame["_wx2_thunder_hour"] = (frame["weather_code"] >= 95).astype(float)
 
     daily = frame.groupby("FECHA_DIA", sort=True).agg(
         TEMP_MAX=("temperature_2m", "max"),
@@ -140,6 +174,16 @@ def aggregate_weather_daily(hourly):
         WX_HUMIDITY_MIN=("relative_humidity_2m", "min"),
         WX_WIND_MAX=("wind_speed_10m", "max"),
         _WX_SOIL=("soil_moisture_0_to_1cm", "mean"),
+        WX2_RAIN_SUM=("rain", "sum"),
+        WX2_SHOWERS_SUM=("showers", "sum"),
+        WX2_SHOWERS_MAX=("showers", "max"),
+        WX2_SHOWER_HOURS=("_wx2_shower_hour", "sum"),
+        WX2_STORM_HOURS=("_wx2_storm_hour", "sum"),
+        WX2_THUNDER_HOURS=("_wx2_thunder_hour", "sum"),
+        WX2_FREEZING_LEVEL_MEAN=("freezing_level_height", "mean"),
+        WX2_FREEZING_LEVEL_MIN=("freezing_level_height", "min"),
+        WX2_WET_BULB_MEAN=("wet_bulb_temperature_2m", "mean"),
+        WX2_WET_BULB_MAX=("wet_bulb_temperature_2m", "max"),
     )
     daily["WX_PRESSURE_RANGE"] = daily["WX_PRESSURE_MAX"] - daily["WX_PRESSURE_MIN"]
     daily["WX_WIND_RAIN_INDEX"] = daily["WX_GUST_MAX"] * np.log1p(

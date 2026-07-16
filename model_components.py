@@ -138,6 +138,61 @@ class IntegerRoundedRegressor:
         return np.floor(expected + 0.5).astype(int)
 
 
+class HydroObjectiveEnsembleRegressor:
+    """Blend complementary XGBoost objectives and restore useful spread."""
+
+    def __init__(
+        self,
+        models,
+        model_feature_cols,
+        weights,
+        feature_cols,
+        center=5.0,
+        spread_scale=1.0,
+        offset=0.0,
+    ):
+        self.models = dict(models)
+        self.model_feature_cols = {
+            name: list(columns) for name, columns in model_feature_cols.items()
+        }
+        self.weights = {name: float(value) for name, value in weights.items()}
+        self.feature_cols = list(feature_cols)
+        self.feature_names_in_ = np.asarray(self.feature_cols, dtype=object)
+        self.center = float(center)
+        self.spread_scale = float(spread_scale)
+        self.offset = float(offset)
+        self.feature_importances_ = self._aggregate_importances()
+
+    def _aggregate_importances(self):
+        combined = {column: 0.0 for column in self.feature_cols}
+        for name, model in self.models.items():
+            importances = getattr(model, "feature_importances_", None)
+            if importances is None:
+                continue
+            for column, value in zip(self.model_feature_cols[name], importances):
+                combined[column] = combined.get(column, 0.0) + (
+                    self.weights[name] * float(value)
+                )
+        return np.asarray([combined.get(column, 0.0) for column in self.feature_cols])
+
+    def predict(self, X):
+        missing = [column for column in self.feature_cols if column not in X.columns]
+        if missing:
+            raise KeyError(f"Missing hydro ensemble features: {missing[:10]}")
+        blended = np.zeros(len(X), dtype=float)
+        for name, model in self.models.items():
+            columns = self.model_feature_cols[name]
+            blended += self.weights[name] * np.asarray(
+                model.predict(X[columns]), dtype=float
+            )
+        calibrated = (
+            self.center
+            + self.spread_scale * (blended - self.center)
+            + self.offset
+        )
+        return np.clip(calibrated, 0, None)
+
+
 class RegressorProbabilityClassifier:
     """Calibrated high-activity probability derived from a count regressor."""
 
