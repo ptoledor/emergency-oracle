@@ -30,9 +30,11 @@
 
 ## 2026-07-16 - Rango predictivo en Forecast
 
-- Cambio: cada tarjeta muestra en formato discreto un `Rango probable 80%` para el conteo diario.
-  Metodo: percentiles 10 y 90 de los 720 residuos fuera de muestra del backtest walk-forward; el limite inferior se trunca en cero y los extremos se redondean hacia afuera.
+- Cambio: cada tarjeta muestra en formato discreto un `Rango probable 90%` para el conteo diario.
+  Metodo: percentiles 5 y 95 de los 720 residuos fuera de muestra del backtest walk-forward; el limite inferior se trunca en cero y los extremos se redondean hacia afuera.
   Motivo: comunicar incertidumbre sobre el resultado futuro sin presentar una desviacion estandar simetrica ni confundirla con un intervalo de confianza del promedio.
+
+- Cambio: se retira del Forecast la probabilidad general de sobredemanda y sus resumenes; el conteo, el Pulso y el nivel operacional pasan a concentrar la lectura de carga diaria.
 
 ## 2026-07-16 - Rafaga media en Forecast
 

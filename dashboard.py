@@ -471,10 +471,6 @@ def secondary_level(probability, p33_threshold=None, p66_threshold=None, p80_thr
     return "Baja", "activity-low"
 
 
-def operational_decision(prediction, p33_threshold, p66_threshold, p80_threshold):
-    return secondary_level(prediction['Prob_Alta'], p33_threshold, p66_threshold, p80_threshold)
-
-
 def empirical_activity_score(reference_predictions, predicted_events):
     reference = pd.to_numeric(reference_predictions, errors="coerce").dropna().to_numpy()
     if not len(reference):
@@ -488,7 +484,7 @@ def empirical_activity_score(reference_predictions, predicted_events):
 
 
 @st.cache_data
-def load_prediction_interval_80(model_suffix):
+def load_prediction_interval_90(model_suffix):
     if not model_suffix:
         return None
     oof_path = models_dir / f"{model_suffix}_oof_predictions.csv"
@@ -509,7 +505,7 @@ def load_prediction_interval_80(model_suffix):
         residuals = (actual - predicted).dropna()
         if len(residuals) < 30:
             return None
-        lower_offset, upper_offset = residuals.quantile([0.10, 0.90])
+        lower_offset, upper_offset = residuals.quantile([0.05, 0.95])
         return {
             "lower_offset": float(lower_offset),
             "upper_offset": float(upper_offset),
@@ -1924,12 +1920,6 @@ with tab_forecast:
                 "El pronostico usa clima estimado desde el historico local."
             )
         historical_mean = float(df['EVENTOS'].astype(float).mean())
-        historical_predictions = df['PRED_EVENTOS_PRIMARY'].astype(float)
-        historical_alert_probabilities = pd.to_numeric(
-            df.get('PROB_ALTA_PRIMARY', pd.Series(dtype=float)),
-            errors='coerce',
-        ).dropna()
-
         # Umbrales calculados solo sobre el período de entrenamiento (sin fuga de test ni in-sample del test)
         train_end_date = str((metadata_aug or {}).get('train_end_date', ''))
         train_mask = (
@@ -1939,29 +1929,6 @@ with tab_forecast:
         )
         df_train = df[train_mask]
         train_predictions = df_train['PRED_EVENTOS_PRIMARY'].astype(float)
-        train_alert_probs = pd.to_numeric(
-            df_train.get('PROB_ALTA_PRIMARY', pd.Series(dtype=float)),
-            errors='coerce',
-        ).dropna()
-
-        if train_alert_probs.empty:
-            historical_alert_probability_mean = 0.0
-            historical_alert_probability_p33 = 0.0
-            historical_alert_probability_p66 = 0.0
-            historical_alert_probability_p80 = 0.0
-            historical_alert_rate = 0.0
-            historical_alert_count = 0
-            probability_source = "frecuencia real historica"
-        else:
-            historical_alert_probability_mean = float(train_alert_probs.mean())
-            historical_alert_probability_p33 = float(train_alert_probs.quantile(0.33))
-            historical_alert_probability_p66 = float(train_alert_probs.quantile(0.66))
-            historical_alert_probability_p80 = float(train_alert_probs.quantile(0.80))
-            historical_probability_alerts = train_alert_probs > historical_alert_probability_p80
-            historical_alert_rate = float(historical_probability_alerts.mean())
-            historical_alert_count = int(historical_probability_alerts.sum())
-            probability_source = "probabilidad OOF del set de entrenamiento"
-
         # Para category risk: usar umbrales OOF almacenados en el artefacto
         historical_rescue_probabilities = risk_probability_series(
             'PROB_RESCATE_VEHICULAR_ALTO',
@@ -1992,17 +1959,10 @@ with tab_forecast:
 
         st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario de Llamados Talcahuano</h5></div>', unsafe_allow_html=True)
         
-        train_events = df_train['EVENTOS'].astype(float)
         active_count_suffix = active_model_config.get("climatic_augmented")
-        prediction_interval_80 = load_prediction_interval_80(active_count_suffix)
+        prediction_interval_90 = load_prediction_interval_90(active_count_suffix)
         forecast_cards = []
         for p in pred_results:
-            badge_text, badge_class = operational_decision(
-                p,
-                historical_alert_probability_p33,
-                historical_alert_probability_p66,
-                historical_alert_probability_p80,
-            )
             activity_text, activity_class = operational_activity_level(
                 p['Prediccion']
             )
@@ -2011,27 +1971,27 @@ with tab_forecast:
                 p['Prediccion'],
             )
             uncertainty_html = ""
-            if prediction_interval_80:
+            if prediction_interval_90:
                 interval_low = max(
                     0,
                     int(np.floor(
                         p['Prediccion']
-                        + prediction_interval_80['lower_offset']
+                        + prediction_interval_90['lower_offset']
                     )),
                 )
                 interval_high = max(
                     interval_low,
                     int(np.ceil(
                         p['Prediccion']
-                        + prediction_interval_80['upper_offset']
+                        + prediction_interval_90['upper_offset']
                     )),
                 )
                 uncertainty_html = (
                     '<div title="Intervalo predictivo empírico basado en '
-                    f'{prediction_interval_80["samples"]} errores walk-forward" '
+                    f'{prediction_interval_90["samples"]} errores walk-forward" '
                     'style="font-size: 0.56rem; color: var(--text-dim); '
                     'margin-bottom: 0.45rem;">'
-                    f'Rango probable 80%: <strong>{interval_low}–{interval_high}</strong>'
+                    f'Rango probable 90%: <strong>{interval_low}–{interval_high}</strong>'
                     '</div>'
                 )
             rescue_label, rescue_class = category_risk_label(
@@ -2071,7 +2031,6 @@ with tab_forecast:
                     </div>
                     <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.5;" />
                     <div style="font-size: 0.68rem; color: var(--text-muted); line-height: 1.45; text-align: left;">
-                        &#128680; Sobredemanda: <strong>{p['Prob_Alta']*100:.0f}%</strong> <span class="metric-delta {badge_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{badge_text}</span><br/>
                         &#128663; R.Vehicular: <strong>{probability_percent(p.get('Prob_RVehicular_Alto', np.nan))}</strong> <span class="metric-delta {rescue_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{rescue_label}</span><br/>
                         &#128293; Incendio: <strong>{probability_percent(p.get('Prob_Incendio_Alto', np.nan))}</strong> <span class="metric-delta {fire_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{fire_label}</span><br/>
                         &#9928;&#65039; Climáticas: <strong>{probability_percent(p.get('Prob_Climaticas_Alto', np.nan))}</strong> <span class="metric-delta {climate_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{climate_label}</span><br/>
@@ -2102,11 +2061,10 @@ with tab_forecast:
 
         percentile_summary_html = render_percentile_table([
             build_percentile_row("Nivel de actividad (predicciones)", train_predictions, as_probability=False),
-            build_percentile_row("Probabilidad de sobredemanda", historical_alert_probabilities, as_probability=True),
             build_percentile_row("Probabilidad de R.Vehicular", historical_rescue_probabilities, as_probability=True),
             build_percentile_row("Probabilidad de incendio", historical_fire_probabilities, as_probability=True),
             build_percentile_row("Probabilidad de climaticas", historical_climate_probabilities, as_probability=True),
-            build_percentile_row("Probabilidad de sobredemanda 5ta Cía", historical_fifth_probabilities, as_probability=True),
+            build_percentile_row("Probabilidad de alta actividad 5ta Cía", historical_fifth_probabilities, as_probability=True),
         ])
         st.markdown(
             f"""<div class="responsive-grid responsive-grid-4" style="margin-top: 1rem; margin-bottom: 1rem;">
@@ -2114,11 +2072,6 @@ with tab_forecast:
                     <div class="metric-label">Media historica</div>
                     <div class="metric-value">{historical_mean:.2f}</div>
                     <div style="font-size: .68rem; color: var(--text-muted);">llamadas por dia</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-label">Prob. sobredemanda promedio</div>
-                    <div class="metric-value">{historical_alert_probability_mean*100:.1f}%</div>
-                    <div style="font-size: .68rem; color: var(--text-muted);">{probability_source}</div>
                 </div>
             </div>
             <div class="chart-subtitle" style="margin-top: -0.35rem;">
