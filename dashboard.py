@@ -17,6 +17,7 @@ import model_components
 if not hasattr(model_components, "HydroObjectiveEnsembleRegressor"):
     model_components = importlib.reload(model_components)
 
+from activity_levels import operational_activity_level
 from signal_features import (
     CATEGORY_LAG_FEATURES,
     OPEN_METEO_HOURLY_QUERY,
@@ -472,16 +473,6 @@ def secondary_level(probability, p33_threshold=None, p66_threshold=None, p80_thr
 
 def operational_decision(prediction, p33_threshold, p66_threshold, p80_threshold):
     return secondary_level(prediction['Prob_Alta'], p33_threshold, p66_threshold, p80_threshold)
-
-
-def activity_level(predicted_events, p33_threshold, p66_threshold, p80_threshold):
-    if predicted_events < p33_threshold:
-        return "ACTIVIDAD BAJA", "activity-low"
-    if predicted_events < p66_threshold:
-        return "ACTIVIDAD NORMAL", "activity-normal"
-    if predicted_events < p80_threshold:
-        return "ACTIVIDAD ALTA", "activity-high"
-    return "ACTIVIDAD MUY ALTA", "activity-alert"
 
 
 def empirical_activity_score(reference_predictions, predicted_events):
@@ -2004,10 +1995,6 @@ with tab_forecast:
         train_events = df_train['EVENTOS'].astype(float)
         active_count_suffix = active_model_config.get("climatic_augmented")
         prediction_interval_80 = load_prediction_interval_80(active_count_suffix)
-        activity_p33_threshold = float(train_predictions.quantile(0.33))
-        activity_p66_threshold = float(train_predictions.quantile(0.66))
-        activity_p80_threshold = float(train_predictions.quantile(0.80))
-
         forecast_cards = []
         for p in pred_results:
             badge_text, badge_class = operational_decision(
@@ -2016,11 +2003,8 @@ with tab_forecast:
                 historical_alert_probability_p66,
                 historical_alert_probability_p80,
             )
-            activity_text, activity_class = activity_level(
-                p['Prediccion'],
-                activity_p33_threshold,
-                activity_p66_threshold,
-                activity_p80_threshold,
+            activity_text, activity_class = operational_activity_level(
+                p['Prediccion']
             )
             activity_score = empirical_activity_score(
                 train_predictions,
@@ -2111,6 +2095,10 @@ with tab_forecast:
         current_model_name = format_model_name(metadata_aug.get("validation_protocol", "Modelo Climático Aumentado"))
         suffix = model_algorithm_suffix(metadata_aug)
         st.markdown(f"**Modelo oficial:** {current_model_name}{suffix} · NUEVO")
+        st.caption(
+            "Nivel operacional: Baja <4 · Normal 4–<6 · "
+            "Alta 6–<8 · Muy alta ≥8 llamados."
+        )
 
         percentile_summary_html = render_percentile_table([
             build_percentile_row("Nivel de actividad (predicciones)", train_predictions, as_probability=False),

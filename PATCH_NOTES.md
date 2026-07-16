@@ -1,5 +1,12 @@
 # Patch Notes
 
+## 2026-07-16 - Nivel de actividad por conteo operacional
+
+- Cambio: el badge principal deja de usar percentiles internos del modelo y pasa a cortes estables por llamados esperados: `Baja <4`, `Normal 4–<6`, `Alta 6–<8` y `Muy alta ≥8`.
+  Motivo: impedir que una prediccion cercana a 5,7 sea rotulada como muy alta solo por pertenecer al 20% superior de una distribucion comprimida.
+
+- Cambio: `Pulso 1–100` conserva su lectura relativa e independiente. El dashboard muestra una leyenda breve con los cuatro cortes operacionales.
+
 ## 2026-07-16 - Compatibilidad con hot-reload de Streamlit
 
 - Correccion: si el proceso de Streamlit conserva en `sys.modules` una version anterior de `model_components`, el dashboard recarga el modulo antes de deserializar el ensemble. Esto evita `Can't get attribute 'HydroObjectiveEnsembleRegressor'` durante un despliegue sin reinicio completo del worker.
