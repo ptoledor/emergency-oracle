@@ -165,7 +165,6 @@ def build_prediction_frame(frame: pd.DataFrame) -> pd.DataFrame:
                 seasonal_means[weeks] = prediction
                 row[f"count_weekday_mean_{weeks}w"] = prediction
 
-            # Horizon-specific seasonal naive observations are always known for H1-H6.
             for weeks_back in (1, 2, 3, 4):
                 seasonal_index = target - 7 * weeks_back
                 row[f"count_seasonal_lag_{weeks_back}w"] = (
@@ -190,7 +189,6 @@ def build_prediction_frame(frame: pd.DataFrame) -> pd.DataFrame:
                     weight * rolling_means[28] + (1.0 - weight) * seasonal_4w
                 )
 
-            # A conservative weekday adjustment around the long-run local level.
             long_level = rolling_means[56]
             for weeks in (8, 12, 16, 26):
                 weekday_effect = seasonal_means[weeks] - long_level
@@ -299,12 +297,12 @@ def main() -> int:
     count_columns = [
         column
         for column in predictions.columns
-        if column.startswith("count_") and column not in {"count_mean_28d"}
+        if column.startswith("count_") and column != "count_mean_28d"
     ]
     risk_columns = [
         column
         for column in predictions.columns
-        if column.startswith("risk_") and column not in {"risk_rate_90d"}
+        if column.startswith("risk_") and column != "risk_rate_90d"
     ]
     count_candidate, count_leaderboard = select_candidate(
         development,
@@ -394,11 +392,12 @@ def main() -> int:
         OUTPUT_DIR / "temporal_candidate_search_horizon_metrics.csv",
         index=False,
     )
-    pd.concat([
-        count_leaderboard.assign(objective="count_mae"),
-        risk_leaderboard.assign(objective="risk_brier"),
-    ], ignore_index=True).to_csv(
-        OUTPUT_DIR / "temporal_candidate_search_leaderboard.csv",
+    count_leaderboard.to_csv(
+        OUTPUT_DIR / "temporal_candidate_search_count_leaderboard.csv",
+        index=False,
+    )
+    risk_leaderboard.to_csv(
+        OUTPUT_DIR / "temporal_candidate_search_risk_leaderboard.csv",
         index=False,
     )
     selected_holdout.to_csv(
