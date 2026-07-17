@@ -927,53 +927,6 @@ def predict_category_composition(feature_frame, total_prediction):
     }
 
 
-def render_category_composition_table(predictions):
-    available = [
-        prediction for prediction in predictions
-        if prediction.get("Category_Composition")
-    ]
-    if not available:
-        return ""
-    group_order = category_composition_artifact.get("group_order", [])
-    headers = ["Día", "Base", "Pronóstico"] + [
-        category_composition_artifact["groups"][group]["label"]
-        for group in group_order
-    ]
-    header_html = "".join(f"<th>{header}</th>" for header in headers)
-    rows = []
-    for prediction in available:
-        composition = prediction["Category_Composition"]
-        cells = [
-            f"<td><strong>{prediction['Dia']}</strong><br>"
-            f"<span style='color: var(--text-muted);'>{prediction['Fecha'].strftime('%d-%b')}</span></td>",
-            f"<td>{composition['baseline_total']:.1f}</td>",
-            f"<td><strong>{composition['forecast_total']:.1f}</strong><br>"
-            f"<span style='color: var(--text-muted);'>Δ {composition['delta_total']:+.1f}</span></td>",
-        ]
-        for group_name in group_order:
-            details = composition["groups"][group_name]
-            increase_share = (
-                f" · {details['share_positive_delta'] * 100:.0f}% del alza"
-                if details["share_positive_delta"] > 0
-                else ""
-            )
-            delta_color = "#f59e0b" if details["delta"] > 0.05 else "var(--text-muted)"
-            cells.append(
-                f"<td><strong>{details['count']:.1f} · "
-                f"{details['share_total'] * 100:.0f}%</strong><br>"
-                f"<span style='color: {delta_color};'>base {details['baseline']:.1f} · "
-                f"Δ {details['delta']:+.1f}{increase_share}</span></td>"
-            )
-        rows.append(f"<tr>{''.join(cells)}</tr>")
-    return (
-        '<div style="overflow-x: auto;">'
-        '<table class="percentile-table">'
-        f"<thead><tr>{header_html}</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody>"
-        "</table></div>"
-    )
-
-
 PERCENTILE_COLUMNS = [0, 10, 20, 30, 33, 40, 50, 60, 66, 70, 80, 90, 100]
 
 
@@ -2169,22 +2122,6 @@ with tab_forecast:
             </div>""",
             unsafe_allow_html=True,
         )
-        composition_html = render_category_composition_table(pred_results)
-        if composition_html:
-            st.markdown(
-                '<div class="chart-title" style="margin-top: 1rem;">'
-                'Composición esperada y base habitual</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                '<div class="chart-subtitle">Cada categoría muestra llamados '
-                'esperados · porcentaje del total, su base habitual y la '
-                'variación. “% del alza” reparte solamente los incrementos '
-                'positivos. El porcentaje es la probabilidad estimada de que '
-                'un llamado sea de ese tipo.</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown(composition_html, unsafe_allow_html=True)
         current_model_name = format_model_name(metadata_aug.get("validation_protocol", "Modelo Climático Aumentado"))
         suffix = model_algorithm_suffix(metadata_aug)
         st.markdown(f"**Modelo oficial:** {current_model_name}{suffix} · NUEVO")
