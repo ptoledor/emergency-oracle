@@ -2,7 +2,7 @@
 
 ## 2026-07-17 - Rediseño móvil de Forecast
 
-- Navegación: las pestañas quedan ordenadas como `Forecast`, `Estacional Histórico`, `Histórico vs Predicción` y `Estadísticas de Modelo`.
+- Navegación: las pestañas quedan ordenadas como `Forecast`, `Estacional Histórico`, `Histórico Diario` y `Estadísticas de Modelo`.
 
 - Cambio: en teléfonos, las cuatro pestañas forman una grilla 2×2 con texto ajustable y dejan de quedar cortadas horizontalmente.
 

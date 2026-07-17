@@ -2043,7 +2043,7 @@ def render_distribution_charts():
 tab_forecast, tab_seasonal, tab_history, tab_stats = st.tabs([
     "🔮 Forecast",
     "📊 Estacional Histórico",
-    "📈 Histórico vs Predicción",
+    "📈 Histórico Diario",
     "⚡ Estadísticas de Modelo",
 ])
 
