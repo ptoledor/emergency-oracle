@@ -2068,6 +2068,23 @@ with tab_forecast:
             climate_label, climate_class = category_risk_label(
                 p.get('Prob_Climaticas_Alto', np.nan)
             )
+            risk_status_by_group = {
+                "incendios": (
+                    fire_label,
+                    fire_class,
+                    p.get('Prob_Incendio_Alto', np.nan),
+                ),
+                "rescates": (
+                    rescue_label,
+                    rescue_class,
+                    p.get('Prob_Rescate_Alto', np.nan),
+                ),
+                "climaticas": (
+                    climate_label,
+                    climate_class,
+                    p.get('Prob_Climaticas_Alto', np.nan),
+                ),
+            }
             category_mix_html = ""
             composition = p.get('Category_Composition')
             if composition:
@@ -2082,22 +2099,32 @@ with tab_forecast:
                     group = composition["groups"].get(group_name)
                     if not group:
                         continue
-                    change_label, change_class = category_change_level(
-                        group["count"], group["baseline"]
-                    )
+                    if group_name in risk_status_by_group:
+                        change_label, change_class, risk_probability = (
+                            risk_status_by_group[group_name]
+                        )
+                        status_detail = (
+                            f"prob. actividad alta "
+                            f"{probability_percent(risk_probability)}"
+                        )
+                    else:
+                        change_label, change_class = category_change_level(
+                            group["count"], group["baseline"]
+                        )
+                        status_detail = f"base habitual {group['baseline']:.1f}"
                     icon, short_label = mix_labels[group_name]
                     mix_rows.append(
                         '<div style="min-width: 0; text-align: center;">'
                         f'<div style="font-size: 0.52rem; color: var(--text-muted); '
                         f'white-space: nowrap;">{icon} {short_label}</div>'
                         f'<div class="metric-delta {change_class}" '
-                        f'title="{group["label"]}: {change_label} frente a base '
-                        f'{group["baseline"]:.1f}" style="margin: 0.12rem 0 0; '
+                        f'title="{group["label"]}: {change_label} · '
+                        f'{status_detail}" style="margin: 0.12rem 0 0; '
                         f'font-size: 0.64rem; padding: 2px 3px; display: block;">'
                         f'{group["count"]:.1f}</div></div>'
                     )
                 category_mix_html = (
-                    '<div title="Llamados esperados por tipo; el color compara con su base habitual" '
+                    '<div title="Llamados esperados por tipo; el color sigue la probabilidad calibrada" '
                     'style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); '
                     'gap: 0.18rem; width: 100%; margin: 0.1rem 0 0.65rem;">'
                     + ''.join(mix_rows) + '</div>'

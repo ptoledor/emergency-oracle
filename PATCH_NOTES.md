@@ -6,7 +6,7 @@
 
 - Cambio: Incendios, Rescates, Climáticas y Otros se muestran en una fila horizontal inmediatamente debajo del nivel de actividad, únicamente como llamados esperados por tipo.
 
-- Semáforo frente a la base habitual: azul `Disminuida`, verde `Normal`, naranjo `Aumentada` y rojo `Muy aumentada`. Los cortes combinan una variación mínima de 0,25 llamados con cambio relativo para evitar alertas por diferencias diminutas en categorías de baja frecuencia.
+- Semáforo de Incendios, Rescates y Climáticas: el color del conteo sigue su probabilidad calibrada de actividad alta (`Baja <5%`, `Normal 5–<15%`, `Alta 15–<30%`, `Muy Alta ≥30%`). Por lo tanto, un rescate con 10% queda verde/Normal. `Otros`, que no tiene clasificador probabilístico propio, conserva la comparación contra su base habitual.
 
 ## 2026-07-16 - Composición esperada con base habitual
 
