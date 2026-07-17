@@ -11,6 +11,8 @@
 
 - Cambio: el rango probable 90% gana contraste, tamano y un fondo sutil para facilitar su lectura en las tarjetas.
 
+- Cambio: se elimina la pestaña final `Comparacion de Modelos`; los tres artefactos de respaldo permanecen intactos.
+
 ## 2026-07-16 - Compatibilidad con hot-reload de Streamlit
 
 - Correccion: si el proceso de Streamlit conserva en `sys.modules` una version anterior de `model_components`, el dashboard recarga el modulo antes de deserializar el ensemble. Esto evita `Can't get attribute 'HydroObjectiveEnsembleRegressor'` durante un despliegue sin reinicio completo del worker.

@@ -1860,12 +1860,11 @@ def render_distribution_charts():
 
 
 # 12. Pestañas de navegación
-tab_forecast, tab_stats, tab_history, tab_seasonal, tab_compare = st.tabs([
+tab_forecast, tab_stats, tab_history, tab_seasonal = st.tabs([
     "🔮 Forecast",
     "⚡ Estadísticas de Modelo",
     "📈 Histórico Real vs Predicción",
     "📊 Curvas de Estacionalidad (365 días)",
-    "🔬 Comparación de Modelos",
 ])
 
 with tab_forecast:
@@ -2555,74 +2554,3 @@ with tab_seasonal:
     * **Invierno (Días 150-250):** Hay un incremento moderado atribuido a sistemas frontales lluviosos y heladas que provocan voladuras de techos, inundaciones y emanaciones de gases (calefacción).
     * Las líneas horizontales muestran la **media histórica global** y los niveles de **±1 desviación estándar**.
     """)
-
-
-with tab_compare:
-    st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="chart-title">Comparación de Modelos de Interés</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="chart-subtitle">Modelo XGBoost anterior frente al ensemble hidrometeorológico oficial.</div>',
-        unsafe_allow_html=True,
-    )
-
-    previous_metadata = None
-    previous_importance = None
-    try:
-        with open(models_dir / "metadata_signal_xgb_d3_flexible.pkl", "rb") as f:
-            previous_metadata = pickle.load(f)
-        if "feature_importances" in previous_metadata:
-            previous_importance = pd.DataFrame({
-                'Feature': list(previous_metadata['feature_importances'].keys()),
-                'Importance': list(previous_metadata['feature_importances'].values())
-            }).sort_values(by='Importance', ascending=True)
-    except Exception as e:
-        if (models_dir / "metadata_signal_xgb_d3_flexible.pkl").exists():
-            st.warning(f"No se pudo cargar el modelo XGBoost anterior: {e}")
-
-    current_metadata = metadata_aug
-    current_importance = df_imp_aug
-    hydro_is_active = (
-        active_model_config.get("climatic_augmented") == "signal_hydro_ensemble_v2"
-    )
-    previous_name = (
-        f"{format_model_name((previous_metadata or {}).get('validation_protocol', 'Modelo anterior'))}"
-        f"{model_algorithm_suffix(previous_metadata)}"
-        f" · {'ANTERIOR' if hydro_is_active else 'OFICIAL'}"
-    )
-    current_name = (
-        f"{format_model_name((current_metadata or {}).get('validation_protocol', 'Hydro ensemble'))}"
-        f"{model_algorithm_suffix(current_metadata)}"
-        f" · {'OFICIAL' if hydro_is_active else 'CANDIDATO'}"
-    )
-
-    col_previous, col_current = st.columns(2)
-    with col_previous:
-        if previous_metadata is not None:
-            render_model_metrics(previous_metadata, previous_name, "#2563eb")
-        else:
-            st.info("Metadata del modelo XGBoost anterior no disponible.")
-    with col_current:
-        render_model_metrics(current_metadata, current_name, "#f59e0b")
-
-    col_imp_previous, col_imp_current = st.columns(2)
-    with col_imp_previous:
-        if previous_importance is not None and not previous_importance.empty:
-            render_importance_chart(
-                previous_importance,
-                f"Importancia · {previous_name}",
-                "#2563eb",
-                key="importance_previous_signal_xgb",
-            )
-        else:
-            st.info("Importancias del modelo anterior no disponibles.")
-    with col_imp_current:
-        if current_importance is not None and not current_importance.empty:
-            render_importance_chart(
-                current_importance,
-                f"Importancia · {current_name}",
-                "#f59e0b",
-                key="importance_current_hydro_ensemble",
-            )
-        else:
-            st.info("Importancias del ensemble no disponibles.")
-
