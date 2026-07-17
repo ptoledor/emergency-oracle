@@ -8,6 +8,8 @@
 
 - Cambio: las seis variables meteorológicas se organizan en dos columnas para reducir la altura de cada tarjeta. Verificado a 390×844 sin desbordamiento horizontal.
 
+- Refinamiento visual: las píldoras por emergencia quedan neutras y el semáforo se concentra únicamente en la flecha. `Otro` usa ahora el icono visible `❓`.
+
 ## 2026-07-16 - Tarjetas operacionales por tipo de emergencia
 
 - Cambio: se elimina completamente `Rango probable 90%` de las tarjetas diarias.

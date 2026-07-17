@@ -359,11 +359,22 @@ css = f"""
         white-space: nowrap;
         width: 100%;
         box-sizing: border-box;
-        border: 1px solid currentColor;
+        border: 1px solid var(--border);
+        background: var(--bg-subtle);
+        color: var(--text);
     }}
     .event-level-label {{ font-size: 0.47rem; font-weight: 700; }}
     .event-level-value {{ font-size: 0.65rem; }}
-    .event-level-arrow {{ font-size: 0.7rem; font-weight: 900; }}
+    .event-level-arrow {{
+        font-size: 0.7rem;
+        font-weight: 900;
+        margin: 0 0 0 0.12rem;
+        padding: 0 0.28rem;
+        min-width: 1rem;
+        justify-content: center;
+        border-radius: 4px;
+        vertical-align: middle;
+    }}
     .weather-grid {{
         display: grid;
         grid-template-columns: 1fr;
@@ -2133,7 +2144,7 @@ with tab_forecast:
                     "incendios": ("&#128293;", "Incendio"),
                     "rescates": ("&#128663;", "Rescate"),
                     "climaticas": ("&#9928;&#65039;", "Climático"),
-                    "otros": ("?", "Otro"),
+                    "otros": ("&#10067;", "Otro"),
                 }
                 status_arrows = {
                     "activity-low": "↓",
@@ -2185,14 +2196,14 @@ with tab_forecast:
                     status_arrow = status_arrows[change_class]
                     mix_rows.append(
                         '<div class="event-level-cell">'
-                        f'<div class="metric-delta event-level-pill {change_class}" '
+                        f'<div class="event-level-pill" '
                         f'title="{group["label"]}: {change_label} · '
                         f'{status_detail}">'
                         f'<span class="event-level-label">'
                         f'{icon} {event_label}</span>'
                         f'<span class="event-level-value">'
                         f'<strong>{group["count"]:.1f}</strong> '
-                        f'<span class="event-level-arrow">'
+                        f'<span class="metric-delta event-level-arrow {change_class}">'
                         f'{status_arrow}</span></span></div></div>'
                     )
                 category_mix_html = (
