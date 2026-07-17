@@ -12,7 +12,7 @@
 
 - Cambio: se elimina el cuadro inferior `Composición esperada y base habitual`; la composición permanece únicamente en las píldoras compactas de cada tarjeta.
 
-- Semáforo de Incendios, Rescates y Climáticas: el color del conteo sigue su probabilidad calibrada de actividad alta (`Baja <5%`, `Normal 5–<15%`, `Alta 15–<30%`, `Muy Alta ≥30%`). Por lo tanto, un rescate con 10% queda verde/Normal. `Otros`, que no tiene clasificador probabilístico propio, conserva la comparación contra su base habitual.
+- Semáforo coherente de Incendios, Rescates y Climáticas: combina la probabilidad calibrada de actividad alta con el cambio del conteo frente a su base y utiliza el nivel más conservador. Así, Rescate con 10% permanece verde/Normal y un Climático de 0,1 no puede quedar rojo si su conteo no está también muy aumentado. `Otros`, sin clasificador probabilístico propio, conserva la comparación contra su base habitual.
 
 ## 2026-07-16 - Composición esperada con base habitual
 

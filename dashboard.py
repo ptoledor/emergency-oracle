@@ -2053,23 +2053,45 @@ with tab_forecast:
                     "activity-high": "↑",
                     "activity-alert": "↑↑",
                 }
+                severity_order = {
+                    "activity-low": 0,
+                    "activity-normal": 1,
+                    "activity-high": 2,
+                    "activity-alert": 3,
+                }
+                severity_levels = [
+                    ("Baja", "activity-low"),
+                    ("Normal", "activity-normal"),
+                    ("Alta", "activity-high"),
+                    ("Muy Alta", "activity-alert"),
+                ]
                 mix_rows = []
                 for group_name in ["incendios", "rescates", "climaticas", "otros"]:
                     group = composition["groups"].get(group_name)
                     if not group:
                         continue
+                    count_label, count_class = category_change_level(
+                        group["count"], group["baseline"]
+                    )
                     if group_name in risk_status_by_group:
-                        change_label, change_class, risk_probability = (
+                        risk_label, risk_class, risk_probability = (
                             risk_status_by_group[group_name]
                         )
+                        combined_severity = min(
+                            severity_order[risk_class],
+                            severity_order[count_class],
+                        )
+                        change_label, change_class = severity_levels[
+                            combined_severity
+                        ]
                         status_detail = (
                             f"prob. actividad alta "
-                            f"{probability_percent(risk_probability)}"
+                            f"{probability_percent(risk_probability)} · "
+                            f"conteo {count_label.lower()} vs base "
+                            f"{group['baseline']:.1f}"
                         )
                     else:
-                        change_label, change_class = category_change_level(
-                            group["count"], group["baseline"]
-                        )
+                        change_label, change_class = count_label, count_class
                         status_detail = f"base habitual {group['baseline']:.1f}"
                     icon, event_label = mix_labels[group_name]
                     status_arrow = status_arrows[change_class]
@@ -2088,7 +2110,7 @@ with tab_forecast:
                         f'{status_arrow}</span></span></div></div>'
                     )
                 category_mix_html = (
-                    '<div title="Llamados esperados por tipo; el color sigue la probabilidad calibrada" '
+                    '<div title="Llamados esperados por tipo; el color exige coherencia entre probabilidad y conteo" '
                     'style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); '
                     'gap: 0.18rem; width: 100%; margin: 0.1rem 0 0.65rem;">'
                     + ''.join(mix_rows) + '</div>'
