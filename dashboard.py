@@ -332,6 +332,48 @@ css = f"""
     .responsive-grid-6 {{
         grid-template-columns: repeat(6, minmax(0, 1fr));
     }}
+    .forecast-card {{
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0.8rem;
+        text-align: center;
+        min-width: 0;
+    }}
+    .event-level-grid {{
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.18rem;
+        width: 100%;
+        margin: 0.1rem 0 0.65rem;
+    }}
+    .event-level-cell {{ min-width: 0; text-align: center; }}
+    .event-level-pill {{
+        margin: 0;
+        padding: 3px 2px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0;
+        white-space: nowrap;
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid currentColor;
+    }}
+    .event-level-label {{ font-size: 0.47rem; font-weight: 700; }}
+    .event-level-value {{ font-size: 0.65rem; }}
+    .event-level-arrow {{ font-size: 0.7rem; font-weight: 900; }}
+    .weather-grid {{
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.08rem;
+        font-size: 0.68rem;
+        color: var(--text-muted);
+        line-height: 1.4;
+        text-align: left;
+    }}
+    .weather-item {{ min-width: 0; white-space: nowrap; }}
 
     @media (max-width: 768px) {{
         .block-container {{
@@ -360,18 +402,27 @@ css = f"""
             overflow-x: auto !important;
             scrollbar-width: thin;
             margin-bottom: 0.9rem !important;
+            scroll-snap-type: x proximity;
         }}
         button[data-baseweb="tab"] {{
             flex: 0 0 auto !important;
             white-space: nowrap !important;
-            font-size: 0.74rem !important;
-            padding: 0.48rem 0.7rem !important;
+            font-size: 0.68rem !important;
+            padding: 0.44rem 0.55rem !important;
+            scroll-snap-align: start;
         }}
 
         .responsive-grid-6,
         .responsive-grid-4 {{
             grid-template-columns: repeat(2, minmax(0, 1fr));
         }}
+        .event-level-grid {{
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.32rem;
+        }}
+        .event-level-pill {{ min-height: 37px; }}
+        .event-level-label {{ font-size: 0.55rem; }}
+        .event-level-value {{ font-size: 0.72rem; }}
 
         div[data-testid="stVerticalBlock"]:has(.chart-anchor):not(:has(div[data-testid="stVerticalBlock"])),
         div[data-testid="stVerticalBlock"]:has(.prediction-anchor):not(:has(div[data-testid="stVerticalBlock"])),
@@ -403,8 +454,45 @@ css = f"""
     }}
 
     @media (max-width: 420px) {{
+        [data-baseweb="tab-list"] {{
+            flex-wrap: wrap !important;
+            overflow-x: visible !important;
+            gap: 0.35rem !important;
+            scrollbar-width: none;
+        }}
+        button[data-baseweb="tab"] {{
+            flex: 1 1 calc(50% - 0.2rem) !important;
+            justify-content: center !important;
+            min-width: 0 !important;
+            padding: 0.48rem 0.35rem !important;
+            white-space: normal !important;
+            text-align: center !important;
+            line-height: 1.2 !important;
+            min-height: 42px !important;
+            font-size: 0.6rem !important;
+        }}
         .responsive-grid-6 {{
             grid-template-columns: 1fr;
+        }}
+        .forecast-card {{
+            padding: 0.9rem;
+            border-radius: 12px;
+        }}
+        .event-level-grid {{
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.4rem;
+            margin-bottom: 0.8rem;
+        }}
+        .event-level-pill {{
+            min-height: 42px;
+            border-radius: 8px;
+        }}
+        .event-level-label {{ font-size: 0.62rem; }}
+        .event-level-value {{ font-size: 0.78rem; }}
+        .weather-grid {{
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.28rem 0.6rem;
+            font-size: 0.66rem;
         }}
         .metric-card {{
             min-height: 84px;
@@ -2096,27 +2184,24 @@ with tab_forecast:
                     icon, event_label = mix_labels[group_name]
                     status_arrow = status_arrows[change_class]
                     mix_rows.append(
-                        '<div style="min-width: 0; text-align: center;">'
-                        f'<div class="metric-delta {change_class}" '
+                        '<div class="event-level-cell">'
+                        f'<div class="metric-delta event-level-pill {change_class}" '
                         f'title="{group["label"]}: {change_label} · '
-                        f'{status_detail}" style="margin: 0; padding: 3px 2px; '
-                        f'display: flex; flex-direction: column; align-items: center; '
-                        f'justify-content: center; gap: 0; white-space: nowrap;">'
-                        f'<span style="font-size: 0.47rem; font-weight: 700;">'
+                        f'{status_detail}">'
+                        f'<span class="event-level-label">'
                         f'{icon} {event_label}</span>'
-                        f'<span style="font-size: 0.65rem;">'
+                        f'<span class="event-level-value">'
                         f'<strong>{group["count"]:.1f}</strong> '
-                        f'<span style="font-size: 0.7rem; font-weight: 900;">'
+                        f'<span class="event-level-arrow">'
                         f'{status_arrow}</span></span></div></div>'
                     )
                 category_mix_html = (
-                    '<div title="Llamados esperados por tipo; el color exige coherencia entre probabilidad y conteo" '
-                    'style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); '
-                    'gap: 0.18rem; width: 100%; margin: 0.1rem 0 0.65rem;">'
+                    '<div class="event-level-grid" '
+                    'title="Llamados esperados por tipo; el color exige coherencia entre probabilidad y conteo">'
                     + ''.join(mix_rows) + '</div>'
                 )
             forecast_cards.append(
-                f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
+                f"""<div class="forecast-card">
                     <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Dia']}</div>
                     <div style="font-size: 0.8rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem;">{p['Fecha'].strftime('%d-%b')}</div>
                     <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Prediccion']:.1f}</div>
@@ -2126,13 +2211,13 @@ with tab_forecast:
                     </div>
                     {category_mix_html}
                     <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.5;" />
-                    <div style="font-size: 0.68rem; color: var(--text-muted); line-height: 1.45; text-align: left;">
-                        &#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong><br/>
-                        &#127777;&#65039; Media: <strong>{p['Temp_Media']:.1f}&deg;C</strong><br/>
-                        &#128167; Humedad: <strong>{p['Hum_Media']:.0f}%</strong><br/>
-                        &#128168; Viento medio: <strong>{p['Viento_Medio']:.1f} km/h</strong><br/>
-                        &#128168; Ráfaga media: <strong>{p['Rafaga_Media']:.1f} km/h</strong><br/>
-                        &#127783;&#65039; Lluvia: <strong>{p['Lluvia']:.1f} mm</strong>
+                    <div class="weather-grid">
+                        <div class="weather-item">&#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong></div>
+                        <div class="weather-item">&#127777;&#65039; Media: <strong>{p['Temp_Media']:.1f}&deg;C</strong></div>
+                        <div class="weather-item">&#128167; Humedad: <strong>{p['Hum_Media']:.0f}%</strong></div>
+                        <div class="weather-item">&#128168; Viento: <strong>{p['Viento_Medio']:.1f} km/h</strong></div>
+                        <div class="weather-item">&#128168; Ráfaga media: <strong>{p['Rafaga_Media']:.1f} km/h</strong></div>
+                        <div class="weather-item">&#127783;&#65039; Lluvia: <strong>{p['Lluvia']:.1f} mm</strong></div>
                     </div>
                 </div>"""
             )

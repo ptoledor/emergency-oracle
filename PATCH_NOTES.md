@@ -1,5 +1,13 @@
 # Patch Notes
 
+## 2026-07-17 - Rediseño móvil de Forecast
+
+- Cambio: en teléfonos, las cuatro pestañas forman una grilla 2×2 con texto ajustable y dejan de quedar cortadas horizontalmente.
+
+- Cambio: los niveles por emergencia pasan a una grilla 2×2 dentro de cada tarjeta móvil, con píldoras más grandes, borde semaforizado y glosas legibles.
+
+- Cambio: las seis variables meteorológicas se organizan en dos columnas para reducir la altura de cada tarjeta. Verificado a 390×844 sin desbordamiento horizontal.
+
 ## 2026-07-16 - Tarjetas operacionales por tipo de emergencia
 
 - Cambio: se elimina completamente `Rango probable 90%` de las tarjetas diarias.
