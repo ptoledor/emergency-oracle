@@ -1,5 +1,15 @@
 # Patch Notes
 
+## 2026-07-16 - Composición esperada con base habitual
+
+- Cambio: se añade, sin reemplazar las probabilidades actuales, una tabla diaria con la composición esperada de llamados para incendios, rescates, emergencias climáticas y otros.
+
+- Interpretación: cada grupo muestra su base habitual, el conteo esperado reconciliado con el pronóstico oficial, su porcentaje del total y la variación respecto de la base. Cuando el total aumenta, `% del alza` indica qué grupos explican los incrementos positivos.
+
+- Selección: cada grupo se validó temporalmente contra una regresión Poisson estacional regularizada. Solo incendios y climáticas incorporan señal meteorológica adicional porque mejoraron fuera de muestra; rescates y otros conservan la base para evitar sobreajuste.
+
+- Validación temporal final: MAE de incendios baja de 1,0624 a 1,0367 y el de climáticas de 0,2972 a 0,1858. Rescates y otros mantienen sus baselines, con MAE de 1,3160 y 1,1506.
+
 ## 2026-07-16 - Nivel de actividad por conteo operacional
 
 - Cambio: el badge principal deja de usar percentiles internos del modelo y pasa a cortes estables por llamados esperados: `Baja <4`, `Normal 4–<6`, `Alta 6–<8` y `Muy alta ≥8`.
@@ -20,6 +30,8 @@
 - Validacion en el 20% temporal final: Brier baja de 0,1613 a 0,1004 en rescate, de 0,1519 a 0,1107 en incendio y de 0,0287 a 0,0279 en climaticas; el ROC-AUC permanece en 0,596, 0,645 y 0,888 respectivamente.
 
 - Cambio: la tabla de percentiles y los badges usan ahora la misma distribucion OOF calibrada. Se elimina la mezcla anterior entre probabilidades in-sample y umbrales OOF.
+
+- Cambio: los badges categóricos dejan de traducir percentiles relativos como severidad absoluta. Usan cortes operacionales sobre la probabilidad calibrada: Baja <5%, Normal 5-<15%, Alta 15-<30% y Muy Alta >=30%.
 
 ## 2026-07-16 - Compatibilidad con hot-reload de Streamlit
 

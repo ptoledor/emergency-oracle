@@ -454,23 +454,13 @@ def model_algorithm_suffix(metadata):
     return ""
 
 
-def secondary_level(probability, p33_threshold=None, p66_threshold=None, p80_threshold=None):
-    thresholds = (p33_threshold, p66_threshold, p80_threshold)
-    if all(value is not None and np.isfinite(value) for value in thresholds):
-        p33, p66, p80 = (float(value) for value in thresholds)
-        if p33 <= p66 <= p80 and p80 > 0:
-            if probability > p80:
-                return "Muy Alta", "activity-alert"
-            if probability > p66:
-                return "Alta", "activity-high"
-            if probability > p33:
-                return "Normal", "activity-normal"
-            return "Baja", "activity-low"
-    if probability > 0.60:
+def category_risk_level(probability):
+    """Absolute, operational labels for calibrated category probabilities."""
+    if probability >= 0.30:
         return "Muy Alta", "activity-alert"
-    if probability > 0.40:
+    if probability >= 0.15:
         return "Alta", "activity-high"
-    if probability > 0.20:
+    if probability >= 0.05:
         return "Normal", "activity-normal"
     return "Baja", "activity-low"
 
@@ -805,6 +795,28 @@ category_risk_artifact = load_category_risk_artifact(
 
 
 @st.cache_resource
+def load_category_composition_artifact(model_mtime=None):
+    path = models_dir / "category_composition_models.pkl"
+    if not path.exists():
+        return None
+    with path.open("rb") as stream:
+        artifact = pickle.load(stream)
+    for details in artifact.get("groups", {}).values():
+        details["baseline_model"] = force_single_thread_model(
+            details["baseline_model"]
+        )
+        details["expected_model"] = force_single_thread_model(
+            details["expected_model"]
+        )
+    return artifact
+
+
+category_composition_artifact = load_category_composition_artifact(
+    model_mtimes.get("category_composition_models.pkl")
+)
+
+
+@st.cache_resource
 def load_fifth_company_artifact():
     path = models_dir / "fifth_company_models.pkl"
     if not path.exists():
@@ -833,10 +845,10 @@ if df is not None and fifth_company_artifact:
         df["PROB_5TA_CIA_ALTA"] = np.nan
 
 
-def category_risk_label(probability, p33_threshold, p66_threshold, p80_threshold):
+def category_risk_label(probability):
     if probability is None or np.isnan(probability):
         return "Sin modelo", "activity-low"
-    return secondary_level(probability, p33_threshold, p66_threshold, p80_threshold)
+    return category_risk_level(float(probability))
 
 
 def probability_percent(probability):
@@ -867,6 +879,116 @@ def risk_probability_series(primary_key, legacy_key=None):
             else pd.Series(dtype=float)
         )
     return pd.to_numeric(source, errors="coerce").dropna()
+
+
+def predict_category_composition(feature_frame, total_prediction):
+    if not category_composition_artifact:
+        return None
+    baseline_values = {}
+    expected_values = {}
+    for group_name in category_composition_artifact.get("group_order", []):
+        details = category_composition_artifact["groups"][group_name]
+        baseline_features = details["baseline_feature_cols"]
+        expected_features = details["expected_feature_cols"]
+        baseline_values[group_name] = float(np.clip(
+            details["baseline_model"].predict(
+                feature_frame[baseline_features]
+            )[0],
+            0,
+            None,
+        ))
+        expected_values[group_name] = float(np.clip(
+            details["expected_model"].predict(
+                feature_frame[expected_features]
+            )[0],
+            0,
+            None,
+        ))
+
+    baseline_total = float(sum(baseline_values.values()))
+    expected_total = float(sum(expected_values.values()))
+    official_total = max(float(total_prediction), 0.0)
+    if expected_total <= 1e-9:
+        expected_values = dict(baseline_values)
+        expected_total = max(baseline_total, 1e-9)
+    scale = official_total / expected_total
+    reconciled = {
+        group_name: value * scale
+        for group_name, value in expected_values.items()
+    }
+    deltas = {
+        group_name: reconciled[group_name] - baseline_values[group_name]
+        for group_name in reconciled
+    }
+    positive_delta_total = float(sum(max(value, 0.0) for value in deltas.values()))
+    groups = {}
+    for group_name in category_composition_artifact.get("group_order", []):
+        count = reconciled[group_name]
+        groups[group_name] = {
+            "label": category_composition_artifact["groups"][group_name]["label"],
+            "count": count,
+            "share_total": count / official_total if official_total > 1e-9 else 0.0,
+            "baseline": baseline_values[group_name],
+            "delta": deltas[group_name],
+            "share_positive_delta": (
+                max(deltas[group_name], 0.0) / positive_delta_total
+                if positive_delta_total > 1e-9 and official_total > baseline_total
+                else 0.0
+            ),
+        }
+    return {
+        "baseline_total": baseline_total,
+        "forecast_total": official_total,
+        "delta_total": official_total - baseline_total,
+        "groups": groups,
+    }
+
+
+def render_category_composition_table(predictions):
+    available = [
+        prediction for prediction in predictions
+        if prediction.get("Category_Composition")
+    ]
+    if not available:
+        return ""
+    group_order = category_composition_artifact.get("group_order", [])
+    headers = ["Día", "Base", "Pronóstico"] + [
+        category_composition_artifact["groups"][group]["label"]
+        for group in group_order
+    ]
+    header_html = "".join(f"<th>{header}</th>" for header in headers)
+    rows = []
+    for prediction in available:
+        composition = prediction["Category_Composition"]
+        cells = [
+            f"<td><strong>{prediction['Dia']}</strong><br>"
+            f"<span style='color: var(--text-muted);'>{prediction['Fecha'].strftime('%d-%b')}</span></td>",
+            f"<td>{composition['baseline_total']:.1f}</td>",
+            f"<td><strong>{composition['forecast_total']:.1f}</strong><br>"
+            f"<span style='color: var(--text-muted);'>Δ {composition['delta_total']:+.1f}</span></td>",
+        ]
+        for group_name in group_order:
+            details = composition["groups"][group_name]
+            increase_share = (
+                f" · {details['share_positive_delta'] * 100:.0f}% del alza"
+                if details["share_positive_delta"] > 0
+                else ""
+            )
+            delta_color = "#f59e0b" if details["delta"] > 0.05 else "var(--text-muted)"
+            cells.append(
+                f"<td><strong>{details['count']:.1f} · "
+                f"{details['share_total'] * 100:.0f}%</strong><br>"
+                f"<span style='color: {delta_color};'>base {details['baseline']:.1f} · "
+                f"Δ {details['delta']:+.1f}{increase_share}</span></td>"
+            )
+        rows.append(f"<tr>{''.join(cells)}</tr>")
+    return (
+        '<div style="overflow-x: auto;">'
+        '<table class="percentile-table">'
+        f"<thead><tr>{header_html}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table></div>"
+    )
 
 
 PERCENTILE_COLUMNS = [0, 10, 20, 30, 33, 40, 50, 60, 66, 70, 80, 90, 100]
@@ -1260,6 +1382,12 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
                 group_model = force_single_thread_model(details["model"])
                 category_risk_probs[group_name] = float(group_model.predict_proba(group_X)[0, 1])
 
+        category_composition = None
+        try:
+            category_composition = predict_category_composition(X_all, pred_count)
+        except Exception as exc:
+            print(f"No se pudo calcular la composicion por categoria: {exc}")
+
         fifth_company_count = np.nan
         fifth_company_probability = np.nan
         if fifth_company_artifact:
@@ -1297,6 +1425,7 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             ),
             'Prob_Incendio_Alto': category_risk_probs.get("incendio", np.nan),
             'Prob_Climaticas_Alto': category_risk_probs.get("climaticas", np.nan),
+            'Category_Composition': category_composition,
             'Pred_5ta_Cia': fifth_company_count,
             'Prob_5ta_Cia_Alta': fifth_company_probability,
             'Temp_Max': temp_max,
@@ -1939,20 +2068,6 @@ with tab_forecast:
         historical_fire_probabilities = risk_probability_series("incendio")
         historical_climate_probabilities = risk_probability_series("climaticas")
 
-        rescate_details = risk_model_details("rescate_vehicular", "rescate")
-        incendio_details = risk_model_details("incendio")
-        climaticas_details = risk_model_details("climaticas")
-        rescue_probability_p33 = float(rescate_details.get("probability_p33", 0.0))
-        rescue_probability_p66 = float(rescate_details.get("probability_p66", 0.0))
-        rescue_probability_p80 = float(rescate_details.get("probability_p80", 0.0))
-        fire_probability_p33 = float(incendio_details.get("probability_p33", 0.0))
-        fire_probability_p66 = float(incendio_details.get("probability_p66", 0.0))
-        fire_probability_p80 = float(incendio_details.get("probability_p80", 0.0))
-        climate_probability_p33 = float(climaticas_details.get("probability_p33", 0.0))
-        climate_probability_p66 = float(climaticas_details.get("probability_p66", 0.0))
-        climate_probability_p80 = float(climaticas_details.get("probability_p80", 0.0))
-        rescue_alert_rate = float(rescate_details.get("oof_alert_rate", 0.0))
-        fire_alert_rate = float(incendio_details.get("oof_alert_rate", 0.0))
 
         st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario de Llamados Talcahuano</h5></div>', unsafe_allow_html=True)
         
@@ -1991,22 +2106,13 @@ with tab_forecast:
                     '</div>'
                 )
             rescue_label, rescue_class = category_risk_label(
-                p.get('Prob_Rescate_Alto', np.nan),
-                rescue_probability_p33,
-                rescue_probability_p66,
-                rescue_probability_p80,
+                p.get('Prob_Rescate_Alto', np.nan)
             )
             fire_label, fire_class = category_risk_label(
-                p.get('Prob_Incendio_Alto', np.nan),
-                fire_probability_p33,
-                fire_probability_p66,
-                fire_probability_p80,
+                p.get('Prob_Incendio_Alto', np.nan)
             )
             climate_label, climate_class = category_risk_label(
-                p.get('Prob_Climaticas_Alto', np.nan),
-                climate_probability_p33,
-                climate_probability_p66,
-                climate_probability_p80,
+                p.get('Prob_Climaticas_Alto', np.nan)
             )
             forecast_cards.append(
                 f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
@@ -2039,6 +2145,21 @@ with tab_forecast:
             </div>""",
             unsafe_allow_html=True,
         )
+        composition_html = render_category_composition_table(pred_results)
+        if composition_html:
+            st.markdown(
+                '<div class="chart-title" style="margin-top: 1rem;">'
+                'Composición esperada y base habitual</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '<div class="chart-subtitle">Cada categoría muestra llamados '
+                'esperados · porcentaje del total, su base habitual y la '
+                'variación. “% del alza” reparte solamente los incrementos '
+                'positivos.</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(composition_html, unsafe_allow_html=True)
         current_model_name = format_model_name(metadata_aug.get("validation_protocol", "Modelo Climático Aumentado"))
         suffix = model_algorithm_suffix(metadata_aug)
         st.markdown(f"**Modelo oficial:** {current_model_name}{suffix} · NUEVO")

@@ -19,12 +19,14 @@ temp_*.py
 
 # Generated model experiments
 03_model/saved_models/*
+05_research/results/category_composition/oof_predictions.csv
 !03_model/saved_models/classifier_climatic_augmented.pkl
 !03_model/saved_models/metadata_climatic_augmented.pkl
 !03_model/saved_models/regressor_climatic_augmented.pkl
 !03_model/saved_models/category_model_optimization.csv
 !03_model/saved_models/category_risk_models.pkl
 !03_model/saved_models/category_risk_models_summary.csv
+!03_model/saved_models/category_composition_models.pkl
 !03_model/saved_models/active_models.json
 !03_model/saved_models/fifth_company_models.pkl
 !03_model/saved_models/fifth_company_fold_metrics.csv

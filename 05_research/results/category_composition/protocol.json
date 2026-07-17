@@ -1,0 +1,15 @@
+{
+  "group_order": [
+    "incendios",
+    "rescates",
+    "climaticas",
+    "otros"
+  ],
+  "baseline_definition": "regularized Poisson calendar/season expectation",
+  "reconciliation": "expected category counts scaled to official total forecast",
+  "selection_protocol": "five-fold temporal OOF on first 80%; >=1% MAE gain and >=50% actual-mean viability gate",
+  "holdout_protocol": "untouched final 20% reported after selection",
+  "train_start_date": "2022-02-03",
+  "train_end_date": "2026-04-16",
+  "train_samples": 1444
+}
