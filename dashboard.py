@@ -2092,7 +2092,7 @@ with tab_forecast:
                     "incendios": ("&#128293;", "Inc."),
                     "rescates": ("&#128663;", "Res."),
                     "climaticas": ("&#9928;&#65039;", "Clim."),
-                    "otros": ("&#9679;", "Otros"),
+                    "otros": ("?", "Otros"),
                 }
                 mix_rows = []
                 for group_name in ["incendios", "rescates", "climaticas", "otros"]:
