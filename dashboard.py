@@ -465,36 +465,19 @@ def category_risk_level(probability):
     return "Baja", "activity-low"
 
 
-@st.cache_data
-def load_prediction_interval_90(model_suffix):
-    if not model_suffix:
-        return None
-    oof_path = models_dir / f"{model_suffix}_oof_predictions.csv"
-    if not oof_path.exists():
-        return None
-    try:
-        oof = pd.read_csv(oof_path, sep=";")
-        prediction_columns = [
-            column for column in oof.columns
-            if column.startswith("PRED_EVENTOS_")
-            and column.endswith("_OOF")
-            and "OFFICIAL" not in column
-        ]
-        if "EVENTOS" not in oof.columns or not prediction_columns:
-            return None
-        actual = pd.to_numeric(oof["EVENTOS"], errors="coerce")
-        predicted = pd.to_numeric(oof[prediction_columns[0]], errors="coerce")
-        residuals = (actual - predicted).dropna()
-        if len(residuals) < 30:
-            return None
-        lower_offset, upper_offset = residuals.quantile([0.05, 0.95])
-        return {
-            "lower_offset": float(lower_offset),
-            "upper_offset": float(upper_offset),
-            "samples": int(len(residuals)),
-        }
-    except Exception:
-        return None
+def category_change_level(expected_count, baseline_count):
+    """Operational change status with safeguards for low-frequency groups."""
+    expected = max(float(expected_count), 0.0)
+    baseline = max(float(baseline_count), 0.0)
+    delta = expected - baseline
+    relative_delta = delta / max(baseline, 0.5)
+    if delta <= -0.25 and relative_delta <= -0.15:
+        return "Disminuida", "activity-low"
+    if delta >= 0.75 and relative_delta >= 0.50:
+        return "Muy aumentada", "activity-alert"
+    if delta >= 0.25 and relative_delta >= 0.15:
+        return "Aumentada", "activity-high"
+    return "Normal", "activity-normal"
 
 
 def force_single_thread_model(model):
@@ -2071,40 +2054,11 @@ with tab_forecast:
 
         st.markdown('<div style="margin-bottom: 0.8rem;"><h5 style="color: var(--text);">Pronóstico Diario de Llamados Talcahuano</h5></div>', unsafe_allow_html=True)
         
-        active_count_suffix = active_model_config.get("climatic_augmented")
-        prediction_interval_90 = load_prediction_interval_90(active_count_suffix)
         forecast_cards = []
         for p in pred_results:
             activity_text, activity_class = operational_activity_level(
                 p['Prediccion']
             )
-            uncertainty_html = ""
-            if prediction_interval_90:
-                interval_low = max(
-                    0,
-                    int(np.floor(
-                        p['Prediccion']
-                        + prediction_interval_90['lower_offset']
-                    )),
-                )
-                interval_high = max(
-                    interval_low,
-                    int(np.ceil(
-                        p['Prediccion']
-                        + prediction_interval_90['upper_offset']
-                    )),
-                )
-                uncertainty_html = (
-                    '<div title="Intervalo predictivo empírico basado en '
-                    f'{prediction_interval_90["samples"]} errores walk-forward" '
-                    'style="font-size: 0.68rem; color: var(--text); '
-                    'font-weight: 600; background: rgba(255, 255, 255, 0.07); '
-                    'border: 1px solid rgba(255, 255, 255, 0.12); '
-                    'border-radius: 6px; padding: 0.3rem 0.35rem; '
-                    'margin-bottom: 0.55rem;">'
-                    f'Rango probable 90%: <strong style="font-weight: 800;">{interval_low}–{interval_high}</strong>'
-                    '</div>'
-                )
             rescue_label, rescue_class = category_risk_label(
                 p.get('Prob_Rescate_Alto', np.nan)
             )
@@ -2117,31 +2071,36 @@ with tab_forecast:
             category_mix_html = ""
             composition = p.get('Category_Composition')
             if composition:
-                mix_icons = {
-                    "incendios": "&#128293;",
-                    "rescates": "&#128663;",
-                    "climaticas": "&#9928;&#65039;",
-                    "otros": "&#9679;",
+                mix_labels = {
+                    "incendios": ("&#128293;", "Inc."),
+                    "rescates": ("&#128663;", "Res."),
+                    "climaticas": ("&#9928;&#65039;", "Clim."),
+                    "otros": ("&#9679;", "Otros"),
                 }
                 mix_rows = []
                 for group_name in ["incendios", "rescates", "climaticas", "otros"]:
                     group = composition["groups"].get(group_name)
                     if not group:
                         continue
+                    change_label, change_class = category_change_level(
+                        group["count"], group["baseline"]
+                    )
+                    icon, short_label = mix_labels[group_name]
                     mix_rows.append(
-                        f'{mix_icons[group_name]} {group["label"]}: '
-                        f'<strong style="color: var(--text);">'
-                        f'{group["share_total"] * 100:.0f}%</strong> '
-                        f'<span style="font-size: 0.6rem;">'
-                        f'({group["count"]:.1f} llamados)</span><br/>'
+                        '<div style="min-width: 0; text-align: center;">'
+                        f'<div style="font-size: 0.52rem; color: var(--text-muted); '
+                        f'white-space: nowrap;">{icon} {short_label}</div>'
+                        f'<div class="metric-delta {change_class}" '
+                        f'title="{group["label"]}: {change_label} frente a base '
+                        f'{group["baseline"]:.1f}" style="margin: 0.12rem 0 0; '
+                        f'font-size: 0.64rem; padding: 2px 3px; display: block;">'
+                        f'{group["count"]:.1f}</div></div>'
                     )
                 category_mix_html = (
-                    '<hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.35;" />'
-                    '<div title="Probabilidad estimada de que un llamado pertenezca a cada tipo" '
-                    'style="font-size: 0.61rem; color: var(--text); font-weight: 800; '
-                    'text-transform: uppercase; margin-bottom: 0.22rem;">'
-                    'Prob. tipo de llamado</div>'
-                    + ''.join(mix_rows)
+                    '<div title="Llamados esperados por tipo; el color compara con su base habitual" '
+                    'style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); '
+                    'gap: 0.18rem; width: 100%; margin: 0.1rem 0 0.65rem;">'
+                    + ''.join(mix_rows) + '</div>'
                 )
             forecast_cards.append(
                 f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
@@ -2149,17 +2108,16 @@ with tab_forecast:
                     <div style="font-size: 0.8rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem;">{p['Fecha'].strftime('%d-%b')}</div>
                     <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Prediccion']:.1f}</div>
                     <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.5rem;">llamadas</div>
-                    {uncertainty_html}
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 0.35rem; margin-bottom: 0.6rem;">
                         <div class="metric-delta {activity_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{activity_text}</div>
                     </div>
+                    {category_mix_html}
                     <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.5;" />
                     <div style="font-size: 0.68rem; color: var(--text-muted); line-height: 1.45; text-align: left;">
                         <div style="font-size: 0.61rem; color: var(--text); font-weight: 800; text-transform: uppercase; margin-bottom: 0.22rem;">Prob. actividad alta</div>
                         &#128663; R.Vehicular: <strong>{probability_percent(p.get('Prob_RVehicular_Alto', np.nan))}</strong> <span class="metric-delta {rescue_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{rescue_label}</span><br/>
                         &#128293; Incendio: <strong>{probability_percent(p.get('Prob_Incendio_Alto', np.nan))}</strong> <span class="metric-delta {fire_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{fire_label}</span><br/>
                         &#9928;&#65039; Climáticas: <strong>{probability_percent(p.get('Prob_Climaticas_Alto', np.nan))}</strong> <span class="metric-delta {climate_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{climate_label}</span><br/>
-                        {category_mix_html}
                         <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.35;" />
                         &#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong><br/>
                         &#127777;&#65039; Media: <strong>{p['Temp_Media']:.1f}&deg;C</strong><br/>
