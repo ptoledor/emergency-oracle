@@ -13,6 +13,14 @@
 
 - Cambio: se elimina la pestaña final `Comparacion de Modelos`; los tres artefactos de respaldo permanecen intactos.
 
+## 2026-07-16 - Recalibracion temporal de riesgos por categoria
+
+- Cambio: rescate vehicular, incendio y climaticas aplican calibracion sigmoidal sobre probabilidades Random Forest generadas OOF temporalmente. El modelo final conserva el ranking y entrega porcentajes compatibles con la frecuencia observada.
+
+- Validacion en el 20% temporal final: Brier baja de 0,1613 a 0,1004 en rescate, de 0,1519 a 0,1107 en incendio y de 0,0287 a 0,0279 en climaticas; el ROC-AUC permanece en 0,596, 0,645 y 0,888 respectivamente.
+
+- Cambio: la tabla de percentiles y los badges usan ahora la misma distribucion OOF calibrada. Se elimina la mezcla anterior entre probabilidades in-sample y umbrales OOF.
+
 ## 2026-07-16 - Compatibilidad con hot-reload de Streamlit
 
 - Correccion: si el proceso de Streamlit conserva en `sys.modules` una version anterior de `model_components`, el dashboard recarga el modulo antes de deserializar el ensemble. Esto evita `Can't get attribute 'HydroObjectiveEnsembleRegressor'` durante un despliegue sin reinicio completo del worker.

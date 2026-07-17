@@ -1,0 +1,15 @@
+{
+  "method": "temporal_oof_platt_on_raw_probability",
+  "evaluation": "calibrator fit on training temporal OOF; final 20% untouched",
+  "serving": "raw model fit all history; calibrator fit full temporal OOF",
+  "acceptance_gates": [
+    "test Brier not worse",
+    "test log loss not worse",
+    "test ROC-AUC preserved"
+  ],
+  "groups": [
+    "rescate_vehicular",
+    "incendio",
+    "climaticas"
+  ]
+}

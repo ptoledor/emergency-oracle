@@ -217,6 +217,35 @@ class RegressorProbabilityClassifier:
         return np.column_stack([1.0 - high_probability, high_probability])
 
 
+class SigmoidProbabilityCalibratedClassifier:
+    """Apply a temporal Platt calibrator to a classifier's positive probability."""
+
+    def __init__(self, base_classifier, coefficient, intercept, feature_cols):
+        self.base_classifier = base_classifier
+        self.coefficient = float(coefficient)
+        self.intercept = float(intercept)
+        self.feature_cols = list(feature_cols)
+        self.feature_names_in_ = np.asarray(self.feature_cols, dtype=object)
+        self.feature_importances_ = getattr(base_classifier, "feature_importances_", None)
+        self.classes_ = np.asarray([0, 1])
+
+    def predict_proba(self, X):
+        missing = [column for column in self.feature_cols if column not in X.columns]
+        if missing:
+            raise KeyError(f"Missing calibrated classifier features: {missing[:10]}")
+        raw_probability = np.asarray(
+            self.base_classifier.predict_proba(X[self.feature_cols])[:, 1],
+            dtype=float,
+        )
+        logit = np.clip(
+            self.intercept + self.coefficient * raw_probability,
+            -35,
+            35,
+        )
+        calibrated = 1.0 / (1.0 + np.exp(-logit))
+        return np.column_stack([1.0 - calibrated, calibrated])
+
+
 def resolve_model_path(models_dir, prefix):
     import json
     from pathlib import Path

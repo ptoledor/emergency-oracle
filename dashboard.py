@@ -14,7 +14,11 @@ import model_components
 # Streamlit puede reejecutar dashboard.py dentro de un proceso que conserva en
 # sys.modules una version anterior de este modulo. Recargar solo cuando falta
 # una clase requerida evita que pickle vea el artefacto nuevo con codigo viejo.
-if not hasattr(model_components, "HydroObjectiveEnsembleRegressor"):
+required_model_components = (
+    "HydroObjectiveEnsembleRegressor",
+    "SigmoidProbabilityCalibratedClassifier",
+)
+if any(not hasattr(model_components, name) for name in required_model_components):
     model_components = importlib.reload(model_components)
 
 from activity_levels import operational_activity_level
@@ -784,7 +788,7 @@ blend_calibration_summary = load_blend_calibration_summary()
 
 
 @st.cache_resource
-def load_category_risk_artifact():
+def load_category_risk_artifact(model_mtime=None):
     path = models_dir / "category_risk_models.pkl"
     if not path.exists():
         return None
@@ -795,7 +799,9 @@ def load_category_risk_artifact():
     return artifact
 
 
-category_risk_artifact = load_category_risk_artifact()
+category_risk_artifact = load_category_risk_artifact(
+    model_mtimes.get("category_risk_models.pkl")
+)
 
 
 @st.cache_resource
@@ -846,11 +852,21 @@ def risk_model_details(primary_key, legacy_key=None):
     return models.get(primary_key, models.get(legacy_key, {}))
 
 
-def risk_probability_series(primary_col, legacy_col=None):
+def risk_probability_series(primary_key, legacy_key=None):
+    details = risk_model_details(primary_key, legacy_key)
+    reference = details.get("oof_probabilities", [])
+    if reference:
+        return pd.to_numeric(pd.Series(reference), errors="coerce").dropna()
+    primary_col = f"PROB_{primary_key.upper()}_ALTO"
     source = df.get(primary_col)
-    if source is None or pd.to_numeric(source, errors='coerce').dropna().empty:
-        source = df.get(legacy_col, pd.Series(dtype=float)) if legacy_col else pd.Series(dtype=float)
-    return pd.to_numeric(source, errors='coerce').dropna()
+    if source is None or pd.to_numeric(source, errors="coerce").dropna().empty:
+        legacy_col = f"PROB_{legacy_key.upper()}_ALTO" if legacy_key else None
+        source = (
+            df.get(legacy_col, pd.Series(dtype=float))
+            if legacy_col
+            else pd.Series(dtype=float)
+        )
+    return pd.to_numeric(source, errors="coerce").dropna()
 
 
 PERCENTILE_COLUMNS = [0, 10, 20, 30, 33, 40, 50, 60, 66, 70, 80, 90, 100]
@@ -1918,11 +1934,10 @@ with tab_forecast:
         train_predictions = df_train['PRED_EVENTOS_PRIMARY'].astype(float)
         # Para category risk: usar umbrales OOF almacenados en el artefacto
         historical_rescue_probabilities = risk_probability_series(
-            'PROB_RESCATE_VEHICULAR_ALTO',
-            'PROB_RESCATE_ALTO',
+            "rescate_vehicular", "rescate"
         )
-        historical_fire_probabilities = risk_probability_series('PROB_INCENDIO_ALTO')
-        historical_climate_probabilities = risk_probability_series('PROB_CLIMATICAS_ALTO')
+        historical_fire_probabilities = risk_probability_series("incendio")
+        historical_climate_probabilities = risk_probability_series("climaticas")
 
         rescate_details = risk_model_details("rescate_vehicular", "rescate")
         incendio_details = risk_model_details("incendio")
