@@ -2040,11 +2040,11 @@ def render_distribution_charts():
 
 
 # 12. Pestañas de navegación
-tab_forecast, tab_stats, tab_history, tab_seasonal = st.tabs([
+tab_forecast, tab_seasonal, tab_history, tab_stats = st.tabs([
     "🔮 Forecast",
+    "📊 Estacional Histórico",
+    "📈 Histórico vs Predicción",
     "⚡ Estadísticas de Modelo",
-    "📈 Histórico Real vs Predicción",
-    "📊 Curvas de Estacionalidad (365 días)",
 ])
 
 with tab_forecast:
