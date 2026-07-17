@@ -1924,7 +1924,6 @@ with tab_forecast:
         )
         historical_fire_probabilities = risk_probability_series('PROB_INCENDIO_ALTO')
         historical_climate_probabilities = risk_probability_series('PROB_CLIMATICAS_ALTO')
-        historical_fifth_probabilities = risk_probability_series('PROB_5TA_CIA_ALTA')
 
         rescate_details = risk_model_details("rescate_vehicular", "rescate")
         incendio_details = risk_model_details("incendio")
@@ -1938,10 +1937,6 @@ with tab_forecast:
         climate_probability_p33 = float(climaticas_details.get("probability_p33", 0.0))
         climate_probability_p66 = float(climaticas_details.get("probability_p66", 0.0))
         climate_probability_p80 = float(climaticas_details.get("probability_p80", 0.0))
-        fifth_details = (fifth_company_artifact or {}).get("metadata", {})
-        fifth_probability_p33 = float(fifth_details.get("probability_p33", 0.0))
-        fifth_probability_p66 = float(fifth_details.get("probability_p66", 0.0))
-        fifth_probability_p80 = float(fifth_details.get("probability_p80", 0.0))
         rescue_alert_rate = float(rescate_details.get("oof_alert_rate", 0.0))
         fire_alert_rate = float(incendio_details.get("oof_alert_rate", 0.0))
 
@@ -1973,9 +1968,12 @@ with tab_forecast:
                 uncertainty_html = (
                     '<div title="Intervalo predictivo empírico basado en '
                     f'{prediction_interval_90["samples"]} errores walk-forward" '
-                    'style="font-size: 0.56rem; color: var(--text-dim); '
-                    'margin-bottom: 0.45rem;">'
-                    f'Rango probable 90%: <strong>{interval_low}–{interval_high}</strong>'
+                    'style="font-size: 0.68rem; color: var(--text); '
+                    'font-weight: 600; background: rgba(255, 255, 255, 0.07); '
+                    'border: 1px solid rgba(255, 255, 255, 0.12); '
+                    'border-radius: 6px; padding: 0.3rem 0.35rem; '
+                    'margin-bottom: 0.55rem;">'
+                    f'Rango probable 90%: <strong style="font-weight: 800;">{interval_low}–{interval_high}</strong>'
                     '</div>'
                 )
             rescue_label, rescue_class = category_risk_label(
@@ -1996,12 +1994,6 @@ with tab_forecast:
                 climate_probability_p66,
                 climate_probability_p80,
             )
-            fifth_label, fifth_class = category_risk_label(
-                p.get('Prob_5ta_Cia_Alta', np.nan),
-                fifth_probability_p33,
-                fifth_probability_p66,
-                fifth_probability_p80,
-            )
             forecast_cards.append(
                 f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
                     <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Dia']}</div>
@@ -2017,7 +2009,6 @@ with tab_forecast:
                         &#128663; R.Vehicular: <strong>{probability_percent(p.get('Prob_RVehicular_Alto', np.nan))}</strong> <span class="metric-delta {rescue_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{rescue_label}</span><br/>
                         &#128293; Incendio: <strong>{probability_percent(p.get('Prob_Incendio_Alto', np.nan))}</strong> <span class="metric-delta {fire_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{fire_label}</span><br/>
                         &#9928;&#65039; Climáticas: <strong>{probability_percent(p.get('Prob_Climaticas_Alto', np.nan))}</strong> <span class="metric-delta {climate_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{climate_label}</span><br/>
-                        &#128664; 5ta Cía: <strong>{p.get('Pred_5ta_Cia', np.nan):.1f} desp.</strong> · <strong>{probability_percent(p.get('Prob_5ta_Cia_Alta', np.nan))}</strong> <span class="metric-delta {fifth_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{fifth_label}</span>
                         <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.35;" />
                         &#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong><br/>
                         &#127777;&#65039; Media: <strong>{p['Temp_Media']:.1f}&deg;C</strong><br/>
@@ -2047,7 +2038,6 @@ with tab_forecast:
             build_percentile_row("Probabilidad de R.Vehicular", historical_rescue_probabilities, as_probability=True),
             build_percentile_row("Probabilidad de incendio", historical_fire_probabilities, as_probability=True),
             build_percentile_row("Probabilidad de climaticas", historical_climate_probabilities, as_probability=True),
-            build_percentile_row("Probabilidad de alta actividad 5ta Cía", historical_fifth_probabilities, as_probability=True),
         ])
         st.markdown(
             f"""<div class="responsive-grid responsive-grid-4" style="margin-top: 1rem; margin-bottom: 1rem;">

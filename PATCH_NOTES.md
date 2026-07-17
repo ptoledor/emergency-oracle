@@ -7,6 +7,10 @@
 
 - Cambio: se retira `Pulso 1–100` de las tarjetas para evitar una segunda escala que compita con el conteo y el nivel operacional.
 
+- Cambio: se retiran de Forecast los despachos y la probabilidad de alta actividad de 5ta Cia, incluida su fila de referencia historica.
+
+- Cambio: el rango probable 90% gana contraste, tamano y un fondo sutil para facilitar su lectura en las tarjetas.
+
 ## 2026-07-16 - Compatibilidad con hot-reload de Streamlit
 
 - Correccion: si el proceso de Streamlit conserva en `sys.modules` una version anterior de `model_components`, el dashboard recarga el modulo antes de deserializar el ensemble. Esto evita `Can't get attribute 'HydroObjectiveEnsembleRegressor'` durante un despliegue sin reinicio completo del worker.
