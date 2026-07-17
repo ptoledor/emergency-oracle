@@ -6,6 +6,8 @@
 
 - Cambio: Incendios, Rescates, Climáticas y Otros se muestran en una fila horizontal inmediatamente debajo del nivel de actividad, únicamente como llamados esperados por tipo.
 
+- Cambio visual: cada tipo, su conteo y su tendencia forman una sola píldora con fondo semaforizado: azul `↓`, verde `–`, naranjo `↑` y rojo `↑↑`.
+
 - Semáforo de Incendios, Rescates y Climáticas: el color del conteo sigue su probabilidad calibrada de actividad alta (`Baja <5%`, `Normal 5–<15%`, `Alta 15–<30%`, `Muy Alta ≥30%`). Por lo tanto, un rescate con 10% queda verde/Normal. `Otros`, que no tiene clasificador probabilístico propio, conserva la comparación contra su base habitual.
 
 ## 2026-07-16 - Composición esperada con base habitual

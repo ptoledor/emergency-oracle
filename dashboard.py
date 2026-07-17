@@ -2089,10 +2089,16 @@ with tab_forecast:
             composition = p.get('Category_Composition')
             if composition:
                 mix_labels = {
-                    "incendios": ("&#128293;", "Inc."),
-                    "rescates": ("&#128663;", "Res."),
-                    "climaticas": ("&#9928;&#65039;", "Clim."),
-                    "otros": ("?", "Otros"),
+                    "incendios": "Inc.",
+                    "rescates": "Res.",
+                    "climaticas": "Clim.",
+                    "otros": "Otros",
+                }
+                status_arrows = {
+                    "activity-low": "↓",
+                    "activity-normal": "–",
+                    "activity-high": "↑",
+                    "activity-alert": "↑↑",
                 }
                 mix_rows = []
                 for group_name in ["incendios", "rescates", "climaticas", "otros"]:
@@ -2112,16 +2118,18 @@ with tab_forecast:
                             group["count"], group["baseline"]
                         )
                         status_detail = f"base habitual {group['baseline']:.1f}"
-                    icon, short_label = mix_labels[group_name]
+                    short_label = mix_labels[group_name]
+                    status_arrow = status_arrows[change_class]
                     mix_rows.append(
                         '<div style="min-width: 0; text-align: center;">'
-                        f'<div style="font-size: 0.52rem; color: var(--text-muted); '
-                        f'white-space: nowrap;">{icon} {short_label}</div>'
                         f'<div class="metric-delta {change_class}" '
                         f'title="{group["label"]}: {change_label} · '
-                        f'{status_detail}" style="margin: 0.12rem 0 0; '
-                        f'font-size: 0.64rem; padding: 2px 3px; display: block;">'
-                        f'{group["count"]:.1f}</div></div>'
+                        f'{status_detail}" style="margin: 0; font-size: 0.58rem; '
+                        f'padding: 3px 3px; display: flex; align-items: center; '
+                        f'justify-content: center; gap: 0.16rem; white-space: nowrap;">'
+                        f'<span>{short_label}</span><strong>{group["count"]:.1f}</strong>'
+                        f'<span style="font-size: 0.7rem; font-weight: 900;">'
+                        f'{status_arrow}</span></div></div>'
                     )
                 category_mix_html = (
                     '<div title="Llamados esperados por tipo; el color sigue la probabilidad calibrada" '
