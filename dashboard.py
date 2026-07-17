@@ -256,6 +256,46 @@ css = f"""
         color: var(--text-muted);
         margin-bottom: 1.2rem;
     }}
+    .chart-legend {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem 1rem;
+        margin: 0.2rem 0 0.75rem;
+        padding: 0.7rem 0.85rem;
+        background: var(--bg-subtle);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+    }}
+    .chart-legend-item {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-width: 0;
+        color: var(--text);
+        font-size: 0.78rem;
+        font-weight: 700;
+        line-height: 1.25;
+    }}
+    .chart-legend-note {{
+        flex: 1 0 100%;
+        color: var(--text);
+        font-size: 0.76rem;
+        font-weight: 700;
+        opacity: 0.92;
+    }}
+    .chart-legend-line {{
+        width: 30px;
+        flex: 0 0 30px;
+        border-top: 3px solid var(--legend-color);
+    }}
+    .chart-legend-line.dash {{ border-top-style: dashed; }}
+    .chart-legend-line.dot {{ border-top-style: dotted; }}
+    .chart-legend-detail {{
+        color: var(--text);
+        font-size: 0.74rem;
+        font-weight: 600;
+        opacity: 0.84;
+    }}
     
     /* Encabezado */
     .header-container {{
@@ -458,6 +498,28 @@ css = f"""
         }}
         .chart-subtitle {{
             margin-bottom: 0.8rem;
+        }}
+        .chart-legend {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.55rem;
+            padding: 0.65rem;
+        }}
+        .chart-legend-item {{
+            align-items: flex-start;
+            font-size: 0.72rem;
+        }}
+        .chart-legend-note {{
+            grid-column: 1 / -1;
+        }}
+        .chart-legend-line {{
+            width: 24px;
+            flex-basis: 24px;
+            margin-top: 0.35rem;
+        }}
+        .chart-legend-detail {{
+            display: block;
+            font-size: 0.66rem;
         }}
         .modebar-container {{
             display: none !important;
@@ -1501,7 +1563,15 @@ PLOT_LAYOUT = dict(
         yanchor="bottom",
         y=1.02,
         xanchor="right",
-        x=1
+        x=1,
+        font=dict(
+            size=12,
+            color="#fafafa" if IS_DARK else "#09090b",
+        ),
+        bgcolor="rgba(9, 9, 11, 0.92)" if IS_DARK else "rgba(255, 255, 255, 0.94)",
+        bordercolor="#3f3f46" if IS_DARK else "#d4d4d8",
+        borderwidth=1,
+        itemsizing="constant",
     ),
     xaxis=dict(
         gridcolor="rgba(255,255,255,0.06)" if IS_DARK else "rgba(0,0,0,0.06)",
@@ -1546,9 +1616,9 @@ def render_seasonal_chart():
     event_mean = float(df['EVENTOS'].mean())
     event_std = float(df['EVENTOS'].std())
     reference_levels = [
-        ("Media", event_mean, "#22c55e", "solid"),
-        ("Media + 1 DV", event_mean + event_std, "#f59e0b", "dash"),
-        ("Media - 1 DV", max(0.0, event_mean - event_std), "#f59e0b", "dash"),
+        ("Promedio histórico", event_mean, "#22c55e", "solid"),
+        ("Nivel alto habitual", event_mean + event_std, "#f59e0b", "dash"),
+        ("Nivel bajo habitual", max(0.0, event_mean - event_std), "#f59e0b", "dash"),
     ]
     
     # Calcular límites Y fijos antes del suavizado para evitar reescalado del eje
@@ -1581,12 +1651,12 @@ def render_seasonal_chart():
             if has_robust_prediction
             else None
         )
-        suffix = f" (Suavizado {dias_suavizado}d)"
+        legend_view = f"Vista: promedio móvil de {dias_suavizado} días"
     else:
         y_real = df_grouped['EVENTOS']
         y_pred = df_grouped[y_pred_col]
         y_robust = df_grouped[y_robust_col] if has_robust_prediction else None
-        suffix = " (Original)"
+        legend_view = "Vista: valores diarios sin suavizado"
 
     # Crear gráfico Plotly
     fig = go.Figure()
@@ -1596,7 +1666,7 @@ def render_seasonal_chart():
         x=df_grouped['FECHA_EJE'],
         y=y_real,
         mode='lines',
-        name=f'Eventos Reales{suffix}',
+        name='Llamados reales',
         line=dict(color='#fafafa' if IS_DARK else '#09090b', width=2.5),
         hovertemplate='Fecha: %{x|%d-%b}<br>Reales: %{y:.2f} eventos<extra></extra>'
     ))
@@ -1606,7 +1676,7 @@ def render_seasonal_chart():
         x=df_grouped['FECHA_EJE'],
         y=y_pred,
         mode='lines',
-        name=f'Prediccion Operacional{suffix}',
+        name='Predicción del modelo',
         line=dict(color='#3b82f6', width=2.5, dash='dash'),
         hovertemplate='Fecha: %{x|%d-%b}<br>Predicho: %{y:.2f} eventos<extra></extra>'
     ))
@@ -1615,7 +1685,7 @@ def render_seasonal_chart():
             x=df_grouped['FECHA_EJE'],
             y=y_robust,
             mode='lines',
-            name=f'Prediccion Robusta{suffix}',
+            name='Predicción robusta',
             line=dict(color='#f97316', width=2.3, dash='dot'),
             hovertemplate='Fecha: %{x|%d-%b}<br>Robusto: %{y:.2f} eventos<extra></extra>'
         ))
@@ -1629,10 +1699,10 @@ def render_seasonal_chart():
             name=f'{label}: {level:.2f}',
             line=dict(
                 color=color,
-                width=1.8 if label == "Media" else 1.2,
+                width=1.8 if label == "Promedio histórico" else 1.2,
                 dash=dash,
             ),
-            opacity=0.9 if label == "Media" else 0.75,
+            opacity=0.9 if label == "Promedio histórico" else 0.75,
             hovertemplate=f'{label}: {level:.2f} eventos<extra></extra>',
         ))
     
@@ -1668,6 +1738,13 @@ def render_seasonal_chart():
     # Combinar PLOT_LAYOUT con la personalización del eje X y Y para evitar conflicto de argumentos
     layout_params = PLOT_LAYOUT.copy()
     layout_params['dragmode'] = 'zoom' # Activar modo zoom por defecto al arrastrar el mouse
+    layout_params['legend'] = dict(
+        **PLOT_LAYOUT['legend'],
+        title=dict(
+            text=legend_view,
+            font=dict(size=13, color="#fafafa" if IS_DARK else "#18181b"),
+        ),
+    )
     layout_params['xaxis'] = dict(
         **PLOT_LAYOUT['xaxis'],
         tickformat='%b',
@@ -1814,27 +1891,28 @@ def render_historical_chart():
             if robust_predicted is not None
             else None
         )
-        suffix = f" · media móvil {smoothing_days}d"
+        smoothing_detail = f"Promedio móvil de {smoothing_days} días"
     else:
         real_plot = real
         predicted_plot = predicted
         robust_plot = robust_predicted
-        suffix = " · diario"
+        smoothing_detail = "Valores diarios sin suavizado"
 
+    real_color = '#fafafa' if IS_DARK else '#09090b'
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=historical['FECHA_DT'],
         y=real_plot,
         mode='lines',
-        name=f'Real{suffix}',
-        line=dict(color='#fafafa' if IS_DARK else '#09090b', width=1.8),
+        name='Llamados reales',
+        line=dict(color=real_color, width=1.8),
         hovertemplate='%{x|%d-%m-%Y}<br>Real: %{y:.2f}<extra></extra>',
     ))
     fig.add_trace(go.Scatter(
         x=historical['FECHA_DT'],
         y=predicted_plot,
         mode='lines',
-        name=f'Predicción{suffix}',
+        name='Predicción del modelo',
         line=dict(color='#3b82f6', width=2, dash='dash'),
         hovertemplate='%{x|%d-%m-%Y}<br>Predicción: %{y:.2f}<extra></extra>',
     ))
@@ -1844,7 +1922,7 @@ def render_historical_chart():
             x=historical['FECHA_DT'],
             y=robust_plot,
             mode='lines',
-            name=f'Robusto{suffix}',
+            name='Predicción robusta',
             line=dict(color='#f97316', width=1.9, dash='dot'),
             hovertemplate='%{x|%d-%m-%Y}<br>Robusto: %{y:.2f}<extra></extra>',
         ))
@@ -1852,9 +1930,9 @@ def render_historical_chart():
     global_mean = float(df['EVENTOS'].mean())
     global_std = float(df['EVENTOS'].std())
     historical_reference_levels = [
-        ("Media global", global_mean, "#22c55e", "solid"),
-        ("Media global + 1 DV", global_mean + global_std, "#f59e0b", "dash"),
-        ("Media global - 1 DV", max(0.0, global_mean - global_std), "#f59e0b", "dash"),
+        ("Promedio histórico", global_mean, "#22c55e", "solid"),
+        ("Nivel alto habitual", global_mean + global_std, "#f59e0b", "dash"),
+        ("Nivel bajo habitual", max(0.0, global_mean - global_std), "#f59e0b", "dash"),
     ]
     for label, level, color, dash in historical_reference_levels:
         fig.add_trace(go.Scatter(
@@ -1864,12 +1942,36 @@ def render_historical_chart():
             name=f'{label}: {level:.2f}',
             line=dict(
                 color=color,
-                width=1.8 if label == "Media global" else 1.2,
+                width=1.8 if label == "Promedio histórico" else 1.2,
                 dash=dash,
             ),
-            opacity=0.9 if label == "Media global" else 0.75,
+            opacity=0.9 if label == "Promedio histórico" else 0.75,
             hovertemplate=f'{label}: {level:.2f} llamadas<extra></extra>',
         ))
+
+    legend_items = [
+        ("Llamados reales", "", real_color, "solid"),
+        ("Predicción modelo", "", "#3b82f6", "dash"),
+    ]
+    if robust_plot is not None:
+        legend_items.append(("Predicción robusta", "", "#f97316", "dot"))
+    legend_items.extend([
+        ("Promedio histórico", f"{global_mean:.2f} llamadas", "#22c55e", "solid"),
+        ("Nivel alto habitual", f"+1 desviación · {global_mean + global_std:.2f}", "#f59e0b", "dash"),
+        ("Nivel bajo habitual", f"−1 desviación · {max(0.0, global_mean - global_std):.2f}", "#f59e0b", "dash"),
+    ])
+    legend_html = "".join(
+        f"""<div class="chart-legend-item">
+            <span class="chart-legend-line {line_style}" style="--legend-color: {color};"></span>
+            <span>{label}{f'<span class="chart-legend-detail"> · {detail}</span>' if detail else ''}</span>
+        </div>"""
+        for label, detail, color, line_style in legend_items
+    )
+    st.markdown(
+        f'<div class="chart-legend" aria-label="Leyenda del gráfico">'
+        f'<div class="chart-legend-note">{smoothing_detail}</div>{legend_html}</div>',
+        unsafe_allow_html=True,
+    )
 
     y_max = max(
         13.0,
@@ -1891,6 +1993,7 @@ def render_historical_chart():
         xaxis_title="Fecha",
         yaxis_title="Llamados diarios",
         height=560,
+        showlegend=False,
     )
     st.plotly_chart(
         fig,

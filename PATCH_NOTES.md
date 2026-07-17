@@ -4,6 +4,10 @@
 
 - Navegación: las pestañas quedan ordenadas como `Forecast`, `Estacional Histórico`, `Histórico Diario` y `Estadísticas de Modelo`.
 
+- Histórico Diario: la leyenda del gráfico ahora usa rótulos operacionales (`Llamados reales`, `Predicción del modelo`, `Promedio histórico` y niveles habituales), muestras de línea más visibles y una grilla de dos columnas en teléfonos. El promedio móvil se informa una sola vez en vez de repetirse en cada serie.
+
+- Gráficos: se aumentó el tamaño y contraste de todas las letras de las leyendas, incluidos el tipo de suavizado y los valores secundarios.
+
 - Cambio: en teléfonos, las cuatro pestañas forman una grilla 2×2 con texto ajustable y dejan de quedar cortadas horizontalmente.
 
 - Cambio: los niveles por emergencia pasan a una grilla 2×2 dentro de cada tarjeta móvil, con píldoras más grandes, borde semaforizado y glosas legibles.
