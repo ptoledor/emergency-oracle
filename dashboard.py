@@ -2114,6 +2114,35 @@ with tab_forecast:
             climate_label, climate_class = category_risk_label(
                 p.get('Prob_Climaticas_Alto', np.nan)
             )
+            category_mix_html = ""
+            composition = p.get('Category_Composition')
+            if composition:
+                mix_icons = {
+                    "incendios": "&#128293;",
+                    "rescates": "&#128663;",
+                    "climaticas": "&#9928;&#65039;",
+                    "otros": "&#9679;",
+                }
+                mix_rows = []
+                for group_name in ["incendios", "rescates", "climaticas", "otros"]:
+                    group = composition["groups"].get(group_name)
+                    if not group:
+                        continue
+                    mix_rows.append(
+                        f'{mix_icons[group_name]} {group["label"]}: '
+                        f'<strong style="color: var(--text);">'
+                        f'{group["share_total"] * 100:.0f}%</strong> '
+                        f'<span style="font-size: 0.6rem;">'
+                        f'({group["count"]:.1f} llamados)</span><br/>'
+                    )
+                category_mix_html = (
+                    '<hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.35;" />'
+                    '<div title="Probabilidad estimada de que un llamado pertenezca a cada tipo" '
+                    'style="font-size: 0.61rem; color: var(--text); font-weight: 800; '
+                    'text-transform: uppercase; margin-bottom: 0.22rem;">'
+                    'Prob. tipo de llamado</div>'
+                    + ''.join(mix_rows)
+                )
             forecast_cards.append(
                 f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; text-align: center; min-width: 0;">
                     <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Dia']}</div>
@@ -2126,9 +2155,11 @@ with tab_forecast:
                     </div>
                     <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.5;" />
                     <div style="font-size: 0.68rem; color: var(--text-muted); line-height: 1.45; text-align: left;">
+                        <div style="font-size: 0.61rem; color: var(--text); font-weight: 800; text-transform: uppercase; margin-bottom: 0.22rem;">Prob. actividad alta</div>
                         &#128663; R.Vehicular: <strong>{probability_percent(p.get('Prob_RVehicular_Alto', np.nan))}</strong> <span class="metric-delta {rescue_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{rescue_label}</span><br/>
                         &#128293; Incendio: <strong>{probability_percent(p.get('Prob_Incendio_Alto', np.nan))}</strong> <span class="metric-delta {fire_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{fire_label}</span><br/>
                         &#9928;&#65039; Climáticas: <strong>{probability_percent(p.get('Prob_Climaticas_Alto', np.nan))}</strong> <span class="metric-delta {climate_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{climate_label}</span><br/>
+                        {category_mix_html}
                         <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.35;" />
                         &#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong><br/>
                         &#127777;&#65039; Media: <strong>{p['Temp_Media']:.1f}&deg;C</strong><br/>
@@ -2156,7 +2187,8 @@ with tab_forecast:
                 '<div class="chart-subtitle">Cada categoría muestra llamados '
                 'esperados · porcentaje del total, su base habitual y la '
                 'variación. “% del alza” reparte solamente los incrementos '
-                'positivos.</div>',
+                'positivos. El porcentaje es la probabilidad estimada de que '
+                'un llamado sea de ese tipo.</div>',
                 unsafe_allow_html=True,
             )
             st.markdown(composition_html, unsafe_allow_html=True)

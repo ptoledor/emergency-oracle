@@ -6,6 +6,8 @@
 
 - Interpretación: cada grupo muestra su base habitual, el conteo esperado reconciliado con el pronóstico oficial, su porcentaje del total y la variación respecto de la base. Cuando el total aumenta, `% del alza` indica qué grupos explican los incrementos positivos.
 
+- Cambio visual: cada tarjeta diaria muestra explícitamente `Prob. tipo de llamado` para Incendios, Rescates, Climáticas y Otros, junto al porcentaje y conteo esperado. Se diferencia de `Prob. actividad alta`, que conserva las alertas categóricas existentes.
+
 - Selección: cada grupo se validó temporalmente contra una regresión Poisson estacional regularizada. Solo incendios y climáticas incorporan señal meteorológica adicional porque mejoraron fuera de muestra; rescates y otros conservan la base para evitar sobreajuste.
 
 - Validación temporal final: MAE de incendios baja de 1,0624 a 1,0367 y el de climáticas de 0,2972 a 0,1858. Rescates y otros mantienen sus baselines, con MAE de 1,3160 y 1,1506.
