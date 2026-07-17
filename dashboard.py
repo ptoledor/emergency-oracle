@@ -2042,10 +2042,10 @@ with tab_forecast:
             composition = p.get('Category_Composition')
             if composition:
                 mix_labels = {
-                    "incendios": "Inc.",
-                    "rescates": "Res.",
-                    "climaticas": "Clim.",
-                    "otros": "Otros",
+                    "incendios": ("&#128293;", "Incendio"),
+                    "rescates": ("&#128663;", "Rescate"),
+                    "climaticas": ("&#9928;&#65039;", "Climático"),
+                    "otros": ("?", "Otro"),
                 }
                 status_arrows = {
                     "activity-low": "↓",
@@ -2071,18 +2071,21 @@ with tab_forecast:
                             group["count"], group["baseline"]
                         )
                         status_detail = f"base habitual {group['baseline']:.1f}"
-                    short_label = mix_labels[group_name]
+                    icon, event_label = mix_labels[group_name]
                     status_arrow = status_arrows[change_class]
                     mix_rows.append(
                         '<div style="min-width: 0; text-align: center;">'
                         f'<div class="metric-delta {change_class}" '
                         f'title="{group["label"]}: {change_label} · '
-                        f'{status_detail}" style="margin: 0; font-size: 0.58rem; '
-                        f'padding: 3px 3px; display: flex; align-items: center; '
-                        f'justify-content: center; gap: 0.16rem; white-space: nowrap;">'
-                        f'<span>{short_label}</span><strong>{group["count"]:.1f}</strong>'
+                        f'{status_detail}" style="margin: 0; padding: 3px 2px; '
+                        f'display: flex; flex-direction: column; align-items: center; '
+                        f'justify-content: center; gap: 0; white-space: nowrap;">'
+                        f'<span style="font-size: 0.47rem; font-weight: 700;">'
+                        f'{icon} {event_label}</span>'
+                        f'<span style="font-size: 0.65rem;">'
+                        f'<strong>{group["count"]:.1f}</strong> '
                         f'<span style="font-size: 0.7rem; font-weight: 900;">'
-                        f'{status_arrow}</span></div></div>'
+                        f'{status_arrow}</span></span></div></div>'
                     )
                 category_mix_html = (
                     '<div title="Llamados esperados por tipo; el color sigue la probabilidad calibrada" '
@@ -2102,11 +2105,6 @@ with tab_forecast:
                     {category_mix_html}
                     <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.5;" />
                     <div style="font-size: 0.68rem; color: var(--text-muted); line-height: 1.45; text-align: left;">
-                        <div style="font-size: 0.61rem; color: var(--text); font-weight: 800; text-transform: uppercase; margin-bottom: 0.22rem;">Prob. actividad alta</div>
-                        &#128663; R.Vehicular: <strong>{probability_percent(p.get('Prob_RVehicular_Alto', np.nan))}</strong> <span class="metric-delta {rescue_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{rescue_label}</span><br/>
-                        &#128293; Incendio: <strong>{probability_percent(p.get('Prob_Incendio_Alto', np.nan))}</strong> <span class="metric-delta {fire_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{fire_label}</span><br/>
-                        &#9928;&#65039; Climáticas: <strong>{probability_percent(p.get('Prob_Climaticas_Alto', np.nan))}</strong> <span class="metric-delta {climate_class}" style="margin: 0; font-size: 0.58rem; padding: 1px 5px;">{climate_label}</span><br/>
-                        <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.35;" />
                         &#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong><br/>
                         &#127777;&#65039; Media: <strong>{p['Temp_Media']:.1f}&deg;C</strong><br/>
                         &#128167; Humedad: <strong>{p['Hum_Media']:.0f}%</strong><br/>

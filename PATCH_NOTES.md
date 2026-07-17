@@ -8,6 +8,8 @@
 
 - Cambio visual: cada tipo, su conteo y su tendencia forman una sola píldora con fondo semaforizado: azul `↓`, verde `–`, naranjo `↑` y rojo `↑↑`.
 
+- Simplificación: se elimina el bloque redundante `Prob. actividad alta`. Las píldoras muestran icono y glosa completa: Incendio, Rescate, Climático y Otro.
+
 - Cambio: se elimina el cuadro inferior `Composición esperada y base habitual`; la composición permanece únicamente en las píldoras compactas de cada tarjeta.
 
 - Semáforo de Incendios, Rescates y Climáticas: el color del conteo sigue su probabilidad calibrada de actividad alta (`Baja <5%`, `Normal 5–<15%`, `Alta 15–<30%`, `Muy Alta ≥30%`). Por lo tanto, un rescate con 10% queda verde/Normal. `Otros`, que no tiene clasificador probabilístico propio, conserva la comparación contra su base habitual.
