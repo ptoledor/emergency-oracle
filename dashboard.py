@@ -22,6 +22,8 @@ if any(not hasattr(model_components, name) for name in required_model_components
     model_components = importlib.reload(model_components)
 
 from activity_levels import operational_activity_level
+from hourly_peak import predict_hourly_distribution, select_peak_hours
+from serving_history import prepare_event_history
 from signal_features import (
     CATEGORY_LAG_FEATURES,
     OPEN_METEO_HOURLY_QUERY,
@@ -425,6 +427,31 @@ css = f"""
         text-align: left;
     }}
     .weather-item {{ min-width: 0; white-space: nowrap; }}
+    .peak-hours {{
+        margin: 0.3rem 0 0.55rem;
+        padding: 0.42rem 0.5rem;
+        border: 1px solid rgba(59, 130, 246, 0.34);
+        border-radius: 7px;
+        background: rgba(59, 130, 246, 0.10);
+        color: var(--text);
+        line-height: 1.25;
+    }}
+    .peak-hours-label {{
+        display: block;
+        color: var(--text-muted);
+        font-size: 0.55rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        margin-bottom: 0.18rem;
+    }}
+    .peak-hours-value {{
+        display: block;
+        color: var(--text);
+        font-size: 0.7rem;
+        font-weight: 800;
+        overflow-wrap: anywhere;
+    }}
 
     @media (max-width: 768px) {{
         .block-container {{
@@ -567,6 +594,9 @@ css = f"""
             gap: 0.28rem 0.6rem;
             font-size: 0.66rem;
         }}
+        .peak-hours {{ padding: 0.55rem 0.65rem; }}
+        .peak-hours-label {{ font-size: 0.62rem; }}
+        .peak-hours-value {{ font-size: 0.82rem; }}
         .metric-card {{
             min-height: 84px;
             padding: 0.9rem 1rem;
@@ -961,6 +991,28 @@ category_composition_artifact = load_category_composition_artifact(
 
 
 @st.cache_resource
+def load_hourly_peak_artifact(model_mtime=None):
+    path = models_dir / "hourly_peak_model_v1.pkl"
+    if not path.exists():
+        return None
+    with path.open("rb") as stream:
+        artifact = pickle.load(stream)
+    artifact["calendar_model"] = force_single_thread_model(
+        artifact["calendar_model"]
+    )
+    if artifact.get("weather_model") is not None:
+        artifact["weather_model"] = force_single_thread_model(
+            artifact["weather_model"]
+        )
+    return artifact
+
+
+hourly_peak_artifact = load_hourly_peak_artifact(
+    model_mtimes.get("hourly_peak_model_v1.pkl")
+)
+
+
+@st.cache_resource
 def load_fifth_company_artifact():
     path = models_dir / "fifth_company_models.pkl"
     if not path.exists():
@@ -1227,6 +1279,7 @@ def get_weather_for_range(start_date, is_historical):
     except Exception:
         return build_local_weather_fallback(start_date, is_historical)
 
+
 # Forecasting function for 6 days (weather-only model)
 def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weather_data=None):
     # Load models and metadata
@@ -1273,16 +1326,20 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
         'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
     }
 
-    # Initialize last_30_events from df for rolling mean features
+    # Initialize event memory. If the local dataset is stale, do not present
+    # its final row as "yesterday": use a neutral seasonal/weekday baseline.
     last_30_events = []
     df_hist = pd.DataFrame()
+    lag_mode = "historical_baseline"
+    lag_age_days = None
+    last_observed_date = None
     try:
         df_hist = df[df['FECHA_DIA'] < start_date.strftime('%Y-%m-%d')].sort_values('FECHA_DIA')
-        if len(df_hist) >= 30:
-            last_30_events = list(df_hist['EVENTOS'].tail(30).fillna(0).values)
-        else:
-            hist_mean = df['EVENTOS'].mean() if not df.empty else 1.5
-            last_30_events = [hist_mean] * 30
+        history_details = prepare_event_history(df_hist, start_date, days=30)
+        last_30_events = history_details["values"]
+        lag_mode = history_details["mode"]
+        lag_age_days = history_details["age_days"]
+        last_observed_date = history_details["last_observed_date"]
     except Exception:
         last_30_events = [1.5] * 30
 
@@ -1298,10 +1355,21 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
     category_shares = {column: 0.0 for column in CATEGORY_LAG_FEATURES}
     if not df_hist.empty:
         latest = df_hist.iloc[-1]
-        recent = df_hist.tail(30)
+        recent = df_hist.tail(365)
         recent_total = float(recent['EVENTOS'].sum())
         for lag_column, source_column in category_source_by_lag.items():
-            current_category_lags[lag_column] = float(latest.get(source_column, 0.0))
+            if lag_mode == "observed":
+                current_category_lags[lag_column] = float(
+                    latest.get(source_column, 0.0)
+                )
+            else:
+                category_mean = pd.to_numeric(
+                    recent.get(source_column, pd.Series(dtype=float)),
+                    errors="coerce",
+                ).mean()
+                current_category_lags[lag_column] = float(
+                    0.0 if pd.isna(category_mean) else category_mean
+                )
             if recent_total > 0:
                 category_shares[lag_column] = float(recent[source_column].sum() / recent_total)
 
@@ -1471,6 +1539,26 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             prob_high = float(clf_model.predict_proba_horizon(X_pred, j + 1)[0, 1])
         else:
             prob_high = float(clf_model.predict_proba(X_pred)[0, 1])
+
+        hourly_peaks = []
+        if hourly_peak_artifact:
+            try:
+                hourly_distribution = predict_hourly_distribution(
+                    hourly_peak_artifact,
+                    weather_hourly,
+                    d,
+                    weather_is_reliable=not bool(
+                        '_source' in weather_hourly
+                        and weather_hourly['_source'].astype(str)
+                        .eq('local_fallback').any()
+                    ),
+                )
+                hourly_peaks = select_peak_hours(
+                    hourly_distribution,
+                    pred_count,
+                )
+            except Exception as exc:
+                print(f"No se pudieron calcular horas punta para {d}: {exc}")
         category_risk_probs = {}
         if category_risk_artifact:
             for group_name, details in category_risk_artifact.get("models", {}).items():
@@ -1511,6 +1599,13 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             'FechaStr': d_str,
             'Dia': DIAS_ES[d.strftime('%A')],
             'Prediccion': pred_count,
+            'Peak_Hours': hourly_peaks,
+            'Peak_Hours_Label': " · ".join(
+                peak["label"] for peak in hourly_peaks
+            ),
+            'Lag_Mode': lag_mode,
+            'Lag_Age_Days': lag_age_days,
+            'Last_Observed_Date': last_observed_date,
             'Prob_Alta': prob_high,
             'Prob_RVehicular_Alto': category_risk_probs.get(
                 "rescate_vehicular",
@@ -2314,6 +2409,15 @@ with tab_forecast:
                     'title="Llamados esperados por tipo; el color exige coherencia entre probabilidad y conteo">'
                     + ''.join(mix_rows) + '</div>'
                 )
+            peak_hours_html = ""
+            if p.get('Peak_Hours_Label'):
+                peak_hours_html = (
+                    '<div class="peak-hours" '
+                    'title="Picos separados por al menos 3 horas; no son horas garantizadas">'
+                    '<span class="peak-hours-label">&#128336; Horas más probables</span>'
+                    f'<span class="peak-hours-value">{p["Peak_Hours_Label"]}</span>'
+                    '</div>'
+                )
             forecast_cards.append(
                 f"""<div class="forecast-card">
                     <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Dia']}</div>
@@ -2324,6 +2428,7 @@ with tab_forecast:
                         <div class="metric-delta {activity_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{activity_text}</div>
                     </div>
                     {category_mix_html}
+                    {peak_hours_html}
                     <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.5;" />
                     <div class="weather-grid">
                         <div class="weather-item">&#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong></div>
@@ -2348,6 +2453,30 @@ with tab_forecast:
             "Nivel operacional: Baja <4 · Normal 4–<6 · "
             "Alta 6–<8 · Muy alta ≥8 llamados."
         )
+        if hourly_peak_artifact:
+            hourly_metrics = hourly_peak_artifact.get("selection_metrics", {})
+            st.caption(
+                "Horas más probables: modelo horario secundario con validación temporal "
+                f"(acierto Top-3 ±1 h: "
+                f"{float(hourly_metrics.get('top3_within_1h_hit_rate', 0)):.0%}; "
+                f"peso clima horario: "
+                f"{float(hourly_peak_artifact.get('weather_weight', 0)):.0%})."
+            )
+        lag_details = pred_results[0]
+        if lag_details.get('Lag_Mode') != 'observed':
+            last_observed = lag_details.get('Last_Observed_Date')
+            last_observed_label = (
+                last_observed.strftime('%d-%m-%Y')
+                if last_observed
+                else 'no disponible'
+            )
+            st.warning(
+                "La actividad reciente no está actualizada: el último conteo "
+                f"observado es del {last_observed_label}. Para no tratarlo como "
+                "si fuera ayer, los lags iniciales usan una base histórica por "
+                "mes y día de la semana; desde el segundo día, el forecast se "
+                "actualiza recursivamente."
+            )
 
         percentile_summary_html = render_percentile_table([
             build_percentile_row("Nivel de actividad (predicciones)", train_predictions, as_probability=False),

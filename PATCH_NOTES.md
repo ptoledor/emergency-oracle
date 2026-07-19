@@ -1,5 +1,17 @@
 # Patch Notes
 
+## 2026-07-19 - Horas punta y lags con procedencia explícita
+
+- Forecast: cada tarjeta muestra entre dos y cuatro horas más probables, separadas por al menos tres horas, reconciliadas con el nivel diario esperado.
+
+- Modelo horario secundario: XGBoost Poisson entrenado sobre 7.120 eventos y 1.444 días, con timestamps convertidos a `America/Santiago`. La selección temporal combina 75% calendario/patrón histórico y 25% clima horario; el Top-3 cubre 55,5% de los eventos dentro de ±1 hora.
+
+- Open-Meteo: el nuevo modelo conserva la resolución horaria de temperatura, humedad, precipitación, viento, ráfagas, código meteorológico y CAPE antes de distribuir la probabilidad por hora.
+
+- Lags: cuando el último conteo observado tiene más de un día de antigüedad, deja de tratarse como “ayer”. El primer día usa una base neutral por mes y día de la semana; los días siguientes mantienen la recursión del modelo activo y el dashboard informa la fecha real del último dato.
+
+- Política de datos: no se modificó la deduplicación ni se utilizó scraping adicional. El modelo horario reconcilia exactamente sus 7.120 eventos con el objetivo diario activo.
+
 ## 2026-07-17 - Rediseño móvil de Forecast
 
 - Navegación: las pestañas quedan ordenadas como `Forecast`, `Estacional Histórico`, `Histórico Diario` y `Estadísticas de Modelo`.

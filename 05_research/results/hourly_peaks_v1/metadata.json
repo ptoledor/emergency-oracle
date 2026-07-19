@@ -1,0 +1,88 @@
+{
+  "version": "hourly_peaks_v1",
+  "role": "secondary_hourly_allocation",
+  "timezone": "America/Santiago",
+  "calendar_features": [
+    "hour",
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos",
+    "month_sin",
+    "month_cos",
+    "is_weekend",
+    "is_holiday"
+  ],
+  "weather_features": [
+    "hour",
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos",
+    "month_sin",
+    "month_cos",
+    "is_weekend",
+    "is_holiday",
+    "temperature_2m",
+    "relative_humidity_2m",
+    "precipitation",
+    "wind_speed_10m",
+    "wind_gusts_10m",
+    "weather_code",
+    "cape"
+  ],
+  "weather_weight": 0.25,
+  "trained_through": "2026-04-16",
+  "training_days": 1444,
+  "training_events": 7120,
+  "selection_metrics": {
+    "weather_weight": 0.25,
+    "event_log_loss": 3.050268107487552,
+    "top3_exact_hit_rate": 0.1835340431153749,
+    "top3_within_1h_hit_rate": 0.5545501689784444,
+    "selection_score": 2.994813090589708
+  },
+  "validation_summary": [
+    {
+      "weather_weight": 0.0,
+      "event_log_loss": 3.051813078415853,
+      "top3_exact_hit_rate": 0.18394766063032064,
+      "top3_within_1h_hit_rate": 0.5556706440372906,
+      "selection_score": 2.996246014012124
+    },
+    {
+      "weather_weight": 0.25,
+      "event_log_loss": 3.050268107487552,
+      "top3_exact_hit_rate": 0.1835340431153749,
+      "top3_within_1h_hit_rate": 0.5545501689784444,
+      "selection_score": 2.994813090589708
+    },
+    {
+      "weather_weight": 0.5,
+      "event_log_loss": 3.049832229934671,
+      "top3_exact_hit_rate": 0.18045440458113962,
+      "top3_within_1h_hit_rate": 0.546388540126411,
+      "selection_score": 2.99519337592203
+    },
+    {
+      "weather_weight": 0.75,
+      "event_log_loss": 3.050419624176939,
+      "top3_exact_hit_rate": 0.1708123742091917,
+      "top3_within_1h_hit_rate": 0.5451873000103665,
+      "selection_score": 2.995900894175902
+    },
+    {
+      "weather_weight": 1.0,
+      "event_log_loss": 3.052022306838223,
+      "top3_exact_hit_rate": 0.17005004349563127,
+      "top3_within_1h_hit_rate": 0.5465509133634582,
+      "selection_score": 2.997367215501877
+    }
+  ],
+  "peak_policy": {
+    "low": 2,
+    "normal": 3,
+    "high": 4,
+    "min_separation_hours": 3
+  }
+}
