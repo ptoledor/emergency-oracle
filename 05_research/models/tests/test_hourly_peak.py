@@ -56,7 +56,7 @@ def test_hourly_distribution_reconciles_to_one():
     assert (result["probability"] > 0).all()
 
 
-def test_peak_policy_returns_multiple_separated_hours():
+def test_peak_policy_returns_only_the_most_probable_hour():
     probability = np.full(24, 0.01)
     probability[[2, 8, 14, 20]] = [0.12, 0.15, 0.18, 0.20]
     probability /= probability.sum()
@@ -66,20 +66,15 @@ def test_peak_policy_returns_multiple_separated_hours():
     })
     peaks = select_peak_hours(distribution, expected_count=5.5)
     hours = [peak["hour"] for peak in peaks]
-    assert len(hours) == 3
-    assert hours == [8, 14, 20]
-    assert all(
-        min((left - right) % 24, (right - left) % 24) >= 3
-        for index, left in enumerate(hours)
-        for right in hours[index + 1:]
-    )
+    assert hours == [20]
+    assert peaks[0]["label"] == "20:00"
 
 
-def test_peak_count_scales_with_daily_activity():
+def test_peak_count_does_not_scale_with_daily_activity():
     distribution = pd.DataFrame({
         "hour": range(24),
         "probability": np.linspace(1, 24, 24) / np.linspace(1, 24, 24).sum(),
     })
-    assert len(select_peak_hours(distribution, expected_count=3.0)) == 2
-    assert len(select_peak_hours(distribution, expected_count=5.0)) == 3
-    assert len(select_peak_hours(distribution, expected_count=9.0)) == 4
+    assert len(select_peak_hours(distribution, expected_count=3.0)) == 1
+    assert len(select_peak_hours(distribution, expected_count=5.0)) == 1
+    assert len(select_peak_hours(distribution, expected_count=9.0)) == 1

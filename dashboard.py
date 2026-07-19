@@ -2413,8 +2413,8 @@ with tab_forecast:
             if p.get('Peak_Hours_Label'):
                 peak_hours_html = (
                     '<div class="peak-hours" '
-                    'title="Picos separados por al menos 3 horas; no son horas garantizadas">'
-                    '<span class="peak-hours-label">&#128336; Horas más probables</span>'
+                    'title="Hora con mayor probabilidad estimada; no es una hora garantizada">'
+                    '<span class="peak-hours-label">&#128336; Hora más probable</span>'
                     f'<span class="peak-hours-value">{p["Peak_Hours_Label"]}</span>'
                     '</div>'
                 )
@@ -2454,12 +2454,9 @@ with tab_forecast:
             "Alta 6–<8 · Muy alta ≥8 llamados."
         )
         if hourly_peak_artifact:
-            hourly_metrics = hourly_peak_artifact.get("selection_metrics", {})
             st.caption(
-                "Horas más probables: modelo horario secundario con validación temporal "
-                f"(acierto Top-3 ±1 h: "
-                f"{float(hourly_metrics.get('top3_within_1h_hit_rate', 0)):.0%}; "
-                f"peso clima horario: "
+                "Hora más probable: modelo horario secundario con validación temporal "
+                f"(peso clima horario: "
                 f"{float(hourly_peak_artifact.get('weather_weight', 0)):.0%})."
             )
         lag_details = pred_results[0]

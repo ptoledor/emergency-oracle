@@ -135,34 +135,17 @@ def select_peak_hours(
     expected_count: float,
     min_separation: int = 3,
 ) -> list[dict]:
-    """Choose distinct operational peaks from the hourly distribution."""
-    if expected_count < 4:
-        peak_count = 2
-    elif expected_count < 8:
-        peak_count = 3
-    else:
-        peak_count = 4
-
+    """Return only the most probable local hour."""
+    del expected_count, min_separation
     probabilities = distribution.set_index("hour")["probability"].reindex(
         range(24), fill_value=0.0
     )
-    selected: list[int] = []
-    for hour in probabilities.sort_values(ascending=False).index:
-        hour = int(hour)
-        if all(
-            min((hour - other) % 24, (other - hour) % 24) >= min_separation
-            for other in selected
-        ):
-            selected.append(hour)
-        if len(selected) == peak_count:
-            break
-
-    # Display chronologically; peak selection itself remains probability-ranked.
+    selected = [int(probabilities.idxmax())]
     return [
         {
             "hour": hour,
             "label": f"{hour:02d}:00",
             "probability": float(probabilities.loc[hour]),
         }
-        for hour in sorted(selected)
+        for hour in selected
     ]

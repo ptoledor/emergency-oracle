@@ -2,7 +2,7 @@
 
 ## 2026-07-19 - Horas punta y lags con procedencia explícita
 
-- Forecast: cada tarjeta muestra entre dos y cuatro horas más probables, separadas por al menos tres horas, reconciliadas con el nivel diario esperado.
+- Forecast: cada tarjeta muestra únicamente la hora con mayor probabilidad estimada para el día.
 
 - Modelo horario secundario: XGBoost Poisson entrenado sobre 7.120 eventos y 1.444 días, con timestamps convertidos a `America/Santiago`. La selección temporal combina 75% calendario/patrón histórico y 25% clima horario; el Top-3 cubre 55,5% de los eventos dentro de ±1 hora.
 
