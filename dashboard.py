@@ -9,7 +9,17 @@ import datetime
 import time
 import holidays
 import importlib
+import sys
 import model_components
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+base_dir = Path(__file__).resolve().parent
+data_utils_dir = base_dir / "02_data"
+if str(data_utils_dir) not in sys.path:
+    sys.path.insert(0, str(data_utils_dir))
+
+from dedup import mark_duplicates
 
 # Streamlit puede reejecutar dashboard.py dentro de un proceso que conserva en
 # sys.modules una version anterior de este modulo. Recargar solo cuando falta
@@ -22,7 +32,7 @@ if any(not hasattr(model_components, name) for name in required_model_components
     model_components = importlib.reload(model_components)
 
 from activity_levels import operational_activity_level
-from hourly_peak import predict_hourly_distribution, select_peak_hours
+from hourly_peak import historical_hourly_distribution
 from serving_history import prepare_event_history
 from signal_features import (
     CATEGORY_LAG_FEATURES,
@@ -30,8 +40,6 @@ from signal_features import (
     aggregate_weather_daily,
     event_history_features,
 )
-from pathlib import Path
-from zoneinfo import ZoneInfo
 from sklearn.metrics import brier_score_loss
 
 # 1. Configuración de página
@@ -43,8 +51,8 @@ st.set_page_config(
 )
 
 # 2. Rutas bases
-base_dir = Path(__file__).resolve().parent
 data_path = base_dir / "02_data" / "augmented_emergency_data.csv"
+raw_messages_path = base_dir / "02_data" / "compiled_scraped_data.csv"
 models_dir = base_dir / "03_model" / "saved_models"
 research_results_dir = base_dir / "05_research" / "results" / "weather_ablation"
 blend_results_dir = (
@@ -427,31 +435,6 @@ css = f"""
         text-align: left;
     }}
     .weather-item {{ min-width: 0; white-space: nowrap; }}
-    .peak-hours {{
-        margin: 0.3rem 0 0.55rem;
-        padding: 0.42rem 0.5rem;
-        border: 1px solid rgba(59, 130, 246, 0.34);
-        border-radius: 7px;
-        background: rgba(59, 130, 246, 0.10);
-        color: var(--text);
-        line-height: 1.25;
-    }}
-    .peak-hours-label {{
-        display: block;
-        color: var(--text-muted);
-        font-size: 0.55rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.02em;
-        margin-bottom: 0.18rem;
-    }}
-    .peak-hours-value {{
-        display: block;
-        color: var(--text);
-        font-size: 0.7rem;
-        font-weight: 800;
-        overflow-wrap: anywhere;
-    }}
 
     @media (max-width: 768px) {{
         .block-container {{
@@ -594,9 +577,6 @@ css = f"""
             gap: 0.28rem 0.6rem;
             font-size: 0.66rem;
         }}
-        .peak-hours {{ padding: 0.55rem 0.65rem; }}
-        .peak-hours-label {{ font-size: 0.62rem; }}
-        .peak-hours-value {{ font-size: 0.82rem; }}
         .metric-card {{
             min-height: 84px;
             padding: 0.9rem 1rem;
@@ -990,25 +970,27 @@ category_composition_artifact = load_category_composition_artifact(
 )
 
 
-@st.cache_resource
-def load_hourly_peak_artifact(model_mtime=None):
-    path = models_dir / "hourly_peak_model_v1.pkl"
-    if not path.exists():
-        return None
-    with path.open("rb") as stream:
-        artifact = pickle.load(stream)
-    artifact["calendar_model"] = force_single_thread_model(
-        artifact["calendar_model"]
+@st.cache_data
+def load_historical_hourly_occurrence(raw_mtime=None, daily_mtime=None):
+    del raw_mtime, daily_mtime
+    if not raw_messages_path.exists() or not data_path.exists():
+        return pd.DataFrame()
+
+    raw = pd.read_csv(raw_messages_path, sep=";", usecols=["Fecha", "Texto"])
+    daily = pd.read_csv(data_path, sep=";", usecols=["FECHA_DIA"])
+    valid_dates = set(
+        pd.to_datetime(daily["FECHA_DIA"], errors="coerce").dropna().dt.date
     )
-    if artifact.get("weather_model") is not None:
-        artifact["weather_model"] = force_single_thread_model(
-            artifact["weather_model"]
-        )
-    return artifact
+    _, incident_flags = mark_duplicates(raw, "Fecha", "Texto")
+    incidents = raw[
+        raw.index.map(lambda index: incident_flags.get(index, False))
+    ].copy()
+    return historical_hourly_distribution(incidents["Fecha"], valid_dates)
 
 
-hourly_peak_artifact = load_hourly_peak_artifact(
-    model_mtimes.get("hourly_peak_model_v1.pkl")
+historical_hourly_occurrence = load_historical_hourly_occurrence(
+    raw_messages_path.stat().st_mtime if raw_messages_path.exists() else None,
+    data_path.stat().st_mtime if data_path.exists() else None,
 )
 
 
@@ -1540,25 +1522,6 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
         else:
             prob_high = float(clf_model.predict_proba(X_pred)[0, 1])
 
-        hourly_peaks = []
-        if hourly_peak_artifact:
-            try:
-                hourly_distribution = predict_hourly_distribution(
-                    hourly_peak_artifact,
-                    weather_hourly,
-                    d,
-                    weather_is_reliable=not bool(
-                        '_source' in weather_hourly
-                        and weather_hourly['_source'].astype(str)
-                        .eq('local_fallback').any()
-                    ),
-                )
-                hourly_peaks = select_peak_hours(
-                    hourly_distribution,
-                    pred_count,
-                )
-            except Exception as exc:
-                print(f"No se pudieron calcular horas punta para {d}: {exc}")
         category_risk_probs = {}
         if category_risk_artifact:
             for group_name, details in category_risk_artifact.get("models", {}).items():
@@ -1599,10 +1562,6 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             'FechaStr': d_str,
             'Dia': DIAS_ES[d.strftime('%A')],
             'Prediccion': pred_count,
-            'Peak_Hours': hourly_peaks,
-            'Peak_Hours_Label': " · ".join(
-                peak["label"] for peak in hourly_peaks
-            ),
             'Lag_Mode': lag_mode,
             'Lag_Age_Days': lag_age_days,
             'Last_Observed_Date': last_observed_date,
@@ -2409,15 +2368,6 @@ with tab_forecast:
                     'title="Llamados esperados por tipo; el color exige coherencia entre probabilidad y conteo">'
                     + ''.join(mix_rows) + '</div>'
                 )
-            peak_hours_html = ""
-            if p.get('Peak_Hours_Label'):
-                peak_hours_html = (
-                    '<div class="peak-hours" '
-                    'title="Hora con mayor probabilidad estimada; no es una hora garantizada">'
-                    '<span class="peak-hours-label">&#128336; Hora más probable</span>'
-                    f'<span class="peak-hours-value">{p["Peak_Hours_Label"]}</span>'
-                    '</div>'
-                )
             forecast_cards.append(
                 f"""<div class="forecast-card">
                     <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Dia']}</div>
@@ -2428,7 +2378,6 @@ with tab_forecast:
                         <div class="metric-delta {activity_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{activity_text}</div>
                     </div>
                     {category_mix_html}
-                    {peak_hours_html}
                     <hr style="border-color: var(--border); margin: 0.5rem 0; opacity: 0.5;" />
                     <div class="weather-grid">
                         <div class="weather-item">&#127777;&#65039; Max: <strong>{p['Temp_Max']:.1f}&deg;C</strong></div>
@@ -2446,6 +2395,65 @@ with tab_forecast:
             </div>""",
             unsafe_allow_html=True,
         )
+        if not historical_hourly_occurrence.empty:
+            hourly_history = historical_hourly_occurrence.copy()
+            hourly_history["percentage"] = hourly_history["probability"] * 100
+            hourly_fig = go.Figure(go.Bar(
+                x=hourly_history["hour"],
+                y=hourly_history["percentage"],
+                customdata=hourly_history[["days_with_event", "total_days", "count"]],
+                marker=dict(
+                    color=hourly_history["percentage"],
+                    colorscale=[[0, "#bfdbfe"], [1, "#2563eb"]],
+                    showscale=False,
+                    line=dict(color="rgba(37, 99, 235, 0.45)", width=1),
+                ),
+                hovertemplate=(
+                    "Hora %{x:02d}:00<br>"
+                    "Probabilidad histórica: %{y:.1f}%<br>"
+                    "Días con llamados: %{customdata[0]:,.0f} de %{customdata[1]:,.0f}<br>"
+                    "Llamados totales: %{customdata[2]:,.0f}<extra></extra>"
+                ),
+            ))
+            hourly_layout = dict(PLOT_LAYOUT)
+            hourly_layout["margin"] = dict(l=40, r=15, t=10, b=45)
+            hourly_layout["xaxis"] = dict(
+                **PLOT_LAYOUT["xaxis"],
+                title="Hora local (America/Santiago)",
+                tickmode="array",
+                tickvals=list(range(0, 24, 2)),
+                ticktext=[f"{hour:02d}:00" for hour in range(0, 24, 2)],
+                fixedrange=True,
+            )
+            hourly_layout["yaxis"] = dict(
+                **PLOT_LAYOUT["yaxis"],
+                title="Probabilidad histórica",
+                ticksuffix="%",
+                rangemode="tozero",
+                fixedrange=True,
+            )
+            hourly_fig.update_layout(
+                **hourly_layout,
+                height=310,
+                showlegend=False,
+                bargap=0.18,
+            )
+            st.markdown(
+                '<div class="chart-title" style="margin-top: 1.15rem;">'
+                'Probabilidad histórica de ocurrencia por hora</div>',
+                unsafe_allow_html=True,
+            )
+            st.plotly_chart(
+                hourly_fig,
+                use_container_width=True,
+                config={"displayModeBar": False, "responsive": True},
+                key="historical_hourly_probability",
+            )
+            st.caption(
+                "Cada barra representa el porcentaje de días históricos con "
+                "al menos un llamado durante esa hora local. Por ejemplo, 25% "
+                "equivale a un evento en esa franja en 25 de cada 100 días."
+            )
         current_model_name = format_model_name(metadata_aug.get("validation_protocol", "Modelo Climático Aumentado"))
         suffix = model_algorithm_suffix(metadata_aug)
         st.markdown(f"**Modelo oficial:** {current_model_name}{suffix} · NUEVO")
@@ -2453,12 +2461,6 @@ with tab_forecast:
             "Nivel operacional: Baja <4 · Normal 4–<6 · "
             "Alta 6–<8 · Muy alta ≥8 llamados."
         )
-        if hourly_peak_artifact:
-            st.caption(
-                "Hora más probable: modelo horario secundario con validación temporal "
-                f"(peso clima horario: "
-                f"{float(hourly_peak_artifact.get('weather_weight', 0)):.0%})."
-            )
         lag_details = pred_results[0]
         if lag_details.get('Lag_Mode') != 'observed':
             last_observed = lag_details.get('Last_Observed_Date')

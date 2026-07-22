@@ -1,5 +1,13 @@
 # Patch Notes
 
+## 2026-07-22 - Distribución histórica por hora
+
+- Forecast: se elimina la hora más probable de las tarjetas para evitar presentar un único horario como una predicción precisa.
+
+- Horario histórico: se agrega bajo las tarjetas un gráfico de 24 horas con el porcentaje de días que tuvo al menos un llamado en cada hora local (`America/Santiago`). El detalle muestra días con ocurrencia y llamados totales.
+
+- Consistencia: el gráfico usa los mismos mensajes incident-like y las mismas fechas válidas del objetivo diario, sin activar deduplicación ni modificar el modelo oficial.
+
 ## 2026-07-19 - Horas punta y lags con procedencia explícita
 
 - Forecast: cada tarjeta muestra únicamente la hora con mayor probabilidad estimada para el día.
