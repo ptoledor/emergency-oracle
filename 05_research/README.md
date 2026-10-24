@@ -92,16 +92,3 @@ Construir el dataset con target auditado:
 La salida queda en `05_research/data/experimental_target_dataset.csv`. Conserva
 `EVENTOS_ORIGINAL`, usa `EVENTOS` para el conteo auditado, mantiene ceros
 confirmados y deja `coverage_unknown` como target vacio.
-
-## Ablacion meteorologica
-
-```powershell
-.\.venv\Scripts\python.exe 05_research\weather_features.py `
-  --start-date 2022-02-03 --end-date 2026-04-17
-
-.\.venv\Scripts\python.exe 05_research\run_weather_ablation.py
-```
-
-El experimento usa Historical Forecast API, excluye targets cero agregados y
-compara grupos de lluvia/viento, atmosfera y riesgo de incendio. El resumen
-queda en `05_research/results/weather_ablation/experiment_summary.json`.

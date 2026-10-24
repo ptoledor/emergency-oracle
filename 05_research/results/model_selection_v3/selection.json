@@ -1,0 +1,191 @@
+{
+ "selection_scenario": "previous_runs_lead",
+ "reference": "xgb_poisson_sin_historial",
+ "chosen": "xgb_poisson_sin_historial",
+ "rule": "mas simple entre los no peores que la referencia, AUC -0.01 y mejor que promedio 30d en dias 1-5",
+ "candidates": {
+  "glm_poisson_clima_calendario": {
+   "rank": 1,
+   "mean_mae": 2.327652127452087,
+   "mean_auc": 0.6067180098431232,
+   "vs_reference": {
+    "mae_improvement_mean": -0.05907859164606457,
+    "mae_improvement_ci_low": -0.10257707149403474,
+    "mae_improvement_ci_high": -0.015100284642098163,
+    "mae_probability_improves": 0.0038
+   },
+   "checks": {
+    "not_worse_than_reference": false,
+    "auc_within_0_01": false,
+    "beats_30d_days_1_5": false
+   },
+   "eligible": false
+  },
+  "xgb_poisson_sin_historial": {
+   "rank": 2,
+   "mean_mae": 2.271863697084983,
+   "mean_auc": 0.6287343347904168,
+   "vs_reference": {
+    "mae_improvement_mean": 0.0,
+    "mae_improvement_ci_low": 0.0,
+    "mae_improvement_ci_high": 0.0,
+    "mae_probability_improves": 0.0
+   },
+   "checks": {
+    "not_worse_than_reference": true,
+    "auc_within_0_01": true,
+    "beats_30d_days_1_5": true
+   },
+   "eligible": true
+  },
+  "xgb_poisson": {
+   "rank": 3,
+   "mean_mae": 2.273982762064876,
+   "mean_auc": 0.6315708660176146,
+   "vs_reference": {
+    "mae_improvement_mean": -0.005384026155142786,
+    "mae_improvement_ci_low": -0.033790623718587424,
+    "mae_improvement_ci_high": 0.024665309929261872,
+    "mae_probability_improves": 0.3516
+   },
+   "checks": {
+    "not_worse_than_reference": true,
+    "auc_within_0_01": true,
+    "beats_30d_days_1_5": true
+   },
+   "eligible": true
+  },
+  "ensemble_v2_sin_historial": {
+   "rank": 4,
+   "mean_mae": 2.311211907716379,
+   "mean_auc": 0.6295636766597029,
+   "vs_reference": {
+    "mae_improvement_mean": -0.028228022838036573,
+    "mae_improvement_ci_low": -0.061063426612890416,
+    "mae_improvement_ci_high": 0.003197346852890286,
+    "mae_probability_improves": 0.0414
+   },
+   "checks": {
+    "not_worse_than_reference": true,
+    "auc_within_0_01": true,
+    "beats_30d_days_1_5": true
+   },
+   "eligible": true
+  },
+  "ensemble_v2": {
+   "rank": 5,
+   "mean_mae": 2.2860389365454714,
+   "mean_auc": 0.6326757489040714,
+   "vs_reference": {
+    "mae_improvement_mean": -0.010159161475396514,
+    "mae_improvement_ci_low": -0.051894388408434064,
+    "mae_improvement_ci_high": 0.03256155736591656,
+    "mae_probability_improves": 0.3122
+   },
+   "checks": {
+    "not_worse_than_reference": true,
+    "auc_within_0_01": true,
+    "beats_30d_days_1_5": true
+   },
+   "eligible": true
+  }
+ },
+ "horizons": {
+  "1": {
+   "interval_80": [
+    -2.735756993293762,
+    4.383629941940308
+   ],
+   "interval_coverage": 0.8,
+   "prob_coef": 0.5627810263895019,
+   "prob_intercept": -4.2413810107456955,
+   "publish": true,
+   "mae": 2.260976423157586,
+   "mae_promedio_30d": 2.368595332243321,
+   "high_auc": 0.6468727184229739,
+   "auc_nested": 0.6664922737719314,
+   "brier_nested": 0.14203074004865443,
+   "p_beats_30d": 0.9988
+  },
+  "2": {
+   "interval_80": [
+    -2.6609885215759275,
+    4.507227158546448
+   ],
+   "interval_coverage": 0.8,
+   "prob_coef": 0.4814099187200652,
+   "prob_intercept": -3.813686204207541,
+   "publish": true,
+   "mae": 2.281688472884042,
+   "mae_promedio_30d": 2.388103405971879,
+   "high_auc": 0.6173377403846154,
+   "auc_nested": 0.6390501532010966,
+   "brier_nested": 0.14138234790042822,
+   "p_beats_30d": 0.9994
+  },
+  "3": {
+   "interval_80": [
+    -2.5849663257598876,
+    4.70133080482483
+   ],
+   "interval_coverage": 0.8,
+   "prob_coef": 0.4661922095525634,
+   "prob_intercept": -3.6769028236617145,
+   "publish": true,
+   "mae": 2.2603997318183673,
+   "mae_promedio_30d": 2.388384132845593,
+   "high_auc": 0.6255345856869701,
+   "auc_nested": 0.6503246753246754,
+   "brier_nested": 0.14225303795969607,
+   "p_beats_30d": 0.9996
+  },
+  "4": {
+   "interval_80": [
+    -2.5361828804016113,
+    4.620932579040527
+   ],
+   "interval_coverage": 0.800302571860817,
+   "prob_coef": 0.5033078390381894,
+   "prob_intercept": -3.8417921930029393,
+   "publish": true,
+   "mae": 2.2578943929946367,
+   "mae_promedio_30d": 2.402409251531793,
+   "high_auc": 0.6247627793082339,
+   "auc_nested": 0.6486913150910588,
+   "brier_nested": 0.14261066695342978,
+   "p_beats_30d": 1.0
+  },
+  "5": {
+   "interval_80": [
+    -2.4729904174804687,
+    4.730311107635498
+   ],
+   "interval_coverage": 0.7978227060653188,
+   "prob_coef": 0.619226516022999,
+   "prob_intercept": -4.348917490112378,
+   "publish": true,
+   "mae": 2.2566395747717207,
+   "mae_promedio_30d": 2.4160711312387186,
+   "high_auc": 0.6532982791586996,
+   "auc_nested": 0.67504195636538,
+   "brier_nested": 0.14297609450846652,
+   "p_beats_30d": 0.9998
+  },
+  "6": {
+   "interval_80": [
+    -2.562966728210449,
+    4.670309734344483
+   ],
+   "interval_coverage": 0.7984,
+   "prob_coef": 0.4445018070246508,
+   "prob_intercept": -3.505918863950145,
+   "publish": true,
+   "mae": 2.313583586883545,
+   "mae_promedio_30d": 2.4139373491081075,
+   "high_auc": 0.6045999057810081,
+   "auc_nested": 0.6168678396072013,
+   "brier_nested": 0.1472470791238625,
+   "p_beats_30d": 0.987
+  }
+ }
+}

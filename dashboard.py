@@ -969,35 +969,6 @@ historical_hourly_occurrence = load_historical_hourly_occurrence(
 )
 
 
-@st.cache_resource
-def load_fifth_company_artifact():
-    path = models_dir / "fifth_company_models.pkl"
-    if not path.exists():
-        return None
-    with path.open("rb") as stream:
-        artifact = pickle.load(stream)
-    artifact["regressor"] = force_single_thread_model(artifact["regressor"])
-    artifact["classifier"] = force_single_thread_model(artifact["classifier"])
-    return artifact
-
-
-fifth_company_artifact = load_fifth_company_artifact()
-if df is not None and fifth_company_artifact:
-    try:
-        fifth_metadata = fifth_company_artifact["metadata"]
-        fifth_features = fifth_metadata["feature_cols"]
-        fifth_X = df[fifth_features]
-        df["PRED_5TA_CIA"] = np.clip(
-            fifth_company_artifact["regressor"].predict(fifth_X), 0, None
-        )
-        df["PROB_5TA_CIA_ALTA"] = fifth_company_artifact[
-            "classifier"
-        ].predict_proba(fifth_X)[:, 1]
-    except Exception:
-        df["PRED_5TA_CIA"] = np.nan
-        df["PROB_5TA_CIA_ALTA"] = np.nan
-
-
 def category_risk_label(probability):
     if probability is None or np.isnan(probability):
         return "Sin modelo", "activity-low"
@@ -1987,10 +1958,9 @@ with tab_forecast:
             )
             st.warning(
                 "La actividad reciente no está actualizada: el último conteo "
-                f"observado es del {last_observed_label}. Para no tratarlo como "
-                "si fuera ayer, los lags iniciales usan una base histórica por "
-                "mes y día de la semana; desde el segundo día, el forecast se "
-                "actualiza recursivamente."
+                f"observado es del {last_observed_label}. Los días sin conteo "
+                "observado se tratan como faltantes, igual que en el "
+                "entrenamiento."
             )
 
         percentile_summary_html = render_percentile_table([

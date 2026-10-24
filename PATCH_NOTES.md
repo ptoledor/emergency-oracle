@@ -1,5 +1,15 @@
 # Patch Notes
 
+## 2026-10-23 - Modelo reconstruido con evaluación honesta (sin promover)
+
+- Datos: `clean_and_augment.py` descarga una sola vez el clima horario de la Historical Forecast API (17 variables) y lo agrega con `features.aggregate_weather_daily`, igual que el forecast. El dataset trae todas las variables `WX_*`/`WX2_*` y ya no depende de `historical_forecast_features*.csv`. Los días sin cobertura quedan faltantes en el historial de llamados, al entrenar y al servir (antes se rellenaban con 0 al entrenar y con un promedio estacional al servir). Se elimina el conteo de la 5ta Compañía.
+
+- `03_model/train_model.py` reemplaza a `train.py`, `train_repeated_kfold.py`, `build_*`, `search_*` y `evaluate_forecast_horizons.py`. Compara cinco candidatos declarados de antemano (GLM Poisson de clima y calendario, XGBoost Poisson con y sin historial, y el ensemble v2 con y sin historial) en el forecast recursivo de 6 días, con el clima emitido con la anticipación real. Elige el más simple que no sea peor que el mejor, no pierda más de 0,01 de AUC y le gane al promedio de 30 días en los días 1–5.
+
+- Resultado: el elegido es XGBoost Poisson sin historial de llamados (100 variables). Es también el de menor MAE medio (2,272 en los días 1–6, contra 2,286 del ensemble v2) y le gana al promedio de 30 días en los seis días (P ≥ 0,987). El GLM no supera al promedio de 30 días. Guardado en JSON en `03_model/saved_models/count_model_v3/`, con intervalo del 80% y probabilidad de >7 llamados calibrados por día. No se promovió: `active_models.json` no cambia sin aprobación.
+
+- Submodelos: riesgo por categoría con lista fija de variables y una compuerta contra la tasa mensual (los tres grupos la superan en Brier; rescate vehicular por muy poco). Composición reentrenada con el dataset nuevo. Se eliminan el modelo XGBoost de horas punta (queda la distribución histórica) y los modelos de la 5ta Compañía.
+
 ## 2026-10-23 - Un solo pipeline de variables
 
 - `features.py` reúne todas las definiciones de variables (agregación horaria de Open-Meteo, lluvia acumulada, días sin lluvia, VPD e índices, calendario e historial de llamados) y reemplaza a `signal_features.py` y `serving_history.py`. `clean_and_augment.py`, el forecast y la evaluación por horizonte las usan sin copias propias.

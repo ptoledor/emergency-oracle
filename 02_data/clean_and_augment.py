@@ -4,7 +4,6 @@ import requests
 import os
 import time
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import sys
 if str(Path(__file__).resolve().parent) not in sys.path:
@@ -14,22 +13,20 @@ from dedup import mark_duplicates, assign_local_date, DEFAULT_TIMEZONE
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-from features import CALENDAR_COLUMNS, calendar_features, weather_derived_features
+from features import (
+    CALENDAR_COLUMNS,
+    CATEGORY_SOURCES,
+    EVENT_HISTORY_COLUMNS,
+    OPEN_METEO_HOURLY_QUERY,
+    WEATHER_DERIVED_COLUMNS,
+    aggregate_weather_daily,
+    calendar_features,
+    event_history_table,
+    weather_derived_features,
+)
 
+WEATHER_CACHE_VERSION = "historical_forecast_hourly_v2"
 PROJECT_TIMEZONE = DEFAULT_TIMEZONE
-FIFTH_COMPANY_UNIT_PATTERN = r"(?<![A-Z0-9])(?:B|RB|RX|MX|BX)[- ]?5(?![A-Z0-9])"
-FIFTH_COMPANY_UNIT_CAPTURE_PATTERN = r"(?<![A-Z0-9])(B|RB|RX|MX|BX)[- ]?5(?![A-Z0-9])"
-
-
-def fifth_company_dispatch_mask(text):
-    """Identify dispatches containing a known 5th Company apparatus."""
-    without_urls = text.fillna("").str.replace(r"https?://\S+", "", regex=True)
-    return without_urls.str.contains(
-        FIFTH_COMPANY_UNIT_PATTERN,
-        case=False,
-        regex=True,
-        na=False,
-    )
 
 
 def fetch_json_with_retry(url, timeout=30, retries=3):
@@ -49,6 +46,41 @@ def fetch_json_with_retry(url, timeout=30, retries=3):
     raise RuntimeError(f"Error Open-Meteo despues de {retries} intentos: {last_error}")
 
 
+def load_historical_weather(start_date, end_date, cache_path):
+    """Daily weather from the Historical Forecast API, cached by version and range."""
+    version_path = cache_path.parent / ".weather_cache_version"
+    if cache_path.exists() and version_path.exists():
+        cached = pd.read_csv(cache_path)
+        if (
+            version_path.read_text(encoding="utf-8").strip() == WEATHER_CACHE_VERSION
+            and str(cached['FECHA_DIA'].min()) <= start_date
+            and str(cached['FECHA_DIA'].max()) >= end_date
+        ):
+            print(f"Cargando clima desde caché (versión={WEATHER_CACHE_VERSION})...")
+            return cached
+
+    print("Descargando clima horario (Historical Forecast API) desde Open-Meteo...")
+    chunks = []
+    chunk_start = pd.Timestamp(start_date)
+    while chunk_start <= pd.Timestamp(end_date):
+        chunk_end = min(chunk_start + pd.DateOffset(years=1) - pd.Timedelta(days=1), pd.Timestamp(end_date))
+        url = (
+            "https://historical-forecast-api.open-meteo.com/v1/forecast?"
+            "latitude=-36.731106&longitude=-73.11023&"
+            f"start_date={chunk_start:%Y-%m-%d}&end_date={chunk_end:%Y-%m-%d}&"
+            f"hourly={OPEN_METEO_HOURLY_QUERY}&timezone=America%2FSantiago&format=json"
+        )
+        chunks.append(pd.DataFrame(fetch_json_with_retry(url, timeout=120)['hourly']))
+        chunk_start = chunk_end + pd.Timedelta(days=1)
+    daily = aggregate_weather_daily(pd.concat(chunks, ignore_index=True))
+    daily.index = pd.to_datetime(daily.index).strftime('%Y-%m-%d')
+    daily = daily.rename_axis('FECHA_DIA').reset_index()
+    daily.to_csv(cache_path, index=False)
+    version_path.write_text(WEATHER_CACHE_VERSION, encoding="utf-8")
+    print(f"Clima diario guardado en caché: {cache_path}")
+    return daily
+
+
 def main():
     print("=== Paso 2: Limpieza y Aumentación de Datos (v2) ===")
 
@@ -59,7 +91,6 @@ def main():
     weather_cache_path = base_dir / "02_data" / "weather_archive_talcahuano.csv"
     output_data_path = base_dir / "02_data" / "augmented_emergency_data.csv"
     audit_target_path = base_dir / "05_research" / "data_quality" / "output" / "daily_target_audit.csv"
-    fifth_company_audit_path = base_dir / "02_data" / "fifth_company_dispatch_audit.csv"
 
     if not os.path.exists(raw_tweets_path):
         raise FileNotFoundError(f"No se encontró el archivo de tweets: {raw_tweets_path}")
@@ -116,35 +147,6 @@ def main():
     # === CONTEO TOTAL DE EVENTOS POR DÍA (solo incident-like únicos) ===
     df_incidents = df_merged[df_merged['_IS_INCIDENT_LIKE'] & ~df_merged['_IS_DUPLICATE']].copy()
     df_daily_events = df_incidents.groupby('FECHA_DIA').size().reset_index(name='EVENTOS')
-    df_incidents['_IS_5TA_CIA'] = fifth_company_dispatch_mask(df_incidents['Texto'])
-    fifth_audit = df_incidents.loc[
-        df_incidents['_IS_5TA_CIA'], ['Fecha', 'FECHA_DIA', 'Texto']
-    ].copy()
-    fifth_text_without_urls = fifth_audit['Texto'].fillna('').str.replace(
-        r"https?://\S+", "", regex=True
-    )
-    fifth_audit['UNIDADES_5TA'] = fifth_text_without_urls.apply(
-        lambda value: ','.join(sorted({
-            f"{match.upper()}-5"
-            for match in pd.Series([value.upper()]).str.findall(
-                FIFTH_COMPANY_UNIT_CAPTURE_PATTERN,
-                flags=0,
-            ).iloc[0]
-        }))
-    )
-    fifth_audit.to_csv(fifth_company_audit_path, sep=';', index=False)
-    df_daily_fifth = (
-        df_incidents.groupby('FECHA_DIA')['_IS_5TA_CIA']
-        .sum()
-        .astype(float)
-        .reset_index(name='N_5TA_CIA')
-    )
-    print(
-        "Despachos 5ta Cia: "
-        f"{int(df_incidents['_IS_5TA_CIA'].sum())} mensajes incident-like; "
-        "unidades B-5, RB-5, RX-5, MX-5 y alias preventivo BX-5"
-    )
-    
     # === CONTEOS POR CATEGORÍA DE EMERGENCIA POR DÍA ===
     # Definir las categorías principales que pueden tener efecto predictivo
     categorias_clave = {
@@ -179,7 +181,6 @@ def main():
 
     # Unir eventos totales y por categoría al calendario
     df_daily = pd.merge(df_calendar, df_daily_events, on='FECHA_DIA', how='left')
-    df_daily = pd.merge(df_daily, df_daily_fifth, on='FECHA_DIA', how='left')
     df_daily['DAY_STATE'] = 'observed_nonzero'
     df_daily.loc[df_daily['EVENTOS'].isna(), 'DAY_STATE'] = 'no_data'
 
@@ -207,7 +208,6 @@ def main():
     df_daily['EVENTOS'] = df_daily['EVENTOS'].where(observed_mask, np.nan)
     
     df_daily = pd.merge(df_daily, df_cat_final, on='FECHA_DIA', how='left')
-    df_daily['N_5TA_CIA'] = df_daily['N_5TA_CIA'].fillna(0).where(observed_mask, np.nan)
     for col in cols_to_keep + ['N_OTROS']:
         df_daily[col] = df_daily[col].fillna(0).where(observed_mask, np.nan)
 
@@ -220,86 +220,9 @@ def main():
     )
     print(df_daily.loc[observed_mask, 'EVENTOS'].describe())
 
-    # 4. Datos meteorológicos (Historical Forecast API — pronósticos emitidos, no observados)
-    lat, lon = -36.731106, -73.11023
-    WEATHER_CACHE_VERSION = "forecast_v1"
-    cache_version_path = weather_cache_path.parent / ".weather_cache_version"
-
-    rebuild_cache = True
-    if os.path.exists(weather_cache_path):
-        try:
-            df_cached = pd.read_csv(weather_cache_path)
-            cached_version = ""
-            if os.path.exists(cache_version_path):
-                cached_version = Path(cache_version_path).read_text(encoding="utf-8").strip()
-            cache_has_range = (
-                'FECHA_DIA' in df_cached.columns
-                and str(df_cached['FECHA_DIA'].min()) <= min_date_str
-                and str(df_cached['FECHA_DIA'].max()) >= max_date_str
-            )
-            if 'VIENTO_SKEW' in df_cached.columns and 'HUM_SKEW' in df_cached.columns and cache_has_range:
-                if cached_version == WEATHER_CACHE_VERSION:
-                    print(f"Cargando clima desde caché (versión={cached_version})...")
-                    df_clima = df_cached
-                    rebuild_cache = False
-                else:
-                    print(f"Cache versión '{cached_version}' obsoleta. Re-descargando...")
-        except Exception:
-            pass
-
-    if rebuild_cache:
-        print("Descargando clima horario (Historical Forecast API) desde Open-Meteo...")
-        url = (f"https://historical-forecast-api.open-meteo.com/v1/forecast?"
-               f"latitude={lat}&longitude={lon}&"
-               f"start_date={min_date_str}&end_date={max_date_str}&"
-               f"hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation&"
-               f"timezone=America%2FSantiago&format=json")
-        data_raw = fetch_json_with_retry(url, timeout=30, retries=3)
-        df_hourly = pd.DataFrame(data_raw['hourly'])
-        df_hourly['time'] = pd.to_datetime(df_hourly['time'])
-        df_hourly['FECHA_DIA'] = df_hourly['time'].dt.strftime('%Y-%m-%d')
-        
-        # Fórmulas de asimetría y curtosis
-        def get_skew(series):
-            vals = series.values
-            mean = np.mean(vals)
-            std = np.std(vals)
-            std_safe = 0.1 if std == 0 else std
-            return np.mean((vals - mean)**3) / (std_safe**3)
-
-        def get_kurt(series):
-            vals = series.values
-            mean = np.mean(vals)
-            std = np.std(vals)
-            std_safe = 0.1 if std == 0 else std
-            return np.mean((vals - mean)**4) / (std_safe**4) - 3
-
-        print("Agregando datos horarios a nivel diario...")
-        df_clima = df_hourly.groupby('FECHA_DIA').agg(
-            TEMP_MAX=('temperature_2m', 'max'),
-            TEMP_MIN=('temperature_2m', 'min'),
-            TEMP_MEDIA=('temperature_2m', 'mean'),
-            TEMP_SKEW=('temperature_2m', get_skew),
-            TEMP_KURT=('temperature_2m', get_kurt),
-            
-            HUM_MAX=('relative_humidity_2m', 'max'),
-            HUM_MIN=('relative_humidity_2m', 'min'),
-            HUM_MEDIA=('relative_humidity_2m', 'mean'),
-            HUM_SKEW=('relative_humidity_2m', get_skew),
-            HUM_KURT=('relative_humidity_2m', get_kurt),
-            
-            VIENTO_MAX=('wind_speed_10m', 'max'),
-            VIENTO_MEDIO=('wind_speed_10m', 'mean'),
-            VIENTO_SKEW=('wind_speed_10m', get_skew),
-            VIENTO_KURT=('wind_speed_10m', get_kurt),
-            
-            LLUVIA=('precipitation', 'sum')
-        ).reset_index()
-        
-        df_clima.to_csv(weather_cache_path, index=False)
-        Path(cache_version_path).write_text(WEATHER_CACHE_VERSION, encoding="utf-8")
-        print("Clima horario agregado y guardado en caché (Historical Forecast API).")
-
+    # 4. Datos meteorológicos: Historical Forecast API (pronósticos emitidos,
+    # no observados), agregados con la misma función que usa el forecast.
+    df_clima = load_historical_weather(min_date_str, max_date_str, weather_cache_path)
     df_clima['FECHA_DIA'] = df_clima['FECHA_DIA'].astype(str)
     df_daily = pd.merge(df_daily, df_clima, on='FECHA_DIA', how='left')
     
@@ -314,31 +237,10 @@ def main():
     # 5. Feature Engineering EXTENDIDO
     print("Construyendo features extendidas...")
     
-    # Para lag features usamos una versión forward-fill de EVENTOS y categorías
-    # (conservando NaN en el target para días coverage_unknown).
-    eventos_lag_source = df_daily['EVENTOS'].fillna(0)
-    cat_lag_source = {
-        col: df_daily[col].fillna(0) for col in cols_to_keep + ['N_OTROS']
-    }
-    
-    # --- Lags de eventos totales ---
-    for lag in [1, 2, 3, 7]:
-        df_daily[f'EVENTOS_lag_{lag}'] = eventos_lag_source.shift(lag)
-    
-    # --- Lags de categorías clave (solo lag_1) ---
-    for col in cols_to_keep:
-        df_daily[f'{col}_lag_1'] = cat_lag_source[col].shift(1)
-    
-    # --- Rolling stats de eventos (ventanas de 3 y 7 días, excluyendo hoy) ---
-    eventos_shifted = eventos_lag_source.shift(1)
-    df_daily['EVENTOS_rolling_mean_3d'] = eventos_shifted.rolling(3, min_periods=1).mean()
-    df_daily['EVENTOS_rolling_std_3d'] = eventos_shifted.rolling(3, min_periods=1).std().fillna(0)
-    df_daily['EVENTOS_rolling_max_3d'] = eventos_shifted.rolling(3, min_periods=1).max()
-    df_daily['EVENTOS_rolling_mean_7d'] = eventos_shifted.rolling(7, min_periods=1).mean()
-    df_daily['EVENTOS_rolling_std_7d'] = eventos_shifted.rolling(7, min_periods=1).std().fillna(0)
-    df_daily['EVENTOS_rolling_max_7d'] = eventos_shifted.rolling(7, min_periods=1).max()
-    df_daily['EVENTOS_rolling_mean_14d'] = eventos_shifted.rolling(14, min_periods=1).mean()
-    df_daily['EVENTOS_rolling_mean_30d'] = eventos_shifted.rolling(30, min_periods=1).mean()
+    # --- Historial de llamados: los días sin cobertura quedan faltantes,
+    # igual que al servir (features.prepare_event_history).
+    history = event_history_table(df_daily.set_index('FECHA_DIA')[['EVENTOS', *CATEGORY_SOURCES.values()]])
+    df_daily = pd.concat([df_daily, history.set_index(df_daily.index)], axis=1)
 
     # --- Clima derivado y calendario: definiciones compartidas con el servicio ---
     daily_weather = df_daily.set_index(pd.to_datetime(df_daily['FECHA_DIA']))
@@ -350,17 +252,14 @@ def main():
     df_daily = df_daily.sort_values('FECHA_DIA').reset_index(drop=True)
     df_daily = df_daily.dropna(subset=['EVENTOS']).copy()
 
-    # Drop rows where lag/rolling features are still NaN (first ~30 rows).
-    # These have incomplete history and would otherwise be backfilled with future data.
-    lag_roll_cols = [
-        c for c in df_daily.columns
-        if c.startswith('EVENTOS_lag_') or c.startswith('EVENTOS_rolling_')
-        or c.startswith('LLUVIA_LAG_') or c.startswith('LLUVIA_PROMEDIO_')
-        or c.startswith('LLUVIA_TOTAL_') or c.startswith('LLUVIA_DESV_')
-        or c.startswith('LLUVIA_MAX_') or c.startswith('DIAS_SECOS_')
-        or c.endswith('_lag_1') or c == 'DIAS_DESDE_ULTIMA_LLUVIA'
-    ]
-    df_daily = df_daily.dropna(subset=lag_roll_cols).reset_index(drop=True)
+    # Se exige historia meteorológica completa (30 días) y al menos un conteo
+    # observado en los 30 días previos; los lags de días sin cobertura quedan
+    # faltantes y el modelo los trata como tales.
+    weather_history_cols = list(WEATHER_DERIVED_COLUMNS)
+    df_daily = df_daily.dropna(
+        subset=weather_history_cols + ['EVENTOS_rolling_mean_30d']
+    ).reset_index(drop=True)
+    lag_roll_cols = weather_history_cols + EVENT_HISTORY_COLUMNS
 
     # Weather columns: only forward-fill (never backfill to avoid future leakage)
     weather_cols = [

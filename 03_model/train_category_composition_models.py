@@ -24,10 +24,11 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT / "03_model") not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT / "03_model"))
+for path in (PROJECT_ROOT, PROJECT_ROOT / "03_model"):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
-from build_hydro_ensemble_candidate import load_training_frame
+from train_model import load_dataset
 
 
 RANDOM_STATE = 42
@@ -104,14 +105,18 @@ def build_model(name: str):
             PoissonRegressor(alpha=1.0, max_iter=2000),
         )
     if name == "huber_signal":
-        return GradientBoostingRegressor(
-            loss="huber",
-            n_estimators=150,
-            learning_rate=0.03,
-            max_depth=2,
-            min_samples_leaf=20,
-            subsample=0.8,
-            random_state=RANDOM_STATE,
+        # History lags are missing on days without coverage.
+        return make_pipeline(
+            SimpleImputer(strategy="median"),
+            GradientBoostingRegressor(
+                loss="huber",
+                n_estimators=150,
+                learning_rate=0.03,
+                max_depth=2,
+                min_samples_leaf=20,
+                subsample=0.8,
+                random_state=RANDOM_STATE,
+            ),
         )
     if name == "poisson_signal":
         return HistGradientBoostingRegressor(
@@ -155,8 +160,7 @@ def main() -> None:
     models_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    frame, _, _ = load_training_frame(PROJECT_ROOT)
-    frame = frame.sort_values("FECHA_DIA").reset_index(drop=True)
+    frame = load_dataset()
     missing = [column for column in SIGNAL_FEATURES if column not in frame]
     if missing:
         raise KeyError(f"Missing composition features: {missing}")

@@ -5,7 +5,8 @@
   "acceptance_gates": [
     "test Brier not worse",
     "test log loss not worse",
-    "test ROC-AUC preserved"
+    "test ROC-AUC preserved",
+    "test Brier better than the monthly positive rate (else the group is excluded)"
   ],
   "groups": [
     "rescate_vehicular",

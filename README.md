@@ -20,9 +20,9 @@ Error por día del forecast usando el clima pronosticado con la anticipación re
 | MAE modelo | 2,241 | 2,305 | 2,266 | 2,256 | 2,266 | 2,329 |
 | MAE promedio 30 días | 2,369 | 2,388 | 2,388 | 2,402 | 2,416 | 2,414 |
 
-El modelo gana en los seis días, pero en el día 6 solo en 3 de 6 tramos. Detalle en `05_research/results/forecast_horizons/`.
+El modelo gana en los seis días, pero en el día 6 solo en 3 de 6 tramos.
 
-Los datos terminan el 2026-04-16. Mientras no se actualicen, el dashboard reemplaza el historial reciente por un promedio estacional y lo indica en pantalla.
+Los datos terminan el 2026-04-16. Mientras no se actualicen, los días sin conteo observado se tratan como faltantes (igual que en el entrenamiento) y el dashboard lo indica en pantalla.
 
 ## Instalación
 
@@ -39,29 +39,25 @@ python -m venv .venv
 # 1. Compilar los CSV diarios del scraper
 .\.venv\Scripts\python.exe 02_data\compile_scraped.py
 
-# 2. Dataset diario con clima (Historical Forecast API) y calendario
+# 2. Dataset diario: conteos, clima (Historical Forecast API), lluvia acumulada y calendario
 .\.venv\Scripts\python.exe 02_data\clean_and_augment.py
-.\.venv\Scripts\python.exe 05_research\weather_features.py --start-date 2022-02-03 --end-date 2026-04-17
-.\.venv\Scripts\python.exe 05_research\fetch_weather_signal_v2.py
 
-# 3. Modelo principal: predicciones fuera de muestra por objetivo y ensemble final
-.\.venv\Scripts\python.exe 03_model\search_weather_v2.py
-.\.venv\Scripts\python.exe 03_model\search_weather_objectives_v2.py
-.\.venv\Scripts\python.exe 03_model\build_hydro_ensemble_candidate.py
+# 3. Clima pronosticado con 0-6 días de anticipación, para evaluar cada día del forecast
+.\.venv\Scripts\python.exe 05_research\fetch_previous_runs_weather.py
 
-# 4. Submodelos por tipo de emergencia
+# 4. Selección y entrenamiento del modelo de conteo (walk-forward, forecast recursivo de 6 días)
+.\.venv\Scripts\python.exe 03_model\train_model.py
+
+# 5. Submodelos por tipo de emergencia
 .\.venv\Scripts\python.exe 03_model\train_category_risk_models.py
 .\.venv\Scripts\python.exe 03_model\train_category_composition_models.py
-
-# 5. Evaluación por día del forecast (requiere 05_research\fetch_previous_runs_weather.py)
-.\.venv\Scripts\python.exe 03_model\evaluate_forecast_horizons.py
 
 # 6. Predicción por consola y dashboard
 .\.venv\Scripts\python.exe 04_predict\predict_tomorrow.py --real-tomorrow
 .\.venv\Scripts\python.exe -m streamlit run dashboard.py
 ```
 
-Ningún script de entrenamiento cambia el modelo activo por sí solo: la promoción requiere aprobación explícita (ver `.agents/AGENTS.md`).
+`train_model.py` compara cinco candidatos declarados de antemano y guarda el elegido en `03_model/saved_models/count_model_v3/` (JSON). El modelo activo solo cambia con `--promote`, después de revisar las métricas (ver `.agents/AGENTS.md`). Resultados en `05_research/results/model_selection_v3/`.
 
 ## Tests
 
@@ -75,7 +71,7 @@ Ningún script de entrenamiento cambia el modelo activo por sí solo: la promoci
 
 - `01_scraper/`: scraper de los despachos publicados y sus CSV diarios.
 - `02_data/`: compilación, limpieza, deduplicación y dataset diario.
-- `03_model/`: entrenamiento, evaluación y modelos guardados (`saved_models/`).
+- `03_model/`: entrenamiento (`train_model.py`), evaluación por horizonte (`horizon_evaluation.py`), submodelos y modelos guardados (`saved_models/`).
 - `04_predict/`: predicción por consola.
 - `05_research/`: calidad de datos, backtesting, resultados y tests.
 - `dashboard.py`: app Streamlit (solo presentación).

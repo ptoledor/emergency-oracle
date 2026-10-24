@@ -58,6 +58,25 @@ RISK_GROUPS = {
     "climaticas": ["N_EMERGENCIAS_CLIMATICAS"],
 }
 CALIBRATION_METHOD = "temporal_oof_platt_on_raw_probability"
+# Weather-only signals (no call history), fixed so retraining does not depend
+# on a previous artifact.
+RISK_FEATURES = [
+    "TEMP_MEDIA", "TEMP_SKEW", "TEMP_KURT", "HUM_MEDIA", "HUM_KURT", "VIENTO_SKEW",
+    "LLUVIA", "HUM_MEDIA_lag_1", "TEMP_HUM_INDEX",
+    "LLUVIA_LAG_1D", "LLUVIA_LAG_2D", "LLUVIA_LAG_7D", "LLUVIA_LAG_10D", "LLUVIA_LAG_14D",
+    "LLUVIA_PROMEDIO_7D_PREV", "LLUVIA_PROMEDIO_14D_PREV", "LLUVIA_PROMEDIO_30D_PREV",
+    "LLUVIA_TOTAL_3D_PREV", "LLUVIA_TOTAL_7D_PREV", "LLUVIA_TOTAL_14D_PREV", "LLUVIA_TOTAL_30D_PREV",
+    "LLUVIA_DESV_3D_PREV", "LLUVIA_DESV_14D_PREV", "LLUVIA_DESV_30D_PREV",
+    "LLUVIA_MAX_3D_PREV", "LLUVIA_MAX_7D_PREV", "LLUVIA_MAX_30D_PREV",
+    "DIAS_SECOS_3D_PREV", "DIAS_SECOS_7D_PREV", "DIAS_SECOS_14D_PREV", "DIAS_SECOS_30D_PREV",
+]
+
+
+def seasonal_baseline_probability(train_dates, train_target, test_dates):
+    """Monthly positive rate in the training period (overall rate as fallback)."""
+    by_month = pd.Series(train_target.to_numpy()).groupby(train_dates.dt.month.to_numpy()).mean()
+    overall = float(train_target.mean())
+    return np.asarray([float(by_month.get(month, overall)) for month in test_dates.dt.month])
 
 
 def temporal_oof_probs(X: pd.DataFrame, y: pd.Series) -> np.ndarray:
@@ -154,16 +173,9 @@ def main() -> None:
         .sort_values("FECHA_DIA")
         .reset_index(drop=True)
     )
-    existing_artifact_path = models_dir / "category_risk_models.pkl"
-    if existing_artifact_path.exists():
-        with existing_artifact_path.open("rb") as stream:
-            existing_artifact = pickle.load(stream)
-        feature_cols = list(existing_artifact["feature_cols"])
-    else:
-        with (models_dir / "metadata_climatic_augmented.pkl").open("rb") as stream:
-            primary_metadata = pickle.load(stream)
-        feature_cols = list(primary_metadata["feature_cols"])
+    feature_cols = list(RISK_FEATURES)
     X = frame[feature_cols]
+    dates = pd.to_datetime(frame["FECHA_DIA"])
     split_idx = int(len(frame) * 0.8)
 
     models: dict[str, dict] = {}
@@ -186,9 +198,6 @@ def main() -> None:
         train_oof_target = y_train.iloc[np.flatnonzero(train_valid)].to_numpy()
         coefficient, intercept = fit_sigmoid(
             train_raw_oof[train_valid], train_oof_target
-        )
-        train_calibrated_oof = apply_sigmoid(
-            train_raw_oof[train_valid], coefficient, intercept
         )
 
         evaluation_model = RandomForestClassifier(**CLASSIFIER_PARAMS)
@@ -217,6 +226,23 @@ def main() -> None:
             raise RuntimeError(
                 f"Calibration gates failed for {group_name}: {calibration_gates}"
             )
+        baseline_probability = seasonal_baseline_probability(
+            dates.iloc[:split_idx], y_train, dates.iloc[split_idx:]
+        )
+        baseline_brier = float(brier_score_loss(y_test, baseline_probability))
+        beats_baseline = calibrated_test_metrics["brier"] < baseline_brier
+        comparison_rows.append({
+            "group": group_name, "split": "final_20pct_untouched",
+            "method": "seasonal_baseline",
+            **probability_metrics(y_test.to_numpy(), baseline_probability),
+        })
+        if not beats_baseline:
+            print(
+                f"{group_name}: Brier {calibrated_test_metrics['brier']:.4f} no mejora la "
+                f"tasa mensual ({baseline_brier:.4f}); se excluye del artefacto",
+                flush=True,
+            )
+            continue
 
         # Production rebuild: raw learner sees all history; its calibrator sees
         # only predictions generated before each OOF validation observation.
@@ -348,6 +374,7 @@ def main() -> None:
                 "test Brier not worse",
                 "test log loss not worse",
                 "test ROC-AUC preserved",
+                "test Brier better than the monthly positive rate (else the group is excluded)",
             ],
             "groups": list(RISK_GROUPS),
         }, indent=2),

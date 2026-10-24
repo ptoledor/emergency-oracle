@@ -8,6 +8,7 @@ count back as event history, as validated in evaluate_forecast_horizons.py.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import pickle
 import time
 from pathlib import Path
@@ -57,15 +58,23 @@ def _load_pickle(path):
 def load_forecast_models(models_dir=MODELS_DIR, prefix="_climatic_augmented"):
     """Active count model, its classifier and the optional category artifacts."""
     models_dir = Path(models_dir)
-    reg_path, clf_path, meta_path = model_components.resolve_model_path(models_dir, prefix)
-    models = {
-        "regressor": force_single_thread_model(_load_pickle(reg_path)),
-        "classifier": force_single_thread_model(_load_pickle(clf_path)),
-        "metadata": _load_pickle(meta_path),
-        "category_risk": None,
-        "category_composition": None,
-        "fifth_company": None,
-    }
+    models = {"category_risk": None, "category_composition": None}
+    config_path = models_dir / "active_models.json"
+    config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+    if "count_model" in config:
+        count_model = model_components.CountModel.load(models_dir / config["count_model"])
+        models.update({
+            "regressor": count_model,
+            "classifier": model_components.HorizonProbabilityClassifier(count_model),
+            "metadata": count_model.metadata,
+        })
+    else:
+        reg_path, clf_path, meta_path = model_components.resolve_model_path(models_dir, prefix)
+        models.update({
+            "regressor": force_single_thread_model(_load_pickle(reg_path)),
+            "classifier": force_single_thread_model(_load_pickle(clf_path)),
+            "metadata": _load_pickle(meta_path),
+        })
     risk_path = models_dir / "category_risk_models.pkl"
     if risk_path.exists():
         risk = _load_pickle(risk_path)
@@ -79,12 +88,6 @@ def load_forecast_models(models_dir=MODELS_DIR, prefix="_climatic_augmented"):
             details["baseline_model"] = force_single_thread_model(details["baseline_model"])
             details["expected_model"] = force_single_thread_model(details["expected_model"])
         models["category_composition"] = composition
-    fifth_path = models_dir / "fifth_company_models.pkl"
-    if fifth_path.exists():
-        fifth = _load_pickle(fifth_path)
-        fifth["regressor"] = force_single_thread_model(fifth["regressor"])
-        fifth["classifier"] = force_single_thread_model(fifth["classifier"])
-        models["fifth_company"] = fifth
     return models
 
 
@@ -233,42 +236,30 @@ def predict_category_composition(artifact, feature_frame, total_prediction):
 
 
 def _initial_state(history_frame, start_date):
-    """Event history, category lags and shares at the forecast origin."""
-    history = pd.DataFrame()
-    try:
-        history = history_frame[
-            history_frame["FECHA_DIA"] < start_date.strftime("%Y-%m-%d")
-        ].sort_values("FECHA_DIA")
-        details = prepare_event_history(history, start_date, days=HISTORY_DAYS)
-    except Exception:
-        details = {
-            "values": [1.5] * HISTORY_DAYS, "mode": "historical_baseline",
-            "age_days": None, "last_observed_date": None,
-        }
+    """Event history, category lags and shares at the forecast origin.
 
-    category_lags = {column: 0.0 for column in CATEGORY_LAG_FEATURES}
-    category_shares = {column: 0.0 for column in CATEGORY_LAG_FEATURES}
-    if not history.empty:
-        latest = history.iloc[-1]
-        recent = history.tail(365)
-        recent_total = float(recent["EVENTOS"].sum())
-        for lag_column, source_column in CATEGORY_SOURCES.items():
-            if details["mode"] == "observed":
-                category_lags[lag_column] = float(latest.get(source_column, 0.0))
-            else:
-                category_mean = pd.to_numeric(
-                    recent.get(source_column, pd.Series(dtype=float)), errors="coerce"
-                ).mean()
-                category_lags[lag_column] = float(0.0 if pd.isna(category_mean) else category_mean)
-            if recent_total > 0:
-                category_shares[lag_column] = float(recent[source_column].sum() / recent_total)
+    Days without an observed count stay missing, as in training.
+    """
+    history = history_frame[
+        history_frame["FECHA_DIA"] < start_date.strftime("%Y-%m-%d")
+    ].sort_values("FECHA_DIA")
+    details = prepare_event_history(history, start_date, days=HISTORY_DAYS)
+
+    previous = history[history["FECHA_DIA"] == (start_date - dt.timedelta(days=1)).strftime("%Y-%m-%d")]
+    category_lags = {
+        lag_column: float(previous[source].iloc[0]) if not previous.empty else np.nan
+        for lag_column, source in CATEGORY_SOURCES.items()
+    }
+    recent = history.dropna(subset=["EVENTOS"]).tail(365)
+    recent_total = float(recent["EVENTOS"].sum())
+    category_shares = {
+        lag_column: float(recent[source].sum() / recent_total) if recent_total > 0 else 0.0
+        for lag_column, source in CATEGORY_SOURCES.items()
+    }
 
     days_since_rain = 10.0
-    previous = history_frame[
-        history_frame["FECHA_DIA"] == (start_date - dt.timedelta(days=1)).strftime("%Y-%m-%d")
-    ]
-    if not previous.empty and not pd.isna(previous["DIAS_DESDE_ULTIMA_LLUVIA"].values[0]):
-        days_since_rain = float(previous["DIAS_DESDE_ULTIMA_LLUVIA"].values[0])
+    if not previous.empty and not pd.isna(previous["DIAS_DESDE_ULTIMA_LLUVIA"].iloc[0]):
+        days_since_rain = float(previous["DIAS_DESDE_ULTIMA_LLUVIA"].iloc[0])
     return details, category_lags, category_shares, days_since_rain
 
 
@@ -344,13 +335,6 @@ def forecast_days(start_date, weather_hourly, history_frame, models, days=FORECA
         except Exception as exc:
             print(f"No se pudo calcular la composicion por categoria: {exc}")
 
-        fifth_count = fifth_probability = np.nan
-        if models.get("fifth_company"):
-            fifth = models["fifth_company"]
-            fifth_X = X_all[fifth["metadata"]["feature_cols"]]
-            fifth_count = float(np.clip(fifth["regressor"].predict(fifth_X)[0], 0, None))
-            fifth_probability = float(fifth["classifier"].predict_proba(fifth_X)[0, 1])
-
         if not direct_horizon_model:
             events = events[1:] + [count]
             category_lags = {
@@ -374,8 +358,6 @@ def forecast_days(start_date, weather_hourly, history_frame, models, days=FORECA
             "Prob_Incendio_Alto": category_probabilities.get("incendio", np.nan),
             "Prob_Climaticas_Alto": category_probabilities.get("climaticas", np.nan),
             "Category_Composition": composition,
-            "Pred_5ta_Cia": fifth_count,
-            "Prob_5ta_Cia_Alta": fifth_probability,
             "Temp_Max": float(features["TEMP_MAX"]),
             "Temp_Media": float(features["TEMP_MEDIA"]),
             "Hum_Media": float(features["HUM_MEDIA"]),

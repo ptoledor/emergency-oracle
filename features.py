@@ -215,7 +215,21 @@ def aggregate_weather_daily(hourly):
     )
 
 
+def _window_stats(values):
+    """Mean, sample std and max over observed values (NaN marks unknown days).
+
+    Mirrors pandas rolling(min_periods=1) in training: mean and max are NaN
+    without observations, std is 0 with fewer than two.
+    """
+    observed = values[np.isfinite(values)]
+    if observed.size == 0:
+        return np.nan, 0.0, np.nan
+    std = float(np.std(observed, ddof=1)) if observed.size >= 2 else 0.0
+    return float(np.mean(observed)), std, float(np.max(observed))
+
+
 def event_history_features(history):
+    """History features from the last 30 daily counts (NaN for unknown days)."""
     values = np.asarray(list(history), dtype=float)
     if len(values) < 30:
         raise ValueError("At least 30 historical event counts are required")
@@ -224,15 +238,38 @@ def event_history_features(history):
         "EVENTOS_lag_2": float(values[-2]),
         "EVENTOS_lag_3": float(values[-3]),
         "EVENTOS_lag_7": float(values[-7]),
-        "EVENTOS_rolling_mean_14d": float(np.mean(values[-14:])),
-        "EVENTOS_rolling_mean_30d": float(np.mean(values[-30:])),
     }
     for window in [3, 7]:
-        recent = values[-window:]
-        result[f"EVENTOS_rolling_mean_{window}d"] = float(np.mean(recent))
-        result[f"EVENTOS_rolling_std_{window}d"] = float(np.std(recent, ddof=1))
-        result[f"EVENTOS_rolling_max_{window}d"] = float(np.max(recent))
+        mean, std, maximum = _window_stats(values[-window:])
+        result[f"EVENTOS_rolling_mean_{window}d"] = mean
+        result[f"EVENTOS_rolling_std_{window}d"] = std
+        result[f"EVENTOS_rolling_max_{window}d"] = maximum
+    result["EVENTOS_rolling_mean_14d"] = _window_stats(values[-14:])[0]
+    result["EVENTOS_rolling_mean_30d"] = _window_stats(values[-30:])[0]
     return result
+
+
+def event_history_table(counts):
+    """History features for every day of a calendar-indexed count frame.
+
+    `counts` holds EVENTOS and the category columns, NaN on days without
+    reliable coverage; each row only uses the days before it.
+    """
+    events = counts["EVENTOS"].astype(float)
+    shifted = events.shift(1)
+    table = pd.DataFrame(index=counts.index)
+    for lag in [1, 2, 3, 7]:
+        table[f"EVENTOS_lag_{lag}"] = events.shift(lag)
+    for lag_column, source in CATEGORY_SOURCES.items():
+        table[lag_column] = counts[source].astype(float).shift(1)
+    for window in [3, 7]:
+        rolling = shifted.rolling(window, min_periods=1)
+        table[f"EVENTOS_rolling_mean_{window}d"] = rolling.mean()
+        table[f"EVENTOS_rolling_std_{window}d"] = rolling.std().fillna(0)
+        table[f"EVENTOS_rolling_max_{window}d"] = rolling.max()
+    for window in [14, 30]:
+        table[f"EVENTOS_rolling_mean_{window}d"] = shifted.rolling(window, min_periods=1).mean()
+    return table[EVENT_HISTORY_COLUMNS]
 
 
 CATEGORY_SOURCES = {column: column[: -len("_lag_1")] for column in CATEGORY_LAG_FEATURES}
@@ -257,6 +294,13 @@ WEATHER_DERIVED_COLUMNS = (
         "FIRE_DRY_INDEX_7D", "VPD", "VPD_MAX",
     ]
 )
+EVENT_HISTORY_COLUMNS = [
+    "EVENTOS_lag_1", "EVENTOS_lag_2", "EVENTOS_lag_3", "EVENTOS_lag_7",
+    *CATEGORY_LAG_FEATURES,
+    "EVENTOS_rolling_mean_3d", "EVENTOS_rolling_std_3d", "EVENTOS_rolling_max_3d",
+    "EVENTOS_rolling_mean_7d", "EVENTOS_rolling_std_7d", "EVENTOS_rolling_max_7d",
+    "EVENTOS_rolling_mean_14d", "EVENTOS_rolling_mean_30d",
+]
 CALENDAR_COLUMNS = [
     "MES", "DIA_SEMANA", "ES_FIN_SEMANA", "ES_FERIADO", "ES_FERIADO_IRRENUNCIABLE",
     "ES_PRE_FERIADO", "MES_SIN", "MES_COS", "DIA_SIN", "DIA_COS", "DANO_SIN", "DANO_COS",
@@ -374,61 +418,29 @@ def calendar_features(dates):
     for position, column in enumerate(WEEKDAY_COLUMNS):
         result[column] = (weekday == position).astype(int)
     return result
-def neutral_event_history(history_frame, start_date, days=30):
-    """Expected history when recent observations are unavailable."""
-    history = history_frame.copy()
-    history["FECHA_DT_NEUTRAL"] = pd.to_datetime(history["FECHA_DIA"])
-    history["EVENTOS_NEUTRAL"] = pd.to_numeric(
-        history["EVENTOS"], errors="coerce"
-    )
-    history = history.dropna(subset=["EVENTOS_NEUTRAL"])
-    global_mean = float(history["EVENTOS_NEUTRAL"].mean())
-    values = []
-    for offset in range(days, 0, -1):
-        target = start_date - dt.timedelta(days=offset)
-        same_weekday = history[
-            history["FECHA_DT_NEUTRAL"].dt.dayofweek == target.weekday()
-        ]
-        same_month_weekday = same_weekday[
-            same_weekday["FECHA_DT_NEUTRAL"].dt.month == target.month
-        ]
-        if len(same_month_weekday) >= 8:
-            seasonal = float(same_month_weekday["EVENTOS_NEUTRAL"].mean())
-            weekday = float(same_weekday["EVENTOS_NEUTRAL"].mean())
-            values.append(0.75 * seasonal + 0.25 * weekday)
-        elif not same_weekday.empty:
-            values.append(float(same_weekday["EVENTOS_NEUTRAL"].mean()))
-        else:
-            values.append(global_mean)
-    return values
-
-
 def prepare_event_history(history_frame, start_date, days=30, max_age_days=1):
-    """Return honest serving history plus provenance metadata."""
-    history = history_frame.copy().sort_values("FECHA_DIA")
+    """Calendar-aligned counts for the `days` before `start_date` (NaN if unknown).
+
+    Unknown days stay missing, as in training, instead of being imputed.
+    mode: "observed" when the last count is at most `max_age_days` old,
+    "stale" otherwise.
+    """
+    history = history_frame[["FECHA_DIA", "EVENTOS"]].copy()
     history["EVENTOS"] = pd.to_numeric(history["EVENTOS"], errors="coerce")
     history = history.dropna(subset=["EVENTOS"])
-    last_observed_date = None
-    lag_age_days = None
-    if not history.empty:
-        last_observed_date = pd.to_datetime(history["FECHA_DIA"].iloc[-1]).date()
-        lag_age_days = max((start_date - last_observed_date).days, 0)
-
-    if len(history) >= days and lag_age_days is not None and lag_age_days <= max_age_days:
-        values = history["EVENTOS"].tail(days).astype(float).tolist()
-        mode = "observed"
-    elif len(history) >= days:
-        values = neutral_event_history(history, start_date, days=days)
-        mode = "historical_baseline"
-    else:
-        mean = float(history["EVENTOS"].mean()) if not history.empty else 1.5
-        if not np.isfinite(mean):
-            mean = 1.5
-        values = [mean] * days
-        mode = "historical_baseline"
+    observed = dict(zip(pd.to_datetime(history["FECHA_DIA"]).dt.date, history["EVENTOS"].astype(float)))
+    last_observed_date = max(observed) if observed else None
+    age_days = (
+        max((start_date - last_observed_date).days, 0) if last_observed_date else None
+    )
+    values = [
+        observed.get(start_date - dt.timedelta(days=offset), np.nan)
+        for offset in range(days, 0, -1)
+    ]
+    mode = "observed" if age_days is not None and age_days <= max_age_days else "stale"
     return {
         "values": values,
         "mode": mode,
-        "age_days": lag_age_days,
+        "age_days": age_days,
         "last_observed_date": last_observed_date,
     }
