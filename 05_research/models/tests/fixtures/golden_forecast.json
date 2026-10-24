@@ -1,57 +1,57 @@
 {
  "invierno_clima_real": {
-  "classification_threshold": 0.21000000000000002,
+  "classification_threshold": 0.23,
   "umbral_alta_actividad": 7.0,
   "days": [
    {
     "Fecha": "2025-06-10",
     "FechaStr": "2025-06-10",
     "Dia": "Martes",
-    "Prediccion": 4.8249714410305025,
+    "Prediccion": 4.78966760635376,
     "Lag_Mode": "observed",
     "Lag_Age_Days": 1,
     "Last_Observed_Date": "2025-06-09",
-    "Prob_Alta": 0.1570824812766429,
+    "Prob_Alta": 0.17568690590603042,
     "Prob_RVehicular_Alto": 0.11992452093401641,
     "Prob_Rescate_Alto": 0.11992452093401641,
     "Prob_Incendio_Alto": 0.1070842243560118,
     "Prob_Climaticas_Alto": 0.01276065525426829,
     "Category_Composition": {
      "baseline_total": 4.740018952972465,
-     "forecast_total": 4.8249714410305025,
-     "delta_total": 0.0849524880580379,
+     "forecast_total": 4.78966760635376,
+     "delta_total": 0.049648653381295205,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 0.902643959826435,
-       "share_total": 0.18707757566201286,
+       "count": 0.8960394040235374,
+       "share_total": 0.18707757566201283,
        "baseline": 0.8849597858431345,
-       "delta": 0.017684173983300466,
-       "share_positive_delta": 0.06099588994298123
+       "delta": 0.011079618180402928,
+       "share_positive_delta": 0.04350572413266688
       },
       "rescates": {
        "label": "Rescates",
-       "count": 1.8556626340585995,
+       "count": 1.8420849356930686,
        "share_total": 0.3845955684376596,
        "baseline": 1.7266397836371807,
-       "delta": 0.1290228504214188,
-       "share_positive_delta": 0.4450229675339243
+       "delta": 0.1154451520558879,
+       "share_positive_delta": 0.453312095779693
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.006855769898675393,
+       "count": 0.006805606914284146,
        "share_total": 0.0014208933633006455,
        "baseline": 0.21182730786651557,
-       "delta": -0.20497153796784018,
+       "delta": -0.20502170095223143,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 2.059809077246792,
+       "count": 2.0447376597228692,
        "share_total": 0.42690596253702684,
        "baseline": 1.9165920756256336,
-       "delta": 0.14321700162115847,
-       "share_positive_delta": 0.4939811425230945
+       "delta": 0.12814558409723564,
+       "share_positive_delta": 0.5031821800876402
       }
      }
     },
@@ -66,51 +66,51 @@
     "Fecha": "2025-06-11",
     "FechaStr": "2025-06-11",
     "Dia": "Miércoles",
-    "Prediccion": 8.263282541036604,
+    "Prediccion": 8.70452880859375,
     "Lag_Mode": "observed",
     "Lag_Age_Days": 1,
     "Last_Observed_Date": "2025-06-09",
-    "Prob_Alta": 0.5165921063793857,
+    "Prob_Alta": 0.5930914901568719,
     "Prob_RVehicular_Alto": 0.13918214239116072,
     "Prob_Rescate_Alto": 0.13918214239116072,
     "Prob_Incendio_Alto": 0.0775310341406129,
     "Prob_Climaticas_Alto": 0.3620490508549071,
     "Category_Composition": {
      "baseline_total": 4.8867415915188275,
-     "forecast_total": 8.263282541036604,
-     "delta_total": 3.3765409495177767,
+     "forecast_total": 8.70452880859375,
+     "delta_total": 3.8177872170749225,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 1.123510876948919,
-       "share_total": 0.1359642335076174,
+       "count": 1.1835045875054235,
+       "share_total": 0.13596423350761744,
        "baseline": 0.7810953629554702,
-       "delta": 0.34241551399344883,
-       "share_positive_delta": 0.10141014698558629
+       "delta": 0.4024092245499533,
+       "share_positive_delta": 0.10540378540485225
       },
       "rescates": {
        "label": "Rescates",
-       "count": 2.5590895637816926,
-       "share_total": 0.30969406541200784,
+       "count": 2.69574091422934,
+       "share_total": 0.3096940654120079,
        "baseline": 1.848584920626055,
-       "delta": 0.7105046431556377,
-       "share_positive_delta": 0.21042381945852276
+       "delta": 0.8471559936032851,
+       "share_positive_delta": 0.22189712140435924
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 1.7617753157236278,
-       "share_total": 0.21320526158634995,
+       "count": 1.8558513416221498,
+       "share_total": 0.21320526158634998,
        "baseline": 0.22079471985864826,
-       "delta": 1.5409805958649796,
-       "share_positive_delta": 0.45637847101633877
+       "delta": 1.6350566217635016,
+       "share_positive_delta": 0.42827337638168167
       },
       "otros": {
        "label": "Otros",
-       "count": 2.818906784582364,
-       "share_total": 0.34113643949402467,
+       "count": 2.9694319652368373,
+       "share_total": 0.3411364394940248,
        "baseline": 2.0362665880786537,
-       "delta": 0.7826401965037104,
-       "share_positive_delta": 0.23178756253955213
+       "delta": 0.9331653771581836,
+       "share_positive_delta": 0.2444257168091069
       }
      }
     },
@@ -125,50 +125,50 @@
     "Fecha": "2025-06-12",
     "FechaStr": "2025-06-12",
     "Dia": "Jueves",
-    "Prediccion": 4.635017439126968,
+    "Prediccion": 4.927546501159668,
     "Lag_Mode": "observed",
     "Lag_Age_Days": 1,
     "Last_Observed_Date": "2025-06-09",
-    "Prob_Alta": 0.14472529736391856,
+    "Prob_Alta": 0.20105412813479281,
     "Prob_RVehicular_Alto": 0.1184562156668926,
     "Prob_Rescate_Alto": 0.1184562156668926,
     "Prob_Incendio_Alto": 0.0866657494954422,
     "Prob_Climaticas_Alto": 0.07711275819003885,
     "Category_Composition": {
      "baseline_total": 4.816118585218646,
-     "forecast_total": 4.635017439126968,
-     "delta_total": -0.18110114609167827,
+     "forecast_total": 4.927546501159668,
+     "delta_total": 0.11142791594102164,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 0.5735984214099484,
-       "share_total": 0.12375323910711951,
+       "count": 0.601163137679023,
+       "share_total": 0.12200050015510618,
        "baseline": 0.814647154878178,
-       "delta": -0.24104873346822953,
+       "delta": -0.213484017199155,
        "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 1.7293963418314413,
-       "share_total": 0.37311539051235654,
+       "count": 1.8422210388844804,
+       "share_total": 0.3738617258002385,
        "baseline": 1.9297722980181407,
-       "delta": -0.20037595618669934,
+       "delta": -0.08755125913366024,
        "share_positive_delta": 0.0
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.6810496573750568,
-       "share_total": 0.14693572706456448,
+       "count": 0.7254808958441077,
+       "share_total": 0.14722963967430244,
        "baseline": 0.22943665099719615,
-       "delta": 0.4516130063778607,
-       "share_positive_delta": 0.0
+       "delta": 0.49604424484691156,
+       "share_positive_delta": 1.0
       },
       "otros": {
        "label": "Otros",
-       "count": 1.6509730185105216,
-       "share_total": 0.3561956433159595,
+       "count": 1.758681428752057,
+       "share_total": 0.35690813437035285,
        "baseline": 1.8422624813251312,
-       "delta": -0.19128946281460957,
+       "delta": -0.08358105257307424,
        "share_positive_delta": 0.0
       }
      }
@@ -184,50 +184,50 @@
     "Fecha": "2025-06-13",
     "FechaStr": "2025-06-13",
     "Dia": "Viernes",
-    "Prediccion": 4.6564732825756066,
+    "Prediccion": 4.798933982849121,
     "Lag_Mode": "observed",
     "Lag_Age_Days": 1,
     "Last_Observed_Date": "2025-06-09",
-    "Prob_Alta": 0.14607954268503498,
+    "Prob_Alta": 0.1936522462319956,
     "Prob_RVehicular_Alto": 0.12486807936098948,
     "Prob_Rescate_Alto": 0.12486807936098948,
     "Prob_Incendio_Alto": 0.08906016673908144,
     "Prob_Climaticas_Alto": 0.032835515358240946,
     "Category_Composition": {
      "baseline_total": 5.255864958538667,
-     "forecast_total": 4.6564732825756066,
-     "delta_total": -0.5993916759630604,
+     "forecast_total": 4.798933982849121,
+     "delta_total": -0.4569309756895459,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 0.75456115848488,
-       "share_total": 0.16204563254092466,
+       "count": 0.7871728848769599,
+       "share_total": 0.16403078010454655,
        "baseline": 0.9196501458020889,
-       "delta": -0.1650889873172089,
+       "delta": -0.13247726092512901,
        "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 2.0156864265361802,
-       "share_total": 0.4328783403694858,
+       "count": 2.072433241579672,
+       "share_total": 0.43185283418907777,
        "baseline": 2.1333007716901697,
-       "delta": -0.1176143451539895,
+       "delta": -0.060867530110497725,
        "share_positive_delta": 0.0
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.00903333269682808,
-       "share_total": 0.0019399515789407745,
+       "count": 0.009287644504966868,
+       "share_total": 0.0019353557557073968,
        "baseline": 0.2161883937226206,
-       "delta": -0.20715506102579254,
+       "delta": -0.20690074921765375,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 1.8771923648577185,
-       "share_total": 0.4031360755106488,
+       "count": 1.9300402118875222,
+       "share_total": 0.4021810299506683,
        "baseline": 1.986725647323788,
-       "delta": -0.10953328246606953,
+       "delta": -0.05668543543626581,
        "share_positive_delta": 0.0
       }
      }
@@ -243,50 +243,50 @@
     "Fecha": "2025-06-14",
     "FechaStr": "2025-06-14",
     "Dia": "Sábado",
-    "Prediccion": 10.531399114131926,
+    "Prediccion": 10.154661178588867,
     "Lag_Mode": "observed",
     "Lag_Age_Days": 1,
     "Last_Observed_Date": "2025-06-09",
-    "Prob_Alta": 0.7717964967048608,
+    "Prob_Alta": 0.8742552115709129,
     "Prob_RVehicular_Alto": 0.10888877327363274,
     "Prob_Rescate_Alto": 0.10888877327363274,
     "Prob_Incendio_Alto": 0.08297498946469359,
     "Prob_Climaticas_Alto": 0.5412925167704151,
     "Category_Composition": {
      "baseline_total": 4.770030422579296,
-     "forecast_total": 10.531399114131926,
-     "delta_total": 5.761368691552629,
+     "forecast_total": 10.154661178588867,
+     "delta_total": 5.384630756009571,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 0.767555088323673,
-       "share_total": 0.07288253725886264,
+       "count": 0.745520111231345,
+       "share_total": 0.0734165422282406,
        "baseline": 0.9290622108730472,
-       "delta": -0.16150712254937416,
+       "delta": -0.1835420996417022,
        "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 1.5237521242070518,
-       "share_total": 0.1446865803578132,
+       "count": 1.4800082370749665,
+       "share_total": 0.14574668824948767,
        "baseline": 1.9185654163061647,
-       "delta": -0.394813292099113,
+       "delta": -0.4385571792311982,
        "share_positive_delta": 0.0
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 6.864874217958903,
-       "share_total": 0.6518482628530364,
+       "count": 6.593394905965682,
+       "share_total": 0.6492973807799589,
        "baseline": 0.19085798190109934,
-       "delta": 6.6740162360578035,
+       "delta": 6.402536924064583,
        "share_positive_delta": 1.0
       },
       "otros": {
        "label": "Otros",
-       "count": 1.3752176836422965,
-       "share_total": 0.13058261953028755,
+       "count": 1.3357379243168734,
+       "share_total": 0.13153938874231283,
        "baseline": 1.7315448134989853,
-       "delta": -0.3563271298566888,
+       "delta": -0.3958068891821118,
        "share_positive_delta": 0.0
       }
      }
@@ -302,51 +302,51 @@
     "Fecha": "2025-06-15",
     "FechaStr": "2025-06-15",
     "Dia": "Domingo",
-    "Prediccion": 17.12068900346756,
+    "Prediccion": 18.120561599731445,
     "Lag_Mode": "observed",
     "Lag_Age_Days": 1,
     "Last_Observed_Date": "2025-06-09",
-    "Prob_Alta": 0.9897026135311616,
+    "Prob_Alta": 0.9895298700115531,
     "Prob_RVehicular_Alto": 0.08555528316544116,
     "Prob_Rescate_Alto": 0.08555528316544116,
     "Prob_Incendio_Alto": 0.08541699757140286,
     "Prob_Climaticas_Alto": 0.6533228292946521,
     "Category_Composition": {
      "baseline_total": 4.468822882134104,
-     "forecast_total": 17.12068900346756,
-     "delta_total": 12.651866121333457,
+     "forecast_total": 18.120561599731445,
+     "delta_total": 13.651738717597341,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 0.767065622118299,
-       "share_total": 0.04480343179897377,
+       "count": 0.8228498657210768,
+       "share_total": 0.04540973309200703,
        "baseline": 0.9884555074102658,
-       "delta": -0.2213898852919668,
+       "delta": -0.165605641689189,
        "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 1.8176717971956389,
-       "share_total": 0.10616814526725497,
+       "count": 1.922605287020901,
+       "share_total": 0.10610075611836417,
        "baseline": 1.6716853082951952,
-       "delta": 0.14598648890044363,
-       "share_positive_delta": 0.011340292527804106
+       "delta": 0.2509199787257057,
+       "share_positive_delta": 0.018159783255098826
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 12.795493142256205,
-       "share_total": 0.7473702220550034,
+       "count": 13.53417201240409,
+       "share_total": 0.7468958364184846,
        "baseline": 0.20800871521797495,
-       "delta": 12.58748442703823,
-       "share_positive_delta": 0.9778011421943199
+       "delta": 13.326163297186115,
+       "share_positive_delta": 0.9644518476685214
       },
       "otros": {
        "label": "Otros",
-       "count": 1.7404584418974183,
-       "share_total": 0.10165820087876792,
+       "count": 1.8409344345853749,
+       "share_total": 0.10159367437114412,
        "baseline": 1.600673351210668,
-       "delta": 0.13978509068675038,
-       "share_positive_delta": 0.010858565277875914
+       "delta": 0.24026108337470697,
+       "share_positive_delta": 0.017388369076379674
       }
      }
     },
@@ -360,58 +360,58 @@
   ]
  },
  "verano_fallback": {
-  "classification_threshold": 0.21000000000000002,
+  "classification_threshold": 0.23,
   "umbral_alta_actividad": 7.0,
   "days": [
    {
     "Fecha": "2026-01-15",
     "FechaStr": "2026-01-15",
     "Dia": "Jueves",
-    "Prediccion": 5.290109983682632,
+    "Prediccion": 5.447353839874268,
     "Lag_Mode": "observed",
     "Lag_Age_Days": 1,
     "Last_Observed_Date": "2026-01-14",
-    "Prob_Alta": 0.19095281904457176,
+    "Prob_Alta": 0.23582377282595055,
     "Prob_RVehicular_Alto": 0.12080172730639376,
     "Prob_Rescate_Alto": 0.12080172730639376,
     "Prob_Incendio_Alto": 0.19185822593636312,
     "Prob_Climaticas_Alto": 0.022039642405448943,
     "Category_Composition": {
      "baseline_total": 5.256868457678422,
-     "forecast_total": 5.290109983682632,
-     "delta_total": 0.033241526004210264,
+     "forecast_total": 5.447353839874268,
+     "delta_total": 0.19048538219584543,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 1.1306485622710798,
-       "share_total": 0.2137287439691368,
+       "count": 1.1642560941517817,
+       "share_total": 0.21372874396913683,
        "baseline": 1.3373601416581418,
-       "delta": -0.20671157938706197,
+       "delta": -0.1731040475063601,
        "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 2.1799623410162616,
-       "share_total": 0.412082612221743,
+       "count": 2.244759800031531,
+       "share_total": 0.4120826122217431,
        "baseline": 1.9984497069832776,
-       "delta": 0.181512634032984,
+       "delta": 0.24631009304825335,
        "share_positive_delta": 0.5248906320724592
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.0062870117083794275,
-       "share_total": 0.001188446313549575,
+       "count": 0.0064738875895986965,
+       "share_total": 0.0011884463135495753,
        "baseline": 0.112144296028781,
-       "delta": -0.10585728432040156,
+       "delta": -0.1056704084391823,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 1.9732120686869115,
-       "share_total": 0.37300019749557056,
+       "count": 2.0318640581013567,
+       "share_total": 0.3730001974955706,
        "baseline": 1.8089143130082215,
-       "delta": 0.16429775567868998,
-       "share_positive_delta": 0.47510936792754077
+       "delta": 0.22294974509313525,
+       "share_positive_delta": 0.4751093679275408
       }
      }
     },
@@ -426,51 +426,51 @@
     "Fecha": "2026-01-16",
     "FechaStr": "2026-01-16",
     "Dia": "Viernes",
-    "Prediccion": 5.758661727905272,
+    "Prediccion": 6.020287036895752,
     "Lag_Mode": "observed",
     "Lag_Age_Days": 1,
     "Last_Observed_Date": "2026-01-14",
-    "Prob_Alta": 0.23043973437274756,
+    "Prob_Alta": 0.28588378949382914,
     "Prob_RVehicular_Alto": 0.11041389516748489,
     "Prob_Rescate_Alto": 0.11041389516748489,
     "Prob_Incendio_Alto": 0.20999688161434726,
     "Prob_Climaticas_Alto": 0.030325916425820436,
     "Category_Composition": {
      "baseline_total": 5.7837124189495785,
-     "forecast_total": 5.758661727905272,
-     "delta_total": -0.02505069104430646,
+     "forecast_total": 6.020287036895752,
+     "delta_total": 0.2365746179461734,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 1.5135920831214373,
-       "share_total": 0.26283747068991503,
+       "count": 1.5823570176049628,
+       "share_total": 0.2628374706899151,
        "baseline": 1.5150628525830054,
-       "delta": -0.0014707694615681,
-       "share_positive_delta": 0.0
+       "delta": 0.0672941650219574,
+       "share_positive_delta": 0.20321309863843168
       },
       "rescates": {
        "label": "Rescates",
-       "count": 2.2474914062150404,
-       "share_total": 0.39028015751023654,
+       "count": 2.3495985730165097,
+       "share_total": 0.3902801575102366,
        "baseline": 2.2095544760230945,
-       "delta": 0.03793693019194588,
-       "share_positive_delta": 0.0
+       "delta": 0.14004409699341513,
+       "share_positive_delta": 0.42290137468482075
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.010579476173100353,
-       "share_total": 0.001837141452819571,
+       "count": 0.011060118873353493,
+       "share_total": 0.0018371414528195712,
        "baseline": 0.1056362263127074,
-       "delta": -0.09505675013960704,
+       "delta": -0.09457610743935391,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 1.9869987623956933,
+       "count": 2.077271327400926,
        "share_total": 0.3450452303470288,
        "baseline": 1.953458864030771,
-       "delta": 0.033539898364922216,
-       "share_positive_delta": 0.0
+       "delta": 0.12381246337015495,
+       "share_positive_delta": 0.37388552667674757
       }
      }
     },
@@ -485,51 +485,51 @@
     "Fecha": "2026-01-17",
     "FechaStr": "2026-01-17",
     "Dia": "Sábado",
-    "Prediccion": 5.2554410660266875,
+    "Prediccion": 5.631805896759033,
     "Lag_Mode": "observed",
     "Lag_Age_Days": 1,
     "Last_Observed_Date": "2026-01-14",
-    "Prob_Alta": 0.18824703565603068,
+    "Prob_Alta": 0.258956585436896,
     "Prob_RVehicular_Alto": 0.10424391715050237,
     "Prob_Rescate_Alto": 0.10424391715050237,
     "Prob_Incendio_Alto": 0.18089164420952525,
     "Prob_Climaticas_Alto": 0.04550168857919447,
     "Category_Composition": {
      "baseline_total": 5.321431607262325,
-     "forecast_total": 5.2554410660266875,
-     "delta_total": -0.06599054123563786,
+     "forecast_total": 5.631805896759033,
+     "delta_total": 0.31037428949670787,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 1.4126882070585662,
+       "count": 1.5138569103600292,
        "share_total": 0.2688048803726025,
        "baseline": 1.5358521457661145,
-       "delta": -0.12316393870754827,
+       "delta": -0.02199523540608528,
        "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 2.0650478472826186,
-       "share_total": 0.39293521159088424,
+       "count": 2.2129348416818004,
+       "share_total": 0.3929352115908843,
        "baseline": 1.9874319318955758,
-       "delta": 0.07761591538704282,
-       "share_positive_delta": 0.0
+       "delta": 0.22550290978622467,
+       "share_positive_delta": 0.5382582359226596
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.006215469544248806,
+       "count": 0.006660586160257564,
        "share_total": 0.0011826732459104402,
        "baseline": 0.09324035870700007,
-       "delta": -0.08702488916275126,
+       "delta": -0.0865797725467425,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 1.7714895421412535,
+       "count": 1.898353558556946,
        "share_total": 0.3370772347906028,
        "baseline": 1.704907170893635,
-       "delta": 0.06658237124761857,
-       "share_positive_delta": 0.0
+       "delta": 0.19344638766331101,
+       "share_positive_delta": 0.4617417640773404
       }
      }
     },
@@ -544,51 +544,51 @@
     "Fecha": "2026-01-18",
     "FechaStr": "2026-01-18",
     "Dia": "Domingo",
-    "Prediccion": 6.292271610498428,
+    "Prediccion": 6.179038047790527,
     "Lag_Mode": "observed",
     "Lag_Age_Days": 1,
     "Last_Observed_Date": "2026-01-14",
-    "Prob_Alta": 0.28195542921308964,
+    "Prob_Alta": 0.3247924184891249,
     "Prob_RVehicular_Alto": 0.10303445244547654,
     "Prob_Rescate_Alto": 0.10303445244547654,
     "Prob_Incendio_Alto": 0.2231511941389885,
     "Prob_Climaticas_Alto": 0.11181177126594233,
     "Category_Composition": {
      "baseline_total": 5.051326141431249,
-     "forecast_total": 6.292271610498428,
-     "delta_total": 1.2409454690671788,
+     "forecast_total": 6.179038047790527,
+     "delta_total": 1.127711906359278,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 1.9638462263818106,
-       "share_total": 0.31210449070653656,
+       "count": 1.9692137213457535,
+       "share_total": 0.31869260330091287,
        "baseline": 1.6395525230147483,
-       "delta": 0.3242937033670623,
-       "share_positive_delta": 0.24436532777433798
+       "delta": 0.32966119833100516,
+       "share_positive_delta": 0.27148788811930563
       },
       "rescates": {
        "label": "Rescates",
-       "count": 2.2566086874882263,
-       "share_total": 0.35863179900294767,
+       "count": 2.194776461369768,
+       "share_total": 0.35519711068206905,
        "baseline": 1.7319316482685763,
-       "delta": 0.52467703921965,
-       "share_positive_delta": 0.39536036418029696
+       "delta": 0.4628448131011915,
+       "share_positive_delta": 0.3811693989829163
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.01546960908061845,
-       "share_total": 0.00245850942842454,
+       "count": 0.015045733921429183,
+       "share_total": 0.002434963792917438,
        "baseline": 0.10160972257421585,
-       "delta": -0.0861401134935974,
+       "delta": -0.08656398865278667,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 2.0563470875477727,
-       "share_total": 0.3268052008620912,
+       "count": 2.000002131153577,
+       "share_total": 0.3236753222241007,
        "baseline": 1.578232247573709,
-       "delta": 0.4781148399740638,
-       "share_positive_delta": 0.36027430804536503
+       "delta": 0.4217698835798682,
+       "share_positive_delta": 0.3473427128977781
       }
      }
     },
@@ -603,51 +603,51 @@
     "Fecha": "2026-01-19",
     "FechaStr": "2026-01-19",
     "Dia": "Lunes",
-    "Prediccion": 5.307313438653945,
+    "Prediccion": 5.461729526519775,
     "Lag_Mode": "observed",
     "Lag_Age_Days": 1,
     "Last_Observed_Date": "2026-01-14",
-    "Prob_Alta": 0.19230647540406276,
+    "Prob_Alta": 0.2755048681093032,
     "Prob_RVehicular_Alto": 0.10162940298195886,
     "Prob_Rescate_Alto": 0.10162940298195886,
     "Prob_Incendio_Alto": 0.17195385540633468,
     "Prob_Climaticas_Alto": 0.015441816042302601,
     "Category_Composition": {
      "baseline_total": 5.235366281348543,
-     "forecast_total": 5.307313438653945,
-     "delta_total": 0.07194715730540224,
+     "forecast_total": 5.461729526519775,
+     "delta_total": 0.22636324517123274,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 1.2754013625473932,
-       "share_total": 0.24031016394442758,
+       "count": 1.357265247376984,
+       "share_total": 0.24850466153380465,
        "baseline": 1.4448010502985984,
-       "delta": -0.16939968775120517,
+       "delta": -0.08753580292161445,
        "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 1.9085396711327869,
-       "share_total": 0.3596056070916429,
+       "count": 1.9428828698705074,
+       "share_total": 0.35572667237304884,
        "baseline": 1.751456424635078,
-       "delta": 0.157083246497709,
+       "delta": 0.1914264452354295,
        "share_positive_delta": 0.47400427281023133
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.0054933693349458424,
-       "share_total": 0.0010350565118194875,
+       "count": 0.005592219716556076,
+       "share_total": 0.0010238917341846932,
        "baseline": 0.09554279116515156,
-       "delta": -0.09004942183020571,
+       "delta": -0.08995057144859549,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 2.117879035638819,
-       "share_total": 0.39904917245210997,
+       "count": 2.155989189555727,
+       "share_total": 0.3947447743589616,
        "baseline": 1.9435660152497152,
-       "delta": 0.17431302038910368,
-       "share_positive_delta": 0.5259957271897686
+       "delta": 0.21242317430601187,
+       "share_positive_delta": 0.5259957271897687
       }
      }
     },
@@ -662,50 +662,50 @@
     "Fecha": "2026-01-20",
     "FechaStr": "2026-01-20",
     "Dia": "Martes",
-    "Prediccion": 5.027259107828139,
+    "Prediccion": 5.035259246826172,
     "Lag_Mode": "observed",
     "Lag_Age_Days": 1,
     "Last_Observed_Date": "2026-01-14",
-    "Prob_Alta": 0.171171678846313,
+    "Prob_Alta": 0.21964488135203097,
     "Prob_RVehicular_Alto": 0.09674289654457918,
     "Prob_Rescate_Alto": 0.09674289654457918,
     "Prob_Incendio_Alto": 0.29781288168868253,
     "Prob_Climaticas_Alto": 0.012593228903875332,
     "Category_Composition": {
      "baseline_total": 5.230987600676655,
-     "forecast_total": 5.027259107828139,
-     "delta_total": -0.20372849284851569,
+     "forecast_total": 5.035259246826172,
+     "delta_total": -0.19572835385048304,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 0.8808707951292263,
-       "share_total": 0.17521889686520997,
+       "count": 0.8884548949353721,
+       "share_total": 0.17644670341360946,
        "baseline": 1.4529284849933792,
-       "delta": -0.572057689864153,
+       "delta": -0.5644735900580071,
        "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 2.014577583531792,
-       "share_total": 0.4007308038678204,
+       "count": 2.0147797216738663,
+       "share_total": 0.4001342578227375,
        "baseline": 1.7878001208346932,
-       "delta": 0.22677746269709864,
+       "delta": 0.22697960083917312,
        "share_positive_delta": 0.0
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.0065797126828479645,
-       "share_total": 0.0013088071535048672,
+       "count": 0.006580372876284031,
+       "share_total": 0.0013068588038305626,
        "baseline": 0.10426150379575812,
-       "delta": -0.09768179111291016,
+       "delta": -0.09768113091947409,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 2.125231016484273,
-       "share_total": 0.4227414921134647,
+       "count": 2.12544425734065,
+       "share_total": 0.42211217995982264,
        "baseline": 1.885997491052824,
-       "delta": 0.23923352543144882,
+       "delta": 0.2394467662878259,
        "share_positive_delta": 0.0
       }
      }
@@ -720,58 +720,58 @@
   ]
  },
  "datos_vencidos_fallback": {
-  "classification_threshold": 0.21000000000000002,
+  "classification_threshold": 0.23,
   "umbral_alta_actividad": 7.0,
   "days": [
    {
     "Fecha": "2026-10-23",
     "FechaStr": "2026-10-23",
     "Dia": "Viernes",
-    "Prediccion": 8.143090204000472,
+    "Prediccion": 4.410907745361328,
     "Lag_Mode": "stale",
     "Lag_Age_Days": 190,
     "Last_Observed_Date": "2026-04-16",
-    "Prob_Alta": 0.5013352665152933,
+    "Prob_Alta": 0.1469148972385698,
     "Prob_RVehicular_Alto": 0.12578898790730822,
     "Prob_Rescate_Alto": 0.12578898790730822,
     "Prob_Incendio_Alto": 0.21518110923849224,
     "Prob_Climaticas_Alto": 0.012517803752226584,
     "Category_Composition": {
      "baseline_total": 4.990247628113765,
-     "forecast_total": 8.143090204000472,
-     "delta_total": 3.152842575886708,
+     "forecast_total": 4.410907745361328,
+     "delta_total": -0.5793398827524365,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 1.104569403869296,
-       "share_total": 0.1356449917902975,
+       "count": 0.5983175449072968,
+       "share_total": 0.13564499179029746,
        "baseline": 0.9989514791306369,
-       "delta": 0.10561792473865905,
-       "share_positive_delta": 0.032234610889573134
+       "delta": -0.40063393422334004,
+       "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 3.8601693060515205,
-       "share_total": 0.47404231186768964,
+       "count": 2.0909569050461823,
+       "share_total": 0.4740423118676896,
        "baseline": 2.1179833080408845,
-       "delta": 1.742185998010636,
-       "share_positive_delta": 0.5317155007740828
+       "delta": -0.02702640299470227,
+       "share_positive_delta": 0.0
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.012699199924848196,
+       "count": 0.006878838119819218,
        "share_total": 0.0015595062324876906,
        "baseline": 0.1363945385324963,
-       "delta": -0.12369533860764811,
+       "delta": -0.1295157004126771,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 3.1656522941548086,
-       "share_total": 0.3887531901095253,
+       "count": 1.7147544572880298,
+       "share_total": 0.38875319010952525,
        "baseline": 1.7369183024097465,
-       "delta": 1.428733991745062,
-       "share_positive_delta": 0.4360498883363441
+       "delta": -0.022163845121716763,
+       "share_positive_delta": 0.0
       }
      }
     },
@@ -786,51 +786,51 @@
     "Fecha": "2026-10-24",
     "FechaStr": "2026-10-24",
     "Dia": "Sábado",
-    "Prediccion": 6.637850188016891,
+    "Prediccion": 4.051893711090088,
     "Lag_Mode": "stale",
     "Lag_Age_Days": 190,
     "Last_Observed_Date": "2026-04-16",
-    "Prob_Alta": 0.31881000706665164,
+    "Prob_Alta": 0.134346272937208,
     "Prob_RVehicular_Alto": 0.12890537379761893,
     "Prob_Rescate_Alto": 0.12890537379761893,
     "Prob_Incendio_Alto": 0.21073840095000532,
     "Prob_Climaticas_Alto": 0.01303821918455018,
     "Category_Composition": {
      "baseline_total": 4.554963902881546,
-     "forecast_total": 6.637850188016891,
-     "delta_total": 2.082886285135345,
+     "forecast_total": 4.051893711090088,
+     "delta_total": -0.5030701917914584,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 1.3281822055923547,
-       "share_total": 0.2000922238332648,
+       "count": 0.6095369333108595,
+       "share_total": 0.15043260676916292,
        "baseline": 1.0144483981664698,
-       "delta": 0.31373380742588486,
-       "share_positive_delta": 0.14314976502056428
+       "delta": -0.40491146485561036,
+       "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 2.95143703708711,
-       "share_total": 0.4446374885674958,
+       "count": 1.914313241767564,
+       "share_total": 0.47244902711244935,
        "baseline": 1.9053802832763584,
-       "delta": 1.0460567538107517,
-       "share_positive_delta": 0.4772924529070969
+       "delta": 0.008932958491205456,
+       "share_positive_delta": 0.0
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.01115654912653791,
-       "share_total": 0.0016807473520084092,
+       "count": 0.005722192333444681,
+       "share_total": 0.0014122266627535078,
        "baseline": 0.11991764378825438,
-       "delta": -0.10876109466171648,
+       "delta": -0.11419545145480971,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 2.347074396210889,
-       "share_total": 0.3535895402472311,
+       "count": 1.5223213436782201,
+       "share_total": 0.3757061394556343,
        "baseline": 1.5152175776504633,
-       "delta": 0.8318568185604258,
-       "share_positive_delta": 0.3795577820723388
+       "delta": 0.007103766027756864,
+       "share_positive_delta": 0.0
       }
      }
     },
@@ -845,51 +845,51 @@
     "Fecha": "2026-10-25",
     "FechaStr": "2026-10-25",
     "Dia": "Domingo",
-    "Prediccion": 5.692925072908402,
+    "Prediccion": 4.06792688369751,
     "Lag_Mode": "stale",
     "Lag_Age_Days": 190,
     "Last_Observed_Date": "2026-04-16",
-    "Prob_Alta": 0.22457163814649703,
+    "Prob_Alta": 0.14424547845106075,
     "Prob_RVehicular_Alto": 0.1286211776292015,
     "Prob_Rescate_Alto": 0.1286211776292015,
     "Prob_Incendio_Alto": 0.2022442505276341,
     "Prob_Climaticas_Alto": 0.012639243221143029,
     "Category_Composition": {
      "baseline_total": 4.277803436789773,
-     "forecast_total": 5.692925072908402,
-     "delta_total": 1.415121636118629,
+     "forecast_total": 4.06792688369751,
+     "delta_total": -0.20987655309226305,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 1.4129993522299618,
-       "share_total": 0.24820269617707943,
+       "count": 0.7289698735714635,
+       "share_total": 0.179199354957155,
        "baseline": 1.084922087891434,
-       "delta": 0.3280772643385277,
-       "share_positive_delta": 0.2132790397250882
+       "delta": -0.3559522143199706,
+       "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 2.3169056933350705,
-       "share_total": 0.40697983262783566,
+       "count": 1.807519338287906,
+       "share_total": 0.4443342739348785,
        "baseline": 1.6607074462362712,
-       "delta": 0.6561982470987993,
-       "share_positive_delta": 0.4265865002644825
+       "delta": 0.1468118920516348,
+       "share_positive_delta": 0.0
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.007033187049570769,
-       "share_total": 0.0012354258943333772,
+       "count": 0.005486896440569421,
+       "share_total": 0.0013488188449400423,
        "baseline": 0.13016521505758066,
-       "delta": -0.12313202800800989,
+       "delta": -0.12467831861701124,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 1.9559868402937983,
-       "share_total": 0.3435820453007515,
+       "count": 1.5259507753975712,
+       "share_total": 0.3751175522630265,
        "baseline": 1.4020086876044873,
-       "delta": 0.553978152689311,
-       "share_positive_delta": 0.3601344600104293
+       "delta": 0.12394208779308391,
+       "share_positive_delta": 0.0
       }
      }
     },
@@ -904,51 +904,51 @@
     "Fecha": "2026-10-26",
     "FechaStr": "2026-10-26",
     "Dia": "Lunes",
-    "Prediccion": 5.228787292242051,
+    "Prediccion": 4.0873799324035645,
     "Lag_Mode": "stale",
     "Lag_Age_Days": 190,
     "Last_Observed_Date": "2026-04-16",
-    "Prob_Alta": 0.186186898706881,
+    "Prob_Alta": 0.14373829221646883,
     "Prob_RVehicular_Alto": 0.11752239458377618,
     "Prob_Rescate_Alto": 0.11752239458377618,
     "Prob_Incendio_Alto": 0.22958458746259594,
     "Prob_Climaticas_Alto": 0.012731888019349366,
     "Category_Composition": {
      "baseline_total": 4.485279475568257,
-     "forecast_total": 5.228787292242051,
-     "delta_total": 0.7435078166737936,
+     "forecast_total": 4.0873799324035645,
+     "delta_total": -0.39789954316469256,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 0.953697245205986,
-       "share_total": 0.18239358227881752,
+       "count": 0.5975276211025432,
+       "share_total": 0.14618842167460805,
        "baseline": 0.9578545224684789,
-       "delta": -0.004157277262492931,
+       "delta": -0.3603269013659357,
        "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 2.1055016775480806,
-       "share_total": 0.4026749530760244,
+       "count": 1.7187684504876486,
+       "share_total": 0.4205061626059643,
        "baseline": 1.6797168466851096,
-       "delta": 0.42578483086297103,
-       "share_positive_delta": 0.49323369946434303
+       "delta": 0.039051603802539026,
+       "share_positive_delta": 0.0
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.006319117890960246,
-       "share_total": 0.0012085245655978239,
+       "count": 0.005158438286566741,
+       "share_total": 0.0012620403221320672,
        "baseline": 0.12190572659660168,
-       "delta": -0.11558660870564143,
+       "delta": -0.11674728831003493,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 2.1632692515970238,
-       "share_total": 0.41372294007956023,
+       "count": 1.7659254225268055,
+       "share_total": 0.4320433753972955,
        "baseline": 1.725802379818067,
-       "delta": 0.4374668717789567,
-       "share_positive_delta": 0.506766300535657
+       "delta": 0.040123042708738454,
+       "share_positive_delta": 0.0
       }
      }
     },
@@ -963,51 +963,51 @@
     "Fecha": "2026-10-27",
     "FechaStr": "2026-10-27",
     "Dia": "Martes",
-    "Prediccion": 4.857012741565703,
+    "Prediccion": 4.064906120300293,
     "Lag_Mode": "stale",
     "Lag_Age_Days": 190,
     "Last_Observed_Date": "2026-04-16",
-    "Prob_Alta": 0.15924951225340903,
+    "Prob_Alta": 0.13802162170265866,
     "Prob_RVehicular_Alto": 0.11096953022339338,
     "Prob_Rescate_Alto": 0.11096953022339338,
     "Prob_Incendio_Alto": 0.23473781285150033,
     "Prob_Climaticas_Alto": 0.012527994622973559,
     "Category_Composition": {
      "baseline_total": 4.486466926377463,
-     "forecast_total": 4.857012741565703,
-     "delta_total": 0.37054581518824037,
+     "forecast_total": 4.064906120300293,
+     "delta_total": -0.42156080607716984,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 0.7962936471326783,
-       "share_total": 0.1639472016035901,
+       "count": 0.5315141005016527,
+       "share_total": 0.13075679604191875,
        "baseline": 0.9651157703635688,
-       "delta": -0.16882212323089052,
+       "delta": -0.43360166986191606,
        "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 2.0514135506554942,
-       "share_total": 0.42236116308688165,
+       "count": 1.785015929599774,
+       "share_total": 0.43912845137685663,
        "baseline": 1.714870832258971,
-       "delta": 0.3365427183965233,
-       "share_positive_delta": 0.5060325142504789
+       "delta": 0.0701450973408031,
+       "share_positive_delta": 0.0
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.0068026110347392706,
-       "share_total": 0.0014005750852830552,
+       "count": 0.005919220459473315,
+       "share_total": 0.0014561764243244159,
        "baseline": 0.13249612404230418,
-       "delta": -0.1256935130075649,
+       "delta": -0.12657690358283086,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 2.002502932742791,
-       "share_total": 0.41229106022424505,
+       "count": 1.7424568697393932,
+       "share_total": 0.4286585761569003,
        "baseline": 1.673984199712619,
-       "delta": 0.32851873303017176,
-       "share_positive_delta": 0.49396748574952104
+       "delta": 0.06847267002677415,
+       "share_positive_delta": 0.0
       }
      }
     },
@@ -1022,51 +1022,51 @@
     "Fecha": "2026-10-28",
     "FechaStr": "2026-10-28",
     "Dia": "Miércoles",
-    "Prediccion": 4.969473054409027,
+    "Prediccion": 4.086516857147217,
     "Lag_Mode": "stale",
     "Lag_Age_Days": 190,
     "Last_Observed_Date": "2026-04-16",
-    "Prob_Alta": 0.1670474939418457,
+    "Prob_Alta": 0.15584756103640146,
     "Prob_RVehicular_Alto": 0.11822450434337396,
     "Prob_Rescate_Alto": 0.11822450434337396,
     "Prob_Incendio_Alto": 0.20419450006313294,
     "Prob_Climaticas_Alto": 0.012928158951673511,
     "Category_Composition": {
      "baseline_total": 4.610703355154902,
-     "forecast_total": 4.969473054409027,
-     "delta_total": 0.3587696992541254,
+     "forecast_total": 4.086516857147217,
+     "delta_total": -0.5241864980076851,
      "groups": {
       "incendios": {
        "label": "Incendios",
-       "count": 0.8205324402352953,
-       "share_total": 0.16511457678743233,
+       "count": 0.545907315045534,
+       "share_total": 0.13358743745073648,
        "baseline": 0.856404485765526,
-       "delta": -0.03587204553023071,
+       "delta": -0.31049717071999194,
        "share_positive_delta": 0.0
       },
       "rescates": {
        "label": "Rescates",
-       "count": 2.0972110134390536,
-       "share_total": 0.42201879162587697,
+       "count": 1.7921528325986928,
+       "share_total": 0.43855265871820936,
        "baseline": 1.8365665446715156,
-       "delta": 0.260644468767538,
-       "share_positive_delta": 0.5077916408202737
+       "delta": -0.04441371207282274,
+       "share_positive_delta": 0.0
       },
       "climaticas": {
        "label": "Climáticas",
-       "count": 0.018878508284645792,
-       "share_total": 0.0037988953915136653,
+       "count": 0.011302069249835638,
+       "share_total": 0.0027656974496675815,
        "baseline": 0.1375269554114843,
-       "delta": -0.1186484471268385,
+       "delta": -0.12622488616164865,
        "share_positive_delta": 0.0
       },
       "otros": {
        "label": "Otros",
-       "count": 2.0328510924500316,
-       "share_total": 0.40906773619517683,
+       "count": 1.737154640253154,
+       "share_total": 0.4250942063813865,
        "baseline": 1.7802053693063764,
-       "delta": 0.2526457231436552,
-       "share_positive_delta": 0.4922083591797262
+       "delta": -0.04305072905322249,
+       "share_positive_delta": 0.0
       }
      }
     },

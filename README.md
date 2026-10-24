@@ -1,28 +1,22 @@
 # Emergency Oracle
 
-Dashboard Streamlit que pronostica, para los próximos 6 días, los llamados de emergencia del Cuerpo de Bomberos de Talcahuano (CBT). Usa pronóstico meteorológico, calendario e historial reciente de llamados.
+Dashboard Streamlit que pronostica, para los próximos 6 días, los llamados de emergencia del Cuerpo de Bomberos de Talcahuano (CBT). Usa pronóstico meteorológico y calendario.
 
 ## Modelo activo
 
-`signal_hydro_ensemble_v2` (definido en `03_model/saved_models/active_models.json`): promedio ponderado de cuatro XGBoost (error cuadrático, Poisson y mediana) sobre 118 variables, con la dispersión estirada ×1,15. La probabilidad de día de alta actividad (>7 llamados) se calibra sobre el conteo.
+`count_model_v3` (definido en `03_model/saved_models/active_models.json`): un XGBoost con objetivo Poisson sobre 100 variables de clima pronosticado y calendario, sin historial de llamados. Se guarda en JSON y trae, para cada día del forecast, un intervalo del 80% y la probabilidad calibrada de más de 7 llamados.
 
-Validación walk-forward de 6 tramos × 120 días (2024-03-18 a 2026-04-16), día 1 del forecast:
-
-| Predicción | MAE | R² | AUC (>7) |
-|---|---|---|---|
-| Modelo activo | 2,236 | 0,146 | 0,664 |
-| Promedio de los últimos 30 días | 2,326 | 0,009 | 0,607 |
-
-Error por día del forecast usando el clima pronosticado con la anticipación real (Open-Meteo Previous Runs):
+Validación walk-forward de 6 tramos × 120 días (2024-03-18 a 2026-04-16), con el forecast recursivo de 6 días y el clima pronosticado con la anticipación real (Open-Meteo Previous Runs):
 
 | Día | 1 | 2 | 3 | 4 | 5 | 6 |
 |---|---|---|---|---|---|---|
-| MAE modelo | 2,241 | 2,305 | 2,266 | 2,256 | 2,266 | 2,329 |
+| MAE modelo | 2,261 | 2,282 | 2,260 | 2,258 | 2,257 | 2,314 |
 | MAE promedio 30 días | 2,369 | 2,388 | 2,388 | 2,402 | 2,416 | 2,414 |
+| AUC (>7 llamados) | 0,647 | 0,617 | 0,626 | 0,625 | 0,653 | 0,605 |
 
-El modelo gana en los seis días, pero en el día 6 solo en 3 de 6 tramos.
+Le gana al promedio de 30 días en los seis días (P ≥ 0,987). Fue elegido entre cinco candidatos declarados de antemano por ser el más simple que cumple la regla de selección; detalle en `05_research/results/model_selection_v3/`.
 
-Los datos terminan el 2026-04-16. Mientras no se actualicen, los días sin conteo observado se tratan como faltantes (igual que en el entrenamiento) y el dashboard lo indica en pantalla.
+Los datos terminan el 2026-04-16. El conteo total no depende del historial de llamados; la composición por tipo de emergencia sí, y trata los días sin conteo como faltantes.
 
 ## Instalación
 

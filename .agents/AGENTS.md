@@ -46,12 +46,11 @@ Este documento contiene las directrices operacionales, políticas de datos y el 
 
 ## 4. Modelos Activos Actuales
 
-Definidos y resueltos dinámicamente mediante `active_models.json` (clave `climatic_augmented`):
-- **Regresor Principal (Operativo)**: `03_model/saved_models/regressor_signal_hydro_ensemble_v2.pkl` (HydroObjectiveEnsembleRegressor; MAE walk-forward 2,236, R² 0,146).
-- **Clasificador Principal**: `03_model/saved_models/classifier_signal_hydro_ensemble_v2.pkl` (RegressorProbabilityClassifier, AUC >7 llamados 0,664).
-- **Metadata Principal**: `03_model/saved_models/metadata_signal_hydro_ensemble_v2.pkl`.
-- **Modelo Base (Comparativo)**: `03_model/saved_models/regressor_climatic_augmented.pkl`.
+Definidos y resueltos dinámicamente mediante `active_models.json` (clave `count_model`):
+- **Modelo de conteo (Operativo)**: `03_model/saved_models/count_model_v3/` (`CountModel`, XGBoost Poisson sin historial, 100 variables, guardado en JSON; MAE día 1 2,261 con clima de anticipación real).
+- **Probabilidad de alta actividad**: `HorizonProbabilityClassifier`, logística por día del forecast definida en `metadata.json` del mismo directorio.
 - **Submodelos de Categorías**: `category_risk_models.pkl` (riesgo) y `category_composition_models.pkl` (composición).
+- Se entrena y selecciona con `03_model/train_model.py`; `--promote` solo con aprobación explícita.
 
 ---
 
