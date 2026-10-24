@@ -1,5 +1,17 @@
 # Patch Notes
 
+## 2026-10-23 - Validación del forecast a 1–6 días
+
+- Evaluación: `03_model/evaluate_forecast_horizons.py` repite la recursión de `predict_6_days` (las predicciones vuelven como lags y se reparten por categoría con proporciones históricas) sobre los mismos 6 folds de 120 días del modelo activo. La compara con un ensemble directo por horizonte, el promedio observado de 30 días y la climatología mes×día. Resultados en `05_research/results/forecast_horizons/`.
+
+- Resultado con clima del dataset: el MAE del modelo activo recursivo pasa de 2,236 (h1) a 2,260 (h6) y le gana al promedio de 30 días en los 6 horizontes y en los 6 folds (mejora de 0,14–0,17 llamados, IC 95% sobre cero). Los modelos directos no mejoran la recursión (MAE 2,230–2,282), por lo que no se propone reemplazarla.
+
+- Clima con anticipación real: `05_research/fetch_previous_runs_weather.py` descarga la Previous Runs API de Open-Meteo (corridas emitidas 0–6 días antes, feb-2024 a abr-2026). La evaluación reconstruye el clima de cada día objetivo y de su memoria de lluvia con la corrida que el dashboard habría tenido. Reconstruir el clima con la corrida más reciente reproduce el resultado original (MAE h1 2,241 contra 2,236).
+
+- Resultado con anticipación real: el MAE recursivo sube a 2,241–2,329 (h1–h6) y el AUC de >7 llamados baja de ~0,67 a 0,61–0,65. Sigue mejorando al promedio de 30 días en todos los horizontes (0,09–0,16 llamados, IC 95% sobre cero), pero en h6 solo gana en 3 de 6 folds y el límite inferior del IC queda en 0,004.
+
+- Limitaciones: visibilidad, humedad de suelo y altura de congelamiento no tienen corridas previas y usan la más reciente. Los modelos siguen entrenados con clima de anticipación corta. No se modificó el modelo activo ni la deduplicación.
+
 ## 2026-07-22 - Distribución histórica por hora
 
 - Forecast: se elimina la hora más probable de las tarjetas para evitar presentar un único horario como una predicción precisa.
