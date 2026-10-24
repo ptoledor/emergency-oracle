@@ -9,7 +9,7 @@ import math
 
 import pytest
 
-from forecast_harness import GOLDEN_CASES, GOLDEN_PATH, load_dashboard_forecast, run_case
+from forecast_harness import GOLDEN_CASES, GOLDEN_PATH, load_forecast_inputs, run_case
 
 # XGBoost predictions are float32; allow cross-platform rounding only.
 TOLERANCE = 1e-6
@@ -33,11 +33,11 @@ def assert_close(expected, actual, path="root"):
 
 
 @pytest.fixture(scope="module")
-def dashboard_forecast():
-    return load_dashboard_forecast()
+def forecast_inputs():
+    return load_forecast_inputs()
 
 
 @pytest.mark.parametrize("case", GOLDEN_CASES, ids=[case["name"] for case in GOLDEN_CASES])
-def test_forecast_matches_golden(dashboard_forecast, case):
+def test_forecast_matches_golden(forecast_inputs, case):
     golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
-    assert_close(golden[case["name"]], run_case(dashboard_forecast, case), case["name"])
+    assert_close(golden[case["name"]], run_case(forecast_inputs, case), case["name"])

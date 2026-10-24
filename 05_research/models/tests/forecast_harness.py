@@ -1,41 +1,26 @@
-"""Run the dashboard's six-day forecast outside Streamlit for golden tests.
+"""Run the six-day forecast with fixed inputs for golden tests.
 
-dashboard.py executes the whole app on import, so the forecast functions are
-extracted from its source and executed with the same artifacts the dashboard
-loads. Weather is supplied explicitly so the result never depends on the
-network or on the current date.
+Weather is supplied explicitly (a recorded Open-Meteo window or the local
+fallback), so the result never depends on the network or on the current date.
 """
 
 from __future__ import annotations
 
-import ast
 import datetime as dt
-import pickle
-import types
+import json
 from pathlib import Path
 
-import holidays
 import numpy as np
 import pandas as pd
 
-import model_components
-from serving_history import prepare_event_history
-from signal_features import (
-    CATEGORY_LAG_FEATURES,
-    aggregate_weather_daily,
-    event_history_features,
+from forecasting import (
+    forecast_days, load_forecast_models, local_weather_fallback, weather_query_range,
 )
 
 
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 GOLDEN_PATH = FIXTURES / "golden_forecast.json"
-DASHBOARD_FUNCTIONS = [
-    "force_single_thread_model",
-    "build_local_weather_fallback",
-    "predict_category_composition",
-    "predict_6_days",
-]
 # Origins: observed history with real weather, observed history with the
 # local fallback, and a stale dataset (neutral history) with the fallback.
 GOLDEN_CASES = [
@@ -45,72 +30,16 @@ GOLDEN_CASES = [
 ]
 
 
-class _StreamlitStub(types.SimpleNamespace):
-    def error(self, message):
-        raise RuntimeError(message)
+def load_forecast_inputs():
+    history = pd.read_csv(ROOT / "02_data" / "augmented_emergency_data.csv", sep=";")
+    history = history.sort_values("FECHA_DIA").reset_index(drop=True)
+    return {"models": load_forecast_models(), "history": history}
 
 
-def _load_pickle(path):
-    if not path.exists():
-        return None
-    with path.open("rb") as stream:
-        return pickle.load(stream)
-
-
-def load_dashboard_forecast():
-    """Return the dashboard's predict_6_days bound to the dashboard artifacts."""
-    source = (ROOT / "dashboard.py").read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    nodes = []
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name in DASHBOARD_FUNCTIONS:
-            node.decorator_list = []
-            nodes.append(node)
-    found = {node.name for node in nodes}
-    missing = set(DASHBOARD_FUNCTIONS) - found
-    if missing:
-        raise KeyError(f"dashboard.py no define: {sorted(missing)}")
-
-    models_dir = ROOT / "03_model" / "saved_models"
-    df = pd.read_csv(ROOT / "02_data" / "augmented_emergency_data.csv", sep=";")
-    df = df.sort_values("FECHA_DIA").reset_index(drop=True)
-    namespace = {
-        "np": np, "pd": pd, "pickle": pickle, "datetime": dt, "holidays": holidays,
-        "st": _StreamlitStub(), "model_components": model_components,
-        "base_dir": ROOT, "models_dir": models_dir, "df": df,
-        "aggregate_weather_daily": aggregate_weather_daily,
-        "prepare_event_history": prepare_event_history,
-        "event_history_features": event_history_features,
-        "CATEGORY_LAG_FEATURES": CATEGORY_LAG_FEATURES,
-    }
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "dashboard.py", "exec"), namespace)
-
-    force = namespace["force_single_thread_model"]
-    category_risk = _load_pickle(models_dir / "category_risk_models.pkl")
-    if category_risk:
-        for details in category_risk.get("models", {}).values():
-            details["model"] = force(details["model"])
-    composition = _load_pickle(models_dir / "category_composition_models.pkl")
-    if composition:
-        for details in composition.get("groups", {}).values():
-            details["baseline_model"] = force(details["baseline_model"])
-            details["expected_model"] = force(details["expected_model"])
-    fifth = _load_pickle(models_dir / "fifth_company_models.pkl")
-    if fifth:
-        fifth["regressor"] = force(fifth["regressor"])
-        fifth["classifier"] = force(fifth["classifier"])
-    namespace.update({
-        "category_risk_artifact": category_risk,
-        "category_composition_artifact": composition,
-        "fifth_company_artifact": fifth,
-    })
-    return namespace
-
-
-def case_weather(namespace, case):
+def case_weather(case):
     origin = dt.date.fromisoformat(case["origin"])
     if case["weather"] is None:
-        return namespace["build_local_weather_fallback"](origin, True)
+        return local_weather_fallback(*weather_query_range(origin, is_historical=True))
     hourly = pd.read_csv(FIXTURES / case["weather"], sep=";")
     return {column: hourly[column].tolist() for column in hourly.columns}
 
@@ -129,11 +58,10 @@ def _plain(value):
     return value
 
 
-def run_case(namespace, case):
+def run_case(inputs, case):
     origin = dt.date.fromisoformat(case["origin"])
-    predictions, threshold, high_activity = namespace["predict_6_days"](
-        origin, True, prefix="_climatic_augmented",
-        weather_data=case_weather(namespace, case),
+    predictions, threshold, high_activity = forecast_days(
+        origin, case_weather(case), inputs["history"], inputs["models"]
     )
     return {
         "classification_threshold": float(threshold),
@@ -144,10 +72,8 @@ def run_case(namespace, case):
 
 def write_golden():
     """Regenerate the golden file; only when a model or forecast change is intended."""
-    import json
-
-    namespace = load_dashboard_forecast()
-    golden = {case["name"]: run_case(namespace, case) for case in GOLDEN_CASES}
+    inputs = load_forecast_inputs()
+    golden = {case["name"]: run_case(inputs, case) for case in GOLDEN_CASES}
     GOLDEN_PATH.write_text(json.dumps(golden, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"Golden escrito en {GOLDEN_PATH}")
 

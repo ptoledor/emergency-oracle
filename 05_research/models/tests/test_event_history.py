@@ -3,7 +3,7 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
-from serving_history import prepare_event_history
+from features import prepare_event_history
 
 
 def history_frame(periods=120):

@@ -21,7 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from signal_features import OPEN_METEO_HOURLY_VARIABLES
+from features import OPEN_METEO_HOURLY_VARIABLES
 
 
 LATITUDE = -36.731106

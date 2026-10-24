@@ -78,5 +78,8 @@ Ningún script de entrenamiento cambia el modelo activo por sí solo: la promoci
 - `03_model/`: entrenamiento, evaluación y modelos guardados (`saved_models/`).
 - `04_predict/`: predicción por consola.
 - `05_research/`: calidad de datos, backtesting, resultados y tests.
-- `dashboard.py`: app Streamlit. Módulos compartidos en la raíz: `model_components.py`, `signal_features.py`, `serving_history.py`, `activity_levels.py`, `hourly_peak.py`.
+- `dashboard.py`: app Streamlit (solo presentación).
+- `forecasting.py`: forecast de 6 días compartido por el dashboard y `04_predict/predict_tomorrow.py`.
+- `features.py`: única definición de las variables (clima, lluvia acumulada, calendario e historial), usada al entrenar, evaluar y servir.
+- `model_components.py`, `activity_levels.py`, `hourly_peak.py`: clases de modelos y utilidades de presentación.
 - `PATCH_NOTES.md`: registro de cambios.

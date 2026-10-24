@@ -47,9 +47,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from model_components import HydroObjectiveEnsembleRegressor
-from signal_features import (
-    CATEGORY_LAG_FEATURES, OPEN_METEO_HOURLY_VARIABLES,
-    aggregate_weather_daily, event_history_features,
+from features import (
+    CALENDAR_COLUMNS, CATEGORY_LAG_FEATURES, CATEGORY_SOURCES, OPEN_METEO_HOURLY_VARIABLES,
+    WEEKDAY_COLUMNS, aggregate_weather_daily, days_since_rain, event_history_features,
+    weather_derived_features,
 )
 from build_hydro_ensemble_candidate import (
     CENTER, OFFSET, SPREAD_SCALE, WEIGHTS, load_training_frame,
@@ -60,18 +61,11 @@ from search_signal_models import HIGH_ACTIVITY_THRESHOLD, N_SPLITS, TEST_SIZE, s
 
 
 HORIZONS = list(range(1, 7))
-CATEGORY_SOURCES = {column: column[: -len("_lag_1")] for column in CATEGORY_LAG_FEATURES}
 EVENT_HISTORY_COLS = list(event_history_features(np.zeros(30)))
 HISTORY_COLS = EVENT_HISTORY_COLS + CATEGORY_LAG_FEATURES
 METHODS = ["recursivo_activo", "directo_por_horizonte", "promedio_30d", "estacional_mes_dia"]
-CALENDAR_COLS = [
-    "MES", "DIA_SEMANA", "ES_FIN_SEMANA", "ES_FERIADO", "ES_FERIADO_IRRENUNCIABLE",
-    "ES_PRE_FERIADO", "MES_SIN", "MES_COS", "DIA_SIN", "DIA_COS", "DANO_SIN", "DANO_COS",
-    "DIA_LUNES", "DIA_MARTES", "DIA_MIERCOLES", "DIA_JUEVES", "DIA_VIERNES",
-    "DIA_SABADO", "DIA_DOMINGO",
-]
-RAIN_LAGS = [1, 2, 3, 5, 7, 10, 14]
-RAIN_WINDOWS = [3, 7, 14, 30]
+CALENDAR_COLS = CALENDAR_COLUMNS + WEEKDAY_COLUMNS
+DERIVED_INPUTS = ["LLUVIA", "VIENTO_MEDIO", "VIENTO_MAX", "HUM_MEDIA", "HUM_MIN", "TEMP_MEDIA", "TEMP_MAX"]
 PREVIOUS_RUNS_PATH = PROJECT_ROOT / "05_research" / "data" / "previous_runs_hourly.csv"
 MAX_LEAD_DAYS = 6
 # None: dataset weather; "lead0": newest run everywhere; int: extra lead days.
@@ -150,9 +144,8 @@ class LeadWeather:
             daily_by_lead.append(daily)
         self.dates = daily_by_lead[0].index
         self.daily_cols = [column for column in daily_by_lead[0].columns if column in feature_cols]
-        needed = list(dict.fromkeys(self.daily_cols + ["LLUVIA", "VIENTO_MEDIO", "HUM_MEDIA"]))
-        self.col_pos = {column: i for i, column in enumerate(needed)}
-        self.values = np.stack([daily[needed].to_numpy(dtype=float) for daily in daily_by_lead])
+        self.columns = list(dict.fromkeys(self.daily_cols + DERIVED_INPUTS))
+        self.values = np.stack([daily[self.columns].to_numpy(dtype=float) for daily in daily_by_lead])
         self.position = {date: i for i, date in enumerate(self.dates)}
         self.days_since_rain_lead0 = self._days_since_rain(frame)
 
@@ -181,19 +174,15 @@ class LeadWeather:
 
     def _days_since_rain(self, frame):
         """Training definition on the lead-0 series, seeded from the dataset."""
-        rain = self.values[0][:, self.col_pos["LLUVIA"]]
         dataset = pd.to_numeric(
             frame.set_index(pd.to_datetime(frame["FECHA_DIA"]))["DIAS_DESDE_ULTIMA_LLUVIA"],
             errors="coerce",
         )
         seed = dataset[dataset.index <= self.dates[0]]
-        count = float(seed.iloc[-1]) if not seed.empty else 0.0
-        values = np.empty(len(rain))
-        values[0] = count
-        for i in range(1, len(rain)):
-            count = 0.0 if rain[i - 1] > 0.1 else count + 1.0
-            values[i] = count
-        return values
+        return days_since_rain(
+            self.values[0][:, self.columns.index("LLUVIA")],
+            start_value=float(seed.iloc[-1]) if not seed.empty else np.nan,
+        )
 
     def covers(self, origin, target):
         return (
@@ -208,46 +197,17 @@ class LeadWeather:
 
     def features(self, origin, target, extra):
         end = self.position[target]
-        days = [target - pd.Timedelta(days=offset) for offset in range(30, -1, -1)]
+        days = pd.date_range(target - pd.Timedelta(days=30), target, freq="D")
         leads = np.array([self._lead(origin, day, extra) for day in days])
-        window = self.values[leads, np.arange(end - 30, end + 1)]
-        column = lambda name: window[:, self.col_pos[name]]
-
-        result = {name: float(column(name)[-1]) for name in self.daily_cols}
-        rain = column("LLUVIA")
-        previous = rain[:-1][::-1]  # previous[0] is the day before the target
-        result["VIENTO_MEDIO_lag_1"] = float(column("VIENTO_MEDIO")[-2])
-        result["HUM_MEDIA_lag_1"] = float(column("HUM_MEDIA")[-2])
-        for lag in RAIN_LAGS:
-            result[f"LLUVIA_LAG_{lag}D"] = float(previous[lag - 1])
-        for window_days in RAIN_WINDOWS:
-            recent = previous[:window_days]
-            result[f"LLUVIA_PROMEDIO_{window_days}D_PREV"] = float(np.mean(recent))
-            result[f"LLUVIA_TOTAL_{window_days}D_PREV"] = float(np.sum(recent))
-            result[f"LLUVIA_DESV_{window_days}D_PREV"] = float(np.std(recent, ddof=1))
-            result[f"LLUVIA_MAX_{window_days}D_PREV"] = float(np.max(recent))
-            result[f"DIAS_SECOS_{window_days}D_PREV"] = float(np.sum(recent <= 0.1))
-
-        count = self.days_since_rain_lead0[self.position[min(origin, target)]]
-        for offset in range(max((target - origin).days, 0)):
-            day = origin + pd.Timedelta(days=offset)
-            lead = self._lead(origin, day, extra)
-            day_rain = self.values[lead, self.position[day], self.col_pos["LLUVIA"]]
-            count = 0.0 if day_rain > 0.1 else count + 1.0
-        result["DIAS_DESDE_ULTIMA_LLUVIA"] = float(count)
-
-        temp_max, temp_media = result["TEMP_MAX"], result["TEMP_MEDIA"]
-        hum_media, hum_min = result["HUM_MEDIA"], result["HUM_MIN"]
-        result["TEMP_HUM_INDEX"] = temp_media * hum_media / 100
-        result["VIENTO_LLUVIA_INDEX"] = result["VIENTO_MEDIO"] * result["LLUVIA"]
-        result["STORM_COMPOUND_INDEX"] = result["VIENTO_MAX"] * (1 + result["LLUVIA"])
-        result["FIRE_DRY_INDEX_7D"] = (
-            temp_max * result["DIAS_SECOS_7D_PREV"] / (1 + result["LLUVIA_TOTAL_7D_PREV"])
+        window = pd.DataFrame(
+            self.values[leads, np.arange(end - 30, end + 1)], index=days, columns=self.columns
         )
-        es_media = 0.6108 * np.exp((17.27 * temp_media) / (temp_media + 237.3))
-        result["VPD"] = float(es_media * (1 - hum_media / 100))
-        es_max = 0.6108 * np.exp((17.27 * temp_max) / (temp_max + 237.3))
-        result["VPD_MAX"] = float(es_max * (1 - hum_min / 100))
+        # Days before the origin use the newest run, as in the lead-0 series.
+        anchor = origin - pd.Timedelta(days=1)
+        seed = (days.get_loc(anchor), self.days_since_rain_lead0[self.position[anchor]])
+        derived = weather_derived_features(window, days_since_rain_start=seed)
+        result = {name: float(window[name].iloc[-1]) for name in self.daily_cols}
+        result.update({name: float(value) for name, value in derived.iloc[-1].items()})
         return result
 
 
@@ -324,7 +284,7 @@ def recursive_forecasts(regressor, row_for, available, counts, frame, origins, f
 
 
 def climatology(train_rows, targets):
-    """Month x weekday mean blended with weekday mean (serving_history policy)."""
+    """Month x weekday mean blended with weekday mean (features.neutral_event_history policy)."""
     dates = pd.to_datetime(train_rows["FECHA_DIA"])
     events = train_rows["EVENTOS"].astype(float)
     by_weekday = events.groupby(dates.dt.dayofweek).mean()

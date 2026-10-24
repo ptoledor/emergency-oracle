@@ -1,5 +1,13 @@
 # Patch Notes
 
+## 2026-10-23 - Un solo pipeline de variables
+
+- `features.py` reúne todas las definiciones de variables (agregación horaria de Open-Meteo, lluvia acumulada, días sin lluvia, VPD e índices, calendario e historial de llamados) y reemplaza a `signal_features.py` y `serving_history.py`. `clean_and_augment.py`, el forecast y la evaluación por horizonte las usan sin copias propias.
+
+- `forecasting.py` contiene el forecast de 6 días que antes vivía dentro de `dashboard.py`. El dashboard solo lo presenta, y `04_predict/predict_tomorrow.py` pasa a ser una CLI sobre la misma función: ya no cuenta llamados directamente desde los tweets ni imputa el historial con la media de entrenamiento, así que su resultado coincide con el del dashboard.
+
+- Verificación: el forecast del dashboard es idéntico al anterior (test golden), `clean_and_augment.py` regenera el dataset con diferencias ≤3e-11 (redondeo de pandas) y el nuevo test de paridad reconstruye las variables de clima y calendario del dataset de entrenamiento.
+
 ## 2026-10-23 - Limpieza del repositorio
 
 - Red de seguridad: `requirements.txt` queda solo con las dependencias de la app (sin playwright ni statsmodels); pytest pasa a `requirements-dev.txt` y el scraper tiene `01_scraper/requirements.txt`. `test_golden_forecast.py` congela el forecast de 6 días del dashboard en tres escenarios, y el workflow roto de búsqueda temporal se reemplaza por `tests.yml`, que corre pytest en cada PR.

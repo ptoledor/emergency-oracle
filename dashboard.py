@@ -4,10 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import pickle
 import os
-import requests
 import datetime
-import time
-import holidays
 import importlib
 import sys
 import model_components
@@ -33,12 +30,11 @@ if any(not hasattr(model_components, name) for name in required_model_components
 
 from activity_levels import operational_activity_level
 from hourly_peak import historical_hourly_distribution
-from serving_history import prepare_event_history
-from signal_features import (
-    CATEGORY_LAG_FEATURES,
-    OPEN_METEO_HOURLY_QUERY,
-    aggregate_weather_daily,
-    event_history_features,
+from forecasting import (
+    fetch_weather,
+    force_single_thread_model,
+    forecast_days,
+    load_forecast_models,
 )
 from sklearn.metrics import brier_score_loss
 
@@ -63,23 +59,6 @@ PROJECT_TIMEZONE = ZoneInfo("America/Santiago")
 
 def project_today():
     return datetime.datetime.now(PROJECT_TIMEZONE).date()
-
-
-def fetch_json_with_retry(url, timeout=30, retries=3):
-    last_error = None
-    for attempt in range(1, retries + 1):
-        try:
-            session = requests.Session()
-            session.trust_env = False
-            response = session.get(url, timeout=timeout)
-            response.raise_for_status()
-            return response.json()
-        except Exception as exc:
-            last_error = exc
-            if attempt == retries:
-                break
-            time.sleep(2 * attempt)
-    raise RuntimeError(f"Error al descargar clima desde Open-Meteo: {last_error}")
 
 
 # 3. Estado de Tema (Claro / Oscuro)
@@ -651,10 +630,6 @@ def category_change_level(expected_count, baseline_count):
     return "Normal", "activity-normal"
 
 
-def force_single_thread_model(model):
-    if hasattr(model, "n_jobs"):
-        model.n_jobs = 1
-    return model
 
 
 def add_brier_if_missing(metadata, events, probabilities):
@@ -1059,67 +1034,6 @@ def risk_probability_series(primary_key, legacy_key=None):
     return pd.to_numeric(source, errors="coerce").dropna()
 
 
-def predict_category_composition(feature_frame, total_prediction):
-    if not category_composition_artifact:
-        return None
-    baseline_values = {}
-    expected_values = {}
-    for group_name in category_composition_artifact.get("group_order", []):
-        details = category_composition_artifact["groups"][group_name]
-        baseline_features = details["baseline_feature_cols"]
-        expected_features = details["expected_feature_cols"]
-        baseline_values[group_name] = float(np.clip(
-            details["baseline_model"].predict(
-                feature_frame[baseline_features]
-            )[0],
-            0,
-            None,
-        ))
-        expected_values[group_name] = float(np.clip(
-            details["expected_model"].predict(
-                feature_frame[expected_features]
-            )[0],
-            0,
-            None,
-        ))
-
-    baseline_total = float(sum(baseline_values.values()))
-    expected_total = float(sum(expected_values.values()))
-    official_total = max(float(total_prediction), 0.0)
-    if expected_total <= 1e-9:
-        expected_values = dict(baseline_values)
-        expected_total = max(baseline_total, 1e-9)
-    scale = official_total / expected_total
-    reconciled = {
-        group_name: value * scale
-        for group_name, value in expected_values.items()
-    }
-    deltas = {
-        group_name: reconciled[group_name] - baseline_values[group_name]
-        for group_name in reconciled
-    }
-    positive_delta_total = float(sum(max(value, 0.0) for value in deltas.values()))
-    groups = {}
-    for group_name in category_composition_artifact.get("group_order", []):
-        count = reconciled[group_name]
-        groups[group_name] = {
-            "label": category_composition_artifact["groups"][group_name]["label"],
-            "count": count,
-            "share_total": count / official_total if official_total > 1e-9 else 0.0,
-            "baseline": baseline_values[group_name],
-            "delta": deltas[group_name],
-            "share_positive_delta": (
-                max(deltas[group_name], 0.0) / positive_delta_total
-                if positive_delta_total > 1e-9 and official_total > baseline_total
-                else 0.0
-            ),
-        }
-    return {
-        "baseline_total": baseline_total,
-        "forecast_total": official_total,
-        "delta_total": official_total - baseline_total,
-        "groups": groups,
-    }
 
 
 PERCENTILE_COLUMNS = [0, 10, 20, 30, 33, 40, 50, 60, 66, 70, 80, 90, 100]
@@ -1161,433 +1075,35 @@ def render_percentile_table(rows):
     )
 
 
-# Helper to fetch weather series from Open-Meteo
-@st.cache_data(ttl=3600, show_spinner=False)
-def build_local_weather_fallback(start_date, is_historical):
-    if is_historical:
-        q_start = start_date - datetime.timedelta(days=30)
-        q_end = start_date + datetime.timedelta(days=5)
-    else:
-        q_start = start_date - datetime.timedelta(days=30)
-        q_end = start_date + datetime.timedelta(days=9)
-
-    weather_archive_path = base_dir / "02_data" / "weather_archive_talcahuano.csv"
-    archive = pd.read_csv(weather_archive_path)
-    archive['FECHA_DIA'] = pd.to_datetime(archive['FECHA_DIA']).dt.date
-    archive['MONTH_DAY'] = archive['FECHA_DIA'].apply(lambda value: (value.month, value.day))
-    archive['MONTH'] = archive['FECHA_DIA'].apply(lambda value: value.month)
-    numeric_cols = [
-        'TEMP_MAX', 'TEMP_MIN', 'TEMP_MEDIA',
-        'HUM_MAX', 'HUM_MIN', 'HUM_MEDIA',
-        'VIENTO_MAX', 'VIENTO_MEDIO', 'LLUVIA',
-    ]
-    global_medians = archive[numeric_cols].median(numeric_only=True)
-
-    rows = []
-    for offset in range((q_end - q_start).days + 1):
-        target_date = q_start + datetime.timedelta(days=offset)
-        exact = archive[archive['FECHA_DIA'] == target_date]
-        if not exact.empty:
-            source_row = exact.iloc[0]
-        else:
-            same_day = archive[archive['MONTH_DAY'] == (target_date.month, target_date.day)]
-            if not same_day.empty:
-                source_row = same_day[numeric_cols].median(numeric_only=True)
-            else:
-                same_month = archive[archive['MONTH'] == target_date.month]
-                source_row = (
-                    same_month[numeric_cols].median(numeric_only=True)
-                    if not same_month.empty
-                    else global_medians
-                )
-
-        temp_mean = float(source_row.get('TEMP_MEDIA', global_medians['TEMP_MEDIA']))
-        temp_amp = max(
-            0.1,
-            (float(source_row.get('TEMP_MAX', temp_mean)) - float(source_row.get('TEMP_MIN', temp_mean))) / 2,
-        )
-        hum_mean = float(source_row.get('HUM_MEDIA', global_medians['HUM_MEDIA']))
-        wind_mean = float(source_row.get('VIENTO_MEDIO', global_medians['VIENTO_MEDIO']))
-        rain_daily = max(0.0, float(source_row.get('LLUVIA', global_medians['LLUVIA'])))
-
-        for hour in range(24):
-            angle = 2 * np.pi * (hour - 15) / 24
-            temp = temp_mean + temp_amp * np.cos(angle)
-            humidity = float(np.clip(hum_mean - 8 * np.cos(angle), 0, 100))
-            rows.append({
-                'time': f"{target_date.strftime('%Y-%m-%d')}T{hour:02d}:00",
-                'temperature_2m': temp,
-                'relative_humidity_2m': humidity,
-                'wind_speed_10m': wind_mean,
-                'precipitation': rain_daily / 24,
-            })
-
-    return {
-        'time': [row['time'] for row in rows],
-        'temperature_2m': [row['temperature_2m'] for row in rows],
-        'relative_humidity_2m': [row['relative_humidity_2m'] for row in rows],
-        'wind_speed_10m': [row['wind_speed_10m'] for row in rows],
-        'precipitation': [row['precipitation'] for row in rows],
-        '_source': ['local_fallback'] * len(rows),
-    }
-
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_weather_for_range(start_date, is_historical):
-    lat, lon = -36.731106, -73.11023
-    if is_historical:
-        # Simulation mode: target range start_date to start_date + 5 days.
-        # We need weather from start_date - 30 days to start_date + 5 days for lags.
-        q_start = start_date - datetime.timedelta(days=30)
-        q_end = start_date + datetime.timedelta(days=5)
-        url = (f"https://archive-api.open-meteo.com/v1/archive?"
-               f"latitude={lat}&longitude={lon}&"
-               f"start_date={q_start.strftime('%Y-%m-%d')}&"
-               f"end_date={q_end.strftime('%Y-%m-%d')}&"
-               f"hourly={OPEN_METEO_HOURLY_QUERY}&"
-               f"timezone=America%2FSantiago&format=json")
-    else:
-        # Real-time mode: start_date is today in America/Santiago.
-        # Se requieren 30 días previos para variables de memoria hídrica.
-        url = (f"https://api.open-meteo.com/v1/forecast?"
-               f"latitude={lat}&longitude={lon}&"
-               f"hourly={OPEN_METEO_HOURLY_QUERY}&"
-               f"timezone=America%2FSantiago&past_days=30&forecast_days=10")
-               
-    try:
-        hourly = fetch_json_with_retry(url, timeout=30, retries=3)['hourly']
-        hourly['_source'] = ['open_meteo'] * len(hourly.get('time', []))
-        return hourly
-    except Exception:
-        return build_local_weather_fallback(start_date, is_historical)
+    return fetch_weather(start_date, is_historical)
 
 
-# Forecasting function for 6 days (weather-only model)
+@st.cache_resource
+def load_cached_forecast_models(prefix, model_versions=None):
+    del model_versions
+    return load_forecast_models(models_dir, prefix)
+
+
 def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weather_data=None):
-    # Load models and metadata
     try:
-        reg_path, clf_path, meta_path = model_components.resolve_model_path(models_dir, prefix)
-        with open(reg_path, "rb") as f:
-            reg_model = pickle.load(f)
-        reg_model = force_single_thread_model(reg_model)
-        with open(clf_path, "rb") as f:
-            clf_model = pickle.load(f)
-        clf_model = force_single_thread_model(clf_model)
-        with open(meta_path, "rb") as f:
-            metadata = pickle.load(f)
+        models = load_cached_forecast_models(prefix, tuple(sorted(model_mtimes.items())))
     except Exception as e:
         st.error(f"Error al cargar modelos: {e}")
         return None, 0.25, 7.0
-
-    # Get weather
     try:
         if weather_data is None:
             weather_data = get_weather_for_range(start_date, is_historical)
     except Exception as e:
         st.error(f"Error al descargar pronóstico del clima: {e}")
         return None, 0.25, 7.0
-
-    def get_skew(vals):
-        mean = np.mean(vals)
-        std = np.std(vals)
-        std_safe = 0.1 if std == 0 else std
-        return np.mean((vals - mean)**3) / (std_safe**3)
-
-    def get_kurt(vals):
-        mean = np.mean(vals)
-        std = np.std(vals)
-        std_safe = 0.1 if std == 0 else std
-        return np.mean((vals - mean)**4) / (std_safe**4) - 3
-
-    weather_hourly = pd.DataFrame(weather_data)
-    weather_df = aggregate_weather_daily(weather_hourly)
-
-    predictions = []
-    DIAS_ES = {
-        'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles',
-        'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
-    }
-
-    # Initialize event memory. If the local dataset is stale, do not present
-    # its final row as "yesterday": use a neutral seasonal/weekday baseline.
-    last_30_events = []
-    df_hist = pd.DataFrame()
-    lag_mode = "historical_baseline"
-    lag_age_days = None
-    last_observed_date = None
     try:
-        df_hist = df[df['FECHA_DIA'] < start_date.strftime('%Y-%m-%d')].sort_values('FECHA_DIA')
-        history_details = prepare_event_history(df_hist, start_date, days=30)
-        last_30_events = history_details["values"]
-        lag_mode = history_details["mode"]
-        lag_age_days = history_details["age_days"]
-        last_observed_date = history_details["last_observed_date"]
-    except Exception:
-        last_30_events = [1.5] * 30
+        return forecast_days(start_date, weather_data, df, models)
+    except ValueError as e:
+        st.error(str(e))
+        return None, 0.25, 7.0
 
-    category_source_by_lag = {
-        "N_INCENDIO_ESTR_lag_1": "N_INCENDIO_ESTR",
-        "N_INCENDIO_FOREST_lag_1": "N_INCENDIO_FOREST",
-        "N_RESCATE_VEH_lag_1": "N_RESCATE_VEH",
-        "N_RESCATE_PERS_lag_1": "N_RESCATE_PERS",
-        "N_EMERGENCIAS_CLIMATICAS_lag_1": "N_EMERGENCIAS_CLIMATICAS",
-        "N_GASES_lag_1": "N_GASES",
-    }
-    current_category_lags = {column: 0.0 for column in CATEGORY_LAG_FEATURES}
-    category_shares = {column: 0.0 for column in CATEGORY_LAG_FEATURES}
-    if not df_hist.empty:
-        latest = df_hist.iloc[-1]
-        recent = df_hist.tail(365)
-        recent_total = float(recent['EVENTOS'].sum())
-        for lag_column, source_column in category_source_by_lag.items():
-            if lag_mode == "observed":
-                current_category_lags[lag_column] = float(
-                    latest.get(source_column, 0.0)
-                )
-            else:
-                category_mean = pd.to_numeric(
-                    recent.get(source_column, pd.Series(dtype=float)),
-                    errors="coerce",
-                ).mean()
-                current_category_lags[lag_column] = float(
-                    0.0 if pd.isna(category_mean) else category_mean
-                )
-            if recent_total > 0:
-                category_shares[lag_column] = float(recent[source_column].sum() / recent_total)
-
-    # Initialize DIAS_DESDE_ULTIMA_LLUVIA
-    try:
-        prev_date_str = (start_date - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-        df_prev = df[df['FECHA_DIA'] == prev_date_str]
-        if not df_prev.empty and not pd.isna(df_prev['DIAS_DESDE_ULTIMA_LLUVIA'].values[0]):
-            current_dias_desde_lluvia = float(df_prev['DIAS_DESDE_ULTIMA_LLUVIA'].values[0])
-        else:
-            current_dias_desde_lluvia = 10.0
-    except Exception:
-        current_dias_desde_lluvia = 10.0
-
-    direct_horizon_model = hasattr(reg_model, "predict_horizon")
-    origin_event_history = list(last_30_events)
-    for j in range(6):
-        d = start_date + datetime.timedelta(days=j)
-        d_str = d.strftime('%Y-%m-%d')
-
-        # Weather features (the only features the model uses)
-        if d not in weather_df.index:
-            st.error(f"La fecha {d_str} no tiene datos de clima disponibles.")
-            return None, 0.25, 7.0
-        w_d = weather_df.loc[d]
-        temp_max = float(w_d['TEMP_MAX'])
-        temp_min = float(w_d['TEMP_MIN'])
-        temp_media = float(w_d['TEMP_MEDIA'])
-        temp_skew = float(w_d['TEMP_SKEW'])
-        temp_kurt = float(w_d['TEMP_KURT'])
-        hum_max = float(w_d['HUM_MAX'])
-        hum_min = float(w_d['HUM_MIN'])
-        hum_media = float(w_d['HUM_MEDIA'])
-        hum_skew = float(w_d['HUM_SKEW'])
-        hum_kurt = float(w_d['HUM_KURT'])
-        viento_max = float(w_d['VIENTO_MAX'])
-        viento_medio = float(w_d['VIENTO_MEDIO'])
-        viento_skew = float(w_d['VIENTO_SKEW'])
-        viento_kurt = float(w_d['VIENTO_KURT'])
-        lluvia = float(w_d['LLUVIA'])
-
-        # Weather lags
-        viento_medio_lag_1 = float(weather_df.loc[d - datetime.timedelta(days=1)]['VIENTO_MEDIO'])
-        hum_media_lag_1 = float(weather_df.loc[d - datetime.timedelta(days=1)]['HUM_MEDIA'])
-        rain_history = {
-            i: float(weather_df.loc[d - datetime.timedelta(days=i)]['LLUVIA'])
-            for i in range(1, 31)
-        }
-
-        # Determine DIAS_DESDE_ULTIMA_LLUVIA
-        if j == 0:
-            last_day_rain = rain_history[1]
-        else:
-            last_day_rain = predictions[-1]['Lluvia']
-            
-        if last_day_rain > 0.1:
-            current_dias_desde_lluvia = 0.0
-        else:
-            current_dias_desde_lluvia += 1.0
-
-        # Construct feature vector
-        weekday = d.weekday()
-        chile_holidays = holidays.Chile(years=[d.year, (d + datetime.timedelta(days=1)).year])
-        d_str_format = d.strftime('%Y-%m-%d')
-        tomorrow_str_format = (d + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-        mes = d.month
-        dia_del_ano = d.timetuple().tm_yday
-
-        features = {
-            'TEMP_MAX': temp_max,
-            'TEMP_MIN': temp_min,
-            'TEMP_MEDIA': temp_media,
-            'TEMP_SKEW': temp_skew,
-            'TEMP_KURT': temp_kurt,
-            'HUM_MAX': hum_max,
-            'HUM_MIN': hum_min,
-            'HUM_MEDIA': hum_media,
-            'HUM_SKEW': hum_skew,
-            'HUM_KURT': hum_kurt,
-            'VIENTO_MAX': viento_max,
-            'VIENTO_MEDIO': viento_medio,
-            'VIENTO_SKEW': viento_skew,
-            'VIENTO_KURT': viento_kurt,
-            'LLUVIA': lluvia,
-            'VIENTO_MEDIO_lag_1': viento_medio_lag_1,
-            'HUM_MEDIA_lag_1': hum_media_lag_1,
-            'ES_FERIADO': 1 if d_str_format in chile_holidays else 0,
-            'ES_PRE_FERIADO': 1 if tomorrow_str_format in chile_holidays else 0,
-            'ES_FIN_SEMANA': 1 if weekday in [5, 6] else 0,
-            'MES': mes,
-            'DIA_SEMANA': weekday,
-            'MES_SIN': np.sin(2 * np.pi * mes / 12),
-            'MES_COS': np.cos(2 * np.pi * mes / 12),
-            'DIA_SIN': np.sin(2 * np.pi * weekday / 7),
-            'DIA_COS': np.cos(2 * np.pi * weekday / 7),
-            'DANO_SIN': np.sin(2 * np.pi * dia_del_ano / 365),
-            'DANO_COS': np.cos(2 * np.pi * dia_del_ano / 365),
-            'DIA_LUNES': 1 if weekday == 0 else 0,
-            'DIA_MARTES': 1 if weekday == 1 else 0,
-            'DIA_MIERCOLES': 1 if weekday == 2 else 0,
-            'DIA_JUEVES': 1 if weekday == 3 else 0,
-            'DIA_VIERNES': 1 if weekday == 4 else 0,
-            'DIA_SABADO': 1 if weekday == 5 else 0,
-            'DIA_DOMINGO': 1 if weekday == 6 else 0,
-            'DIAS_DESDE_ULTIMA_LLUVIA': current_dias_desde_lluvia,
-            'EVENTOS_rolling_mean_14d': float(np.mean((origin_event_history if direct_horizon_model else last_30_events)[-14:])),
-            'EVENTOS_rolling_mean_30d': float(np.mean((origin_event_history if direct_horizon_model else last_30_events)[-30:])),
-        }
-        irrenunciable_dates = {(1, 1), (5, 1), (9, 18), (9, 19), (12, 25)}
-        holiday_name = chile_holidays.get(d_str_format)
-        features['ES_FERIADO_IRRENUNCIABLE'] = int(
-            (d.month, d.day) in irrenunciable_dates
-            or bool(
-                holiday_name
-                and (
-                    "elecciones" in holiday_name.lower()
-                    or "plebiscito" in holiday_name.lower()
-                )
-            )
-        )
-        history = origin_event_history if direct_horizon_model else last_30_events
-        features.update(event_history_features(history))
-        features.update(current_category_lags)
-        for feature_name, feature_value in w_d.items():
-            if str(feature_name).startswith(('WX_', 'WX2_')):
-                features[str(feature_name)] = float(feature_value)
-
-        # Vapor Pressure Deficit (VPD)
-        es_media = 0.6108 * np.exp((17.27 * temp_media) / (temp_media + 237.3))
-        features['VPD'] = es_media * (1 - hum_media / 100)
-        
-        es_max = 0.6108 * np.exp((17.27 * temp_max) / (temp_max + 237.3))
-        features['VPD_MAX'] = es_max * (1 - hum_min / 100)
-
-        for lag in [1, 2, 3, 5, 7, 10, 14]:
-            features[f'LLUVIA_LAG_{lag}D'] = rain_history[lag]
-        for window in [3, 7, 14, 30]:
-            rain_window = np.array([rain_history[i] for i in range(1, window + 1)])
-            features[f'LLUVIA_PROMEDIO_{window}D_PREV'] = float(np.mean(rain_window))
-            features[f'LLUVIA_TOTAL_{window}D_PREV'] = float(np.sum(rain_window))
-            features[f'LLUVIA_DESV_{window}D_PREV'] = float(np.std(rain_window, ddof=1))
-            features[f'LLUVIA_MAX_{window}D_PREV'] = float(np.max(rain_window))
-            features[f'DIAS_SECOS_{window}D_PREV'] = float(np.sum(rain_window <= 0.1))
-
-        # Add simple weather interaction indices
-        features['TEMP_HUM_INDEX'] = temp_media * hum_media / 100
-        features['VIENTO_LLUVIA_INDEX'] = viento_medio * lluvia
-        features['STORM_COMPOUND_INDEX'] = viento_max * (1 + lluvia)
-        features['FIRE_DRY_INDEX_7D'] = (
-            temp_max * features['DIAS_SECOS_7D_PREV']
-            / (1 + features['LLUVIA_TOTAL_7D_PREV'])
-        )
-
-        # DataFrame with all features for blend model's category sub-models
-        X_all = pd.DataFrame([features])
-        # DataFrame aligned with classifier features
-        X_pred = X_all[metadata['feature_cols']]
-
-        # Predict
-        if direct_horizon_model:
-            pred_count = float(np.clip(reg_model.predict_horizon(X_pred, j + 1)[0], 0, None))
-        elif hasattr(reg_model, "category_models"):
-            pred_count = float(np.clip(reg_model.predict(X_all)[0], 0, None))
-        else:
-            pred_count = float(np.clip(reg_model.predict(X_pred)[0], 0, None))
-        if hasattr(clf_model, "predict_proba_horizon"):
-            prob_high = float(clf_model.predict_proba_horizon(X_pred, j + 1)[0, 1])
-        else:
-            prob_high = float(clf_model.predict_proba(X_pred)[0, 1])
-
-        category_risk_probs = {}
-        if category_risk_artifact:
-            for group_name, details in category_risk_artifact.get("models", {}).items():
-                group_features = details.get("feature_cols", metadata['feature_cols'])
-                group_X = pd.DataFrame([features])[group_features]
-                group_model = force_single_thread_model(details["model"])
-                category_risk_probs[group_name] = float(group_model.predict_proba(group_X)[0, 1])
-
-        category_composition = None
-        try:
-            category_composition = predict_category_composition(X_all, pred_count)
-        except Exception as exc:
-            print(f"No se pudo calcular la composicion por categoria: {exc}")
-
-        fifth_company_count = np.nan
-        fifth_company_probability = np.nan
-        if fifth_company_artifact:
-            fifth_metadata = fifth_company_artifact["metadata"]
-            fifth_X = X_all[fifth_metadata["feature_cols"]]
-            fifth_company_count = float(np.clip(
-                fifth_company_artifact["regressor"].predict(fifth_X)[0], 0, None
-            ))
-            fifth_company_probability = float(
-                fifth_company_artifact["classifier"].predict_proba(fifth_X)[0, 1]
-            )
-
-        # Update last_30_events for the next prediction day
-        if not direct_horizon_model:
-            last_30_events.append(pred_count)
-            last_30_events.pop(0)
-            current_category_lags = {
-                column: float(pred_count * category_shares[column])
-                for column in CATEGORY_LAG_FEATURES
-            }
-
-        predictions.append({
-            'Fecha': d,
-            'FechaStr': d_str,
-            'Dia': DIAS_ES[d.strftime('%A')],
-            'Prediccion': pred_count,
-            'Lag_Mode': lag_mode,
-            'Lag_Age_Days': lag_age_days,
-            'Last_Observed_Date': last_observed_date,
-            'Prob_Alta': prob_high,
-            'Prob_RVehicular_Alto': category_risk_probs.get(
-                "rescate_vehicular",
-                category_risk_probs.get("rescate", np.nan),
-            ),
-            'Prob_Rescate_Alto': category_risk_probs.get(
-                "rescate_vehicular",
-                category_risk_probs.get("rescate", np.nan),
-            ),
-            'Prob_Incendio_Alto': category_risk_probs.get("incendio", np.nan),
-            'Prob_Climaticas_Alto': category_risk_probs.get("climaticas", np.nan),
-            'Category_Composition': category_composition,
-            'Pred_5ta_Cia': fifth_company_count,
-            'Prob_5ta_Cia_Alta': fifth_company_probability,
-            'Temp_Max': temp_max,
-            'Temp_Media': temp_media,
-            'Hum_Media': hum_media,
-            'Viento_Medio': viento_medio,
-            'Rafaga_Media': float(w_d.get('WX_GUST_MEAN', viento_medio)),
-            'Lluvia': lluvia,
-        })
-
-    return predictions, float(metadata.get('classification_threshold', 0.25)), float(metadata.get('umbral_alta_actividad', 7.0))
 
 # 8. Encabezado principal de la aplicación
 
