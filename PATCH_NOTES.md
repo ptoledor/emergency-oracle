@@ -1,5 +1,15 @@
 # Patch Notes
 
+## 2026-10-23 - Limpieza del repositorio
+
+- Red de seguridad: `requirements.txt` queda solo con las dependencias de la app (sin playwright ni statsmodels); pytest pasa a `requirements-dev.txt` y el scraper tiene `01_scraper/requirements.txt`. `test_golden_forecast.py` congela el forecast de 6 días del dashboard en tres escenarios, y el workflow roto de búsqueda temporal se reemplaza por `tests.yml`, que corre pytest en cada PR.
+
+- Eliminados (siguen en el historial de git): 10 scripts de búsqueda y benchmark sin referencias en `03_model/`, la calibración de blend y la deduplicación Viper de `05_research/` con sus datos, los resultados de experimentos descartados, los notebooks de `02_data/` con sus derivados (`tweets_procesados.csv`, `puntos_emergencias.gpkg`), `01_scraper/debug.png` y `.streamlit/credentials.toml` del índice.
+
+- `02_data/compile_scraped.py` reemplaza el paso del notebook que unía los CSV del scraper; reproduce `compiled_scraped_data.csv` byte a byte.
+
+- README y AGENTS.md describen el modelo activo real, sus métricas contra el promedio de 30 días y por día del forecast, y el pipeline vigente. No cambia ninguna predicción.
+
 ## 2026-10-23 - Validación del forecast a 1–6 días
 
 - Evaluación: `03_model/evaluate_forecast_horizons.py` repite la recursión de `predict_6_days` (las predicciones vuelven como lags y se reparten por categoría con proporciones históricas) sobre los mismos 6 folds de 120 días del modelo activo. La compara con un ensemble directo por horizonte, el promedio observado de 30 días y la climatología mes×día. Resultados en `05_research/results/forecast_horizons/`.

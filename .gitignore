@@ -41,3 +41,6 @@ temp_*.py
 !03_model/saved_models/metadata_signal_hydro_ensemble_v2.pkl
 !03_model/saved_models/signal_hydro_ensemble_v2_oof_predictions.csv
 !03_model/saved_models/hourly_peak_model_v1.pkl
+
+# Regenerable research data
+05_research/data/previous_runs_hourly.csv

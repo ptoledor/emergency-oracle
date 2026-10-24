@@ -46,32 +46,18 @@ Este documento contiene las directrices operacionales, políticas de datos y el 
 
 ## 4. Modelos Activos Actuales
 
-Definidos y resueltos dinámicamente mediante `active_models.json`:
-- **Regresor Principal (Operativo)**: `03_model/saved_models/regressor_repeated_5fold_30seeds.pkl` (CategoryBlendRegressor).
-- **Clasificador Principal**: `03_model/saved_models/classifier_repeated_5fold_30seeds.pkl`.
-- **Metadata Principal**: `03_model/saved_models/metadata_repeated_5fold_30seeds.pkl` (Contiene un $R^2$ OOF de ~9.0%).
-- **Modelo Directo Base (Comparativo)**: `03_model/saved_models/regressor_climatic_augmented_direct31.pkl`.
-- **Submodelos de Categorías (Riesgos Secundarios)**: `03_model/saved_models/category_risk_models.pkl`.
+Definidos y resueltos dinámicamente mediante `active_models.json` (clave `climatic_augmented`):
+- **Regresor Principal (Operativo)**: `03_model/saved_models/regressor_signal_hydro_ensemble_v2.pkl` (HydroObjectiveEnsembleRegressor; MAE walk-forward 2,236, R² 0,146).
+- **Clasificador Principal**: `03_model/saved_models/classifier_signal_hydro_ensemble_v2.pkl` (RegressorProbabilityClassifier, AUC >7 llamados 0,664).
+- **Metadata Principal**: `03_model/saved_models/metadata_signal_hydro_ensemble_v2.pkl`.
+- **Modelo Base (Comparativo)**: `03_model/saved_models/regressor_climatic_augmented.pkl`.
+- **Submodelos de Categorías**: `category_risk_models.pkl` (riesgo) y `category_composition_models.pkl` (composición).
 
 ---
 
 ## 5. Pipeline Metodológico de Ejecución
 
-El flujo secuencial de scripts para preparar datos, entrenar y predecir es:
+El flujo secuencial de scripts para preparar datos, entrenar, evaluar y predecir está en la sección `Pipeline` de `README.md`; mantener ambos documentos coherentes.
 
-```powershell
-# 1. Limpieza y aumento de features (clima + calendarios deterministas)
-.\.venv\Scripts\python.exe 02_data\clean_and_augment.py
-
-# 2. Entrenamiento de validación cruzada estructurada repetida (ej. 5-Fold, 30 semillas)
-.\.venv\Scripts\python.exe 03_model\train_repeated_kfold.py --splits 5 --repeats 30
-
-# 3. Modelado de riesgos secundarios por categoría
-.\.venv\Scripts\python.exe 03_model\train_category_risk_models.py
-
-# 4. Predicción del día de mañana (Consola)
-.\.venv\Scripts\python.exe 04_predict\predict_tomorrow.py --real-tomorrow
-
-# 5. Ejecución local de la interfaz Streamlit
-.\.venv\Scripts\python.exe -m streamlit run dashboard.py
-```
+- Antes de cerrar un cambio, correr `.\.venv\Scripts\python.exe -m pytest` (también corre en CI en cada PR).
+- `test_golden_forecast.py` congela el forecast del dashboard: solo se regenera (`python 05_research/models/tests/forecast_harness.py`) cuando el cambio de predicción es intencional y aprobado.
