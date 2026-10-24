@@ -61,8 +61,7 @@ def main():
     weather = fetch_weather(origin, is_historical)
     predictions, threshold, high_activity = forecast_days(origin, weather, history, models)
     day = predictions[step]
-    metadata = models["metadata"]
-    reinforcement_threshold = metadata.get("operational_reinforcement_threshold", 0.50)
+    reinforcement_threshold = 0.50  # P(>7) que activa refuerzo operativo
 
     print(f"=== Predicción de Emergencias (Modo: {mode}) ===")
     print(f"Último dato observado: {last_observed} | Historial usado: {day['Lag_Mode']}")
@@ -79,6 +78,11 @@ def main():
     print(f" Fecha del reporte: {today} | Fecha predicción: {day['FechaStr']} ({day['Dia']})")
     print("=" * 50)
     print(f" Cantidad esperada de emergencias: {count:.1f} llamados")
+    print(
+        f" Rango 80% (validación del día {day['Horizonte']} del forecast): "
+        f"{day['Intervalo_80_Bajo']:.0f}–{day['Intervalo_80_Alto']:.0f} llamados"
+        + ("" if day["Confianza_Horizonte"] else " · baja confianza")
+    )
     print(
         f" Probabilidad de día crítico (>{high_activity:.0f} llamados): {probability * 100:.1f}% "
         f"(umbral de alerta: {threshold * 100:.1f}%)"

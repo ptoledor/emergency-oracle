@@ -55,26 +55,18 @@ def _load_pickle(path):
         return pickle.load(stream)
 
 
-def load_forecast_models(models_dir=MODELS_DIR, prefix="_climatic_augmented"):
-    """Active count model, its classifier and the optional category artifacts."""
+def load_forecast_models(models_dir=MODELS_DIR):
+    """Active count model (active_models.json), its classifier and category artifacts."""
     models_dir = Path(models_dir)
-    models = {"category_risk": None, "category_composition": None}
-    config_path = models_dir / "active_models.json"
-    config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
-    if "count_model" in config:
-        count_model = model_components.CountModel.load(models_dir / config["count_model"])
-        models.update({
-            "regressor": count_model,
-            "classifier": model_components.HorizonProbabilityClassifier(count_model),
-            "metadata": count_model.metadata,
-        })
-    else:
-        reg_path, clf_path, meta_path = model_components.resolve_model_path(models_dir, prefix)
-        models.update({
-            "regressor": force_single_thread_model(_load_pickle(reg_path)),
-            "classifier": force_single_thread_model(_load_pickle(clf_path)),
-            "metadata": _load_pickle(meta_path),
-        })
+    config = json.loads((models_dir / "active_models.json").read_text(encoding="utf-8"))
+    count_model = model_components.CountModel.load(models_dir / config["count_model"])
+    models = {
+        "regressor": count_model,
+        "classifier": model_components.HorizonProbabilityClassifier(count_model),
+        "metadata": count_model.metadata,
+        "category_risk": None,
+        "category_composition": None,
+    }
     risk_path = models_dir / "category_risk_models.pkl"
     if risk_path.exists():
         risk = _load_pickle(risk_path)
@@ -294,8 +286,7 @@ def forecast_days(start_date, weather_hourly, history_frame, models, days=FORECA
     events = list(history["values"])
     features_by_day, weather_days = _daily_features(weather_hourly, start_date, days_since_rain_seed)
 
-    direct_horizon_model = hasattr(regressor, "predict_horizon")
-    origin_events = list(events)
+    horizons = metadata.get("horizons", {})
     predictions = []
     for step in range(days):
         day = start_date + dt.timedelta(days=step)
@@ -303,21 +294,15 @@ def forecast_days(start_date, weather_hourly, history_frame, models, days=FORECA
         if timestamp not in weather_days:
             raise ValueError(f"La fecha {day:%Y-%m-%d} no tiene datos de clima disponibles.")
         features = features_by_day.loc[timestamp].to_dict()
-        features.update(event_history_features(origin_events if direct_horizon_model else events))
+        features.update(event_history_features(events))
         features.update(category_lags)
         X_all = pd.DataFrame([features])
         X_pred = X_all[metadata["feature_cols"]]
 
-        if direct_horizon_model:
-            count = float(np.clip(regressor.predict_horizon(X_pred, step + 1)[0], 0, None))
-        elif hasattr(regressor, "category_models"):
-            count = float(np.clip(regressor.predict(X_all)[0], 0, None))
-        else:
-            count = float(np.clip(regressor.predict(X_pred)[0], 0, None))
-        if hasattr(classifier, "predict_proba_horizon"):
-            probability = float(classifier.predict_proba_horizon(X_pred, step + 1)[0, 1])
-        else:
-            probability = float(classifier.predict_proba(X_pred)[0, 1])
+        count = float(np.clip(regressor.predict(X_pred)[0], 0, None))
+        probability = float(classifier.predict_proba_horizon(X_pred, step + 1)[0, 1])
+        calibration = horizons.get(str(step + 1), {})
+        lower_offset, upper_offset = calibration.get("interval_80", (np.nan, np.nan))
 
         category_probabilities = {}
         if models.get("category_risk"):
@@ -335,11 +320,11 @@ def forecast_days(start_date, weather_hourly, history_frame, models, days=FORECA
         except Exception as exc:
             print(f"No se pudo calcular la composicion por categoria: {exc}")
 
-        if not direct_horizon_model:
-            events = events[1:] + [count]
-            category_lags = {
-                column: float(count * category_shares[column]) for column in CATEGORY_LAG_FEATURES
-            }
+        # Later days use this prediction as history (validated in horizon_evaluation.py).
+        events = events[1:] + [count]
+        category_lags = {
+            column: float(count * category_shares[column]) for column in CATEGORY_LAG_FEATURES
+        }
 
         rescue = category_probabilities.get(
             "rescate_vehicular", category_probabilities.get("rescate", np.nan)
@@ -348,7 +333,11 @@ def forecast_days(start_date, weather_hourly, history_frame, models, days=FORECA
             "Fecha": day,
             "FechaStr": f"{day:%Y-%m-%d}",
             "Dia": DIAS_ES[day.strftime("%A")],
+            "Horizonte": step + 1,
             "Prediccion": count,
+            "Intervalo_80_Bajo": max(count + lower_offset, 0.0),
+            "Intervalo_80_Alto": count + upper_offset,
+            "Confianza_Horizonte": bool(calibration.get("publish", False)),
             "Lag_Mode": history["mode"],
             "Lag_Age_Days": history["age_days"],
             "Last_Observed_Date": history["last_observed_date"],
@@ -368,6 +357,6 @@ def forecast_days(start_date, weather_hourly, history_frame, models, days=FORECA
 
     return (
         predictions,
-        float(metadata.get("classification_threshold", 0.25)),
-        float(metadata.get("umbral_alta_actividad", 7.0)),
+        float(metadata["classification_threshold"]),
+        float(metadata["umbral_alta_actividad"]),
     )

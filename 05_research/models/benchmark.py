@@ -43,7 +43,7 @@ from sklearn.preprocessing import StandardScaler
 
 RANDOM_STATE = 42
 DEFAULT_DATASET = Path("02_data/augmented_emergency_data.csv")
-DEFAULT_METADATA = Path("03_model/saved_models/metadata_climatic_augmented.pkl")
+DEFAULT_METADATA = Path("03_model/saved_models/count_model_v3/metadata.json")
 
 CALENDAR_COLUMNS = {
     "MES",
@@ -187,8 +187,11 @@ def resolve_features(
     if source == "metadata":
         if metadata_path is None:
             raise ValueError("--metadata-path is required for feature-source=metadata.")
-        with metadata_path.open("rb") as stream:
-            metadata = pickle.load(stream)
+        if metadata_path.suffix == ".json":
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        else:
+            with metadata_path.open("rb") as stream:
+                metadata = pickle.load(stream)
         features = list(metadata["feature_cols"])
     elif source == "climatic":
         forbidden |= CALENDAR_COLUMNS

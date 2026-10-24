@@ -2,12 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import pickle
-import os
 import datetime
-import importlib
 import sys
-import model_components
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -18,25 +14,9 @@ if str(data_utils_dir) not in sys.path:
 
 from dedup import mark_duplicates
 
-# Streamlit puede reejecutar dashboard.py dentro de un proceso que conserva en
-# sys.modules una version anterior de este modulo. Recargar solo cuando falta
-# una clase requerida evita que pickle vea el artefacto nuevo con codigo viejo.
-required_model_components = (
-    "HydroObjectiveEnsembleRegressor",
-    "SigmoidProbabilityCalibratedClassifier",
-)
-if any(not hasattr(model_components, name) for name in required_model_components):
-    model_components = importlib.reload(model_components)
-
 from activity_levels import operational_activity_level
 from hourly_peak import historical_hourly_distribution
-from forecasting import (
-    fetch_weather,
-    force_single_thread_model,
-    forecast_days,
-    load_forecast_models,
-)
-from sklearn.metrics import brier_score_loss
+from forecasting import fetch_weather, forecast_days, load_forecast_models
 
 # 1. Configuración de página
 st.set_page_config(
@@ -50,10 +30,6 @@ st.set_page_config(
 data_path = base_dir / "02_data" / "augmented_emergency_data.csv"
 raw_messages_path = base_dir / "02_data" / "compiled_scraped_data.csv"
 models_dir = base_dir / "03_model" / "saved_models"
-research_results_dir = base_dir / "05_research" / "results" / "weather_ablation"
-blend_results_dir = (
-    base_dir / "05_research" / "results" / "category_blend_calibration"
-)
 PROJECT_TIMEZONE = ZoneInfo("America/Santiago")
 
 
@@ -584,24 +560,8 @@ def metric_card(label, value, delta=None, delta_type="up"):
     """, unsafe_allow_html=True)
 
 
-def format_model_name(proto):
-    if not proto:
-        return "Modelo"
-    import re
-    name = str(proto)
-    name = name.replace(" Cross-Validation", "")
-    name = re.sub(r'\(?(\d+)\s*(?:seeds|semillas)\)?', r'(\1S)', name, flags=re.IGNORECASE)
-    return name
 
 
-def model_algorithm_suffix(metadata):
-    """Return the UI suffix for the regressor declared in model metadata."""
-    regressor_type = str((metadata or {}).get("regressor_type", "")).lower()
-    if "xgb" in regressor_type or "ensemble" in regressor_type:
-        return " (XG)"
-    if "forest" in regressor_type or regressor_type.startswith("rf"):
-        return " (RF)"
-    return ""
 
 
 def category_risk_level(probability):
@@ -632,317 +592,71 @@ def category_change_level(expected_count, baseline_count):
 
 
 
-def add_brier_if_missing(metadata, events, probabilities):
-    if metadata is None or "brier" in metadata:
-        return metadata
-    probs = pd.to_numeric(probabilities, errors='coerce')
-    valid = probs.notna() & events.notna()
-    if not valid.any():
-        return metadata
-    threshold = float(metadata.get('umbral_alta_actividad', events[valid].quantile(0.80)))
-    target = (events.astype(float) > threshold).astype(int)
-    if target[valid].nunique() < 2:
-        return metadata
-    metadata["brier"] = float(brier_score_loss(target[valid], probs[valid]))
-    return metadata
 
 
 # 7. Carga de datos y modelos
+# Versiones de los artefactos del modelo: invalidan la caché al reentrenar.
+model_versions = tuple(sorted(
+    (str(path.relative_to(models_dir)), path.stat().st_mtime)
+    for path in models_dir.rglob("*") if path.is_file()
+))
+
+
+@st.cache_resource
+def load_cached_forecast_models(model_versions=None):
+    del model_versions
+    return load_forecast_models(models_dir)
+
+
 @st.cache_data
-def load_data_and_predict(active_model_config=None, model_mtimes=None):
-    cache_version = "model-data-v5-hydro-hot-reload-compat"
-    if not os.path.exists(data_path):
-        return None, None, None, None, None, None, None, None, None
-    df = pd.read_csv(data_path, sep=';')
-    df = df.sort_values('FECHA_DIA').reset_index(drop=True)
-    signal_weather_paths = [
-        base_dir / "05_research" / "data" / "historical_forecast_features.csv",
-        base_dir / "05_research" / "data" / "historical_forecast_features_v2.csv",
-    ]
-    for signal_weather_path in signal_weather_paths:
-        if not signal_weather_path.exists():
-            continue
-        signal_weather = pd.read_csv(signal_weather_path, sep=';')
-        signal_weather['FECHA_DIA'] = pd.to_datetime(
-            signal_weather['FECHA_DIA']
-        ).dt.strftime('%Y-%m-%d')
-        df['FECHA_DIA'] = pd.to_datetime(df['FECHA_DIA']).dt.strftime('%Y-%m-%d')
-        signal_columns = [
-            column for column in signal_weather.columns
-            if column == 'FECHA_DIA' or column not in df.columns
-        ]
-        df = df.merge(
-            signal_weather[signal_columns],
-            on='FECHA_DIA',
-            how='left',
-            validate='one_to_one',
-        )
-    weekday_columns = {
-        0: 'DIA_LUNES',
-        1: 'DIA_MARTES',
-        2: 'DIA_MIERCOLES',
-        3: 'DIA_JUEVES',
-        4: 'DIA_VIERNES',
-        5: 'DIA_SABADO',
-        6: 'DIA_DOMINGO',
-    }
-    for weekday, column in weekday_columns.items():
-        df[column] = (df['DIA_SEMANA'] == weekday).astype(int)
-    
-    # Cargar modelos y metadata
-    try:
-        # 1. Modelo base original, conservado como respaldo y referencia
-        reg_model_base = None
-        metadata_base = None
-        try:
-            with open(models_dir / "regressor_climatic_augmented.pkl", "rb") as f:
-                reg_model_base = pickle.load(f)
-            reg_model_base = force_single_thread_model(reg_model_base)
-            with open(models_dir / "metadata_climatic_augmented.pkl", "rb") as f:
-                metadata_base = pickle.load(f)
-            
-            # Realizar predicciones históricas base (alineando features)
-            base_features = [c for c in metadata_base['feature_cols'] if c in df.columns]
-            if len(base_features) != len(metadata_base['feature_cols']):
-                missing = len(metadata_base['feature_cols']) - len(base_features)
-                if missing > 0:
-                    raise KeyError(f"{missing} features missing in dataset for base model")
-            X_base = df[base_features]
-            df['PRED_EVENTOS_BASE'] = reg_model_base.predict(X_base)
-            
-            # Extraer importancia base
-            importances_base = getattr(reg_model_base, 'feature_importances_', None)
-            if importances_base is None:
-                try:
-                    from sklearn.inspection import permutation_importance
-                    importances_base = permutation_importance(
-                        reg_model_base, X_base, df['PRED_EVENTOS_BASE'],
-                        n_repeats=5, random_state=42, n_jobs=-1
-                    ).importances_mean
-                except Exception:
-                    from sklearn.ensemble import GradientBoostingRegressor
-                    imp_model = GradientBoostingRegressor(n_estimators=100, max_depth=4, random_state=42)
-                    imp_model.fit(X_base, df['PRED_EVENTOS_BASE'])
-                    importances_base = imp_model.feature_importances_
-            df_imp_base = pd.DataFrame({
-                'Feature': base_features,
-                'Importance': importances_base
-            }).sort_values(by='Importance', ascending=True)
-        except (KeyError, Exception) as e:
-            print(f"Original base model not compatible with current data: {e}. Skipping base model comparison.")
-            reg_model_base = None
-            metadata_base = None
-            df['PRED_EVENTOS_BASE'] = np.nan
-            df_imp_base = pd.DataFrame({'Feature': [], 'Importance': []})
-        
-        # 2. Modelo principal optimizado por categorias (CategoryBlendRegressor)
-        reg_path, clf_path, meta_path = model_components.resolve_model_path(models_dir, "_climatic_augmented")
-        with open(reg_path, "rb") as f:
-            reg_model_aug = pickle.load(f)
-        reg_model_aug = force_single_thread_model(reg_model_aug)
-        with open(meta_path, "rb") as f:
-            metadata_aug = pickle.load(f)
-            
-        # Collect ALL features needed by blend's category sub-models
-        if hasattr(reg_model_aug, 'category_models'):
-            all_blend_features = set(metadata_aug['feature_cols'])
-            for details in reg_model_aug.category_models.values():
-                all_blend_features.update(details.get('feature_cols', []))
-            aug_features = [c for c in sorted(all_blend_features) if c in df.columns]
-        else:
-            aug_features = [c for c in metadata_aug['feature_cols'] if c in df.columns]
-        X_aug = df[aug_features]
-        df['PRED_EVENTOS_PRUNED'] = reg_model_aug.predict(X_aug)
-        df['PRED_EVENTOS_PRIMARY'] = df['PRED_EVENTOS_PRUNED']
-        
-        # Extraer importancia aumentada (ponderada del blend directo + categorías)
-        importances_aug = getattr(reg_model_aug, 'feature_importances_', None)
-        if importances_aug is None:
-            # HistGBR no tiene feature_importances_; usar permutation importance o GBR fallback
-            try:
-                from sklearn.inspection import permutation_importance
-                importances_aug = permutation_importance(
-                    reg_model_aug, X_aug, df['PRED_EVENTOS_PRIMARY'], 
-                    n_repeats=5, random_state=42, n_jobs=-1
-                ).importances_mean
-            except Exception:
-                # Fallback: entrenar GBR auxiliar solo para importancia
-                from sklearn.ensemble import GradientBoostingRegressor
-                imp_model = GradientBoostingRegressor(n_estimators=100, max_depth=4, random_state=42)
-                imp_model.fit(X_aug, df['PRED_EVENTOS_PRIMARY'])
-                importances_aug = imp_model.feature_importances_
-        df_imp_aug = pd.DataFrame({
-            'Feature': aug_features,
-            'Importance': importances_aug
-        }).sort_values(by='Importance', ascending=True)
-        df_imp_v3 = df_imp_aug
-        metadata_v3 = metadata_aug
-        
-        # Predicciones del clasificador principal
-        try:
-            with open(clf_path, "rb") as f:
-                clf_model_v3 = pickle.load(f)
-            clf_model_v3 = force_single_thread_model(clf_model_v3)
-            clf_features = list(getattr(clf_model_v3, 'feature_names_in_', metadata_aug['feature_cols']))
-            X_clf = df[[c for c in clf_features if c in df.columns]]
-            df['PROB_ALTA_PRIMARY'] = clf_model_v3.predict_proba(X_clf)[:, 1]
-            metadata_aug = add_brier_if_missing(metadata_aug, df['EVENTOS'], df['PROB_ALTA_PRIMARY'])
-            metadata_v3 = metadata_aug
-            metadata_base = add_brier_if_missing(metadata_base, df['EVENTOS'], df['PROB_ALTA_PRIMARY'])
-        except Exception:
-            df['PROB_ALTA_PRIMARY'] = np.nan
+def load_data_and_predict(model_versions=None):
+    """Daily dataset with the walk-forward (out-of-sample) predictions of the active model."""
+    if not data_path.exists():
+        return None, None, None
+    df = pd.read_csv(data_path, sep=';').sort_values('FECHA_DIA').reset_index(drop=True)
+    models = load_cached_forecast_models(model_versions)
+    metadata = models["metadata"]
+    df['PRED_EVENTOS_PRIMARY'] = np.nan
+    df['PROB_ALTA_PRIMARY'] = np.nan
+    oof_path = models_dir / metadata["model_name"] / "oof_predictions.csv"
+    if oof_path.exists():
+        oof = pd.read_csv(oof_path, sep=';').set_index('FECHA_DIA')
+        df['PRED_EVENTOS_PRIMARY'] = df['FECHA_DIA'].map(oof['PRED_EVENTOS_OOF'])
+        df['PROB_ALTA_PRIMARY'] = df['FECHA_DIA'].map(oof['PROB_ALTA_OOF'])
+    regressor = models["regressor"]
+    df_importance = pd.DataFrame({
+        'Feature': regressor.feature_cols,
+        'Importance': regressor.feature_importances_,
+    }).sort_values(by='Importance', ascending=True)
+    df['FECHA_DT'] = pd.to_datetime(df['FECHA_DIA'])
+    df['DIA_DEL_ANO'] = df['FECHA_DT'].dt.dayofyear
+    return df, df_importance, metadata
 
-        try:
-            with open(models_dir / "category_risk_models.pkl", "rb") as f:
-                category_risk_artifact = pickle.load(f)
-            for group_name, details in category_risk_artifact.get("models", {}).items():
-                group_model = force_single_thread_model(details["model"])
-                group_features = details.get("feature_cols", metadata_v3['feature_cols'])
-                df[f'PROB_{group_name.upper()}_ALTO'] = group_model.predict_proba(df[group_features])[:, 1]
-        except Exception:
-            pass
-        for probability_col in [
-            'PROB_RESCATE_VEHICULAR_ALTO',
-            'PROB_RESCATE_ALTO',
-            'PROB_INCENDIO_ALTO',
-            'PROB_CLIMATICAS_ALTO',
-        ]:
-            if probability_col not in df.columns:
-                df[probability_col] = np.nan
 
-        # Extraer día del año
-        df['FECHA_DT'] = pd.to_datetime(df['FECHA_DIA'])
-        df['DIA_DEL_ANO'] = df['FECHA_DT'].dt.dayofyear
-        
-        return df, df_imp_base, df_imp_aug, df_imp_v3, metadata_base, metadata_aug, metadata_v3
-    except Exception as e:
-        st.error(f"Error al cargar modelos: {e}")
-        return None, None, None, None, None, None, None
+df, df_importance, model_metadata = load_data_and_predict(model_versions)
+forecast_models = load_cached_forecast_models(model_versions)
+category_risk_artifact = forecast_models["category_risk"]
 
-active_model_config = {}
-try:
-    import json
-    config_path = models_dir / "active_models.json"
-    if config_path.exists():
-        with open(config_path, "r", encoding="utf-8") as f:
-            active_model_config = json.load(f)
-except Exception:
-    pass
 
 # Obtener tiempos de modificacion de archivos de modelos para invalidar cache al reentrenar
-model_mtimes = {}
-try:
-    for f in models_dir.glob("*.pkl"):
-        model_mtimes[f.name] = f.stat().st_mtime
-except Exception:
-    pass
-
-(
-    df,
-    df_imp_base,
-    df_imp_aug,
-    df_imp_v3,
-    metadata_base,
-    metadata_aug,
-    metadata_v3,
-) = load_data_and_predict(active_model_config, model_mtimes)
 
 
 
-@st.cache_data
-def load_experimental_model_metrics():
-    import json
-
-    summary_path = research_results_dir / "experiment_summary.json"
-    if not summary_path.exists():
-        return None
-    with summary_path.open("r", encoding="utf-8") as stream:
-        summary = json.load(stream)
-    winner = summary["winner"]
-    baseline = summary["baseline"]
-    config_path = research_results_dir / winner["name"] / "run_config.json"
-    with config_path.open("r", encoding="utf-8") as stream:
-        rows_used = int(json.load(stream).get("rows_used", 0))
-
-    return {
-        "mae": float(winner["mae"]),
-        "mse": float(winner["rmse"]) ** 2,
-        "r2": float(winner["r2"]),
-        "roc_auc": float(winner["roc_auc"]),
-        "brier": float(winner["brier"]),
-        "accuracy": float(winner["accuracy"]),
-        "precision": float(winner["precision"]),
-        "recall": float(winner["recall"]),
-        "f1": float(winner["f1"]),
-        "classification_threshold": 0.30,
-        "rows_used": rows_used,
-        "experiment_name": winner["name"],
-        "count_model": winner["count_model"],
-        "classification_model": winner["classification_model"],
-        "folds_improved": int(winner["folds_improved"]),
-        "promoted": bool(winner["promoted"]),
-        "mae_improvement": float(winner["mae_improvement"]),
-        "roc_auc_improvement": float(winner["roc_auc_improvement"]),
-        "baseline_mae": float(baseline["mae"]),
-        "baseline_roc_auc": float(baseline["roc_auc"]),
-        "is_primary": False,
-    }
 
 
-experimental_metadata = load_experimental_model_metrics()
 
 
-@st.cache_data
-def load_blend_calibration_summary():
-    import json
-
-    path = blend_results_dir / "summary.json"
-    if not path.exists():
-        return None
-    with path.open("r", encoding="utf-8") as stream:
-        return json.load(stream)
 
 
-blend_calibration_summary = load_blend_calibration_summary()
 
 
-@st.cache_resource
-def load_category_risk_artifact(model_mtime=None):
-    path = models_dir / "category_risk_models.pkl"
-    if not path.exists():
-        return None
-    with path.open("rb") as stream:
-        artifact = pickle.load(stream)
-    for details in artifact.get("models", {}).values():
-        details["model"] = force_single_thread_model(details["model"])
-    return artifact
 
 
-category_risk_artifact = load_category_risk_artifact(
-    model_mtimes.get("category_risk_models.pkl")
-)
 
 
-@st.cache_resource
-def load_category_composition_artifact(model_mtime=None):
-    path = models_dir / "category_composition_models.pkl"
-    if not path.exists():
-        return None
-    with path.open("rb") as stream:
-        artifact = pickle.load(stream)
-    for details in artifact.get("groups", {}).values():
-        details["baseline_model"] = force_single_thread_model(
-            details["baseline_model"]
-        )
-        details["expected_model"] = force_single_thread_model(
-            details["expected_model"]
-        )
-    return artifact
 
 
-category_composition_artifact = load_category_composition_artifact(
-    model_mtimes.get("category_composition_models.pkl")
-)
+
 
 
 @st.cache_data
@@ -1051,37 +765,28 @@ def get_weather_for_range(start_date, is_historical):
     return fetch_weather(start_date, is_historical)
 
 
-@st.cache_resource
-def load_cached_forecast_models(prefix, model_versions=None):
-    del model_versions
-    return load_forecast_models(models_dir, prefix)
 
 
-def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weather_data=None):
-    try:
-        models = load_cached_forecast_models(prefix, tuple(sorted(model_mtimes.items())))
-    except Exception as e:
-        st.error(f"Error al cargar modelos: {e}")
-        return None, 0.25, 7.0
+def predict_6_days(start_date, is_historical, weather_data=None):
     try:
         if weather_data is None:
             weather_data = get_weather_for_range(start_date, is_historical)
     except Exception as e:
         st.error(f"Error al descargar pronóstico del clima: {e}")
-        return None, 0.25, 7.0
+        return None, None, None
     try:
-        return forecast_days(start_date, weather_data, df, models)
+        return forecast_days(start_date, weather_data, df, forecast_models)
     except ValueError as e:
         st.error(str(e))
-        return None, 0.25, 7.0
+        return None, None, None
 
 
 # 8. Encabezado principal de la aplicación
 
-st.markdown(f"""
+st.markdown("""
 <div class="header-container">
     <div class="brand-name">
-        🧯 Emergencias CBT <span style="font-size: 0.65rem; font-weight: 400; color: var(--text-muted); vertical-align: middle;">v0617</span>
+        🧯 Emergencias CBT <span style="font-size: 0.65rem; font-weight: 400; color: var(--text-muted); vertical-align: middle;">v3</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -1141,15 +846,9 @@ def render_seasonal_chart():
         key="smoothing_slider_fragment"
     )
     y_pred_col = 'PRED_EVENTOS_PRIMARY'
-    y_robust_col = 'PRED_EVENTOS_KFOLD'
-    has_robust_prediction = (
-        y_robust_col in df.columns
-        and pd.to_numeric(df[y_robust_col], errors='coerce').notna().any()
-    )
     grouped_cols = ['EVENTOS', y_pred_col]
-    if has_robust_prediction:
-        grouped_cols.append(y_robust_col)
-    
+
+    # Reales: todo el histórico; predicción: solo días con predicción fuera de muestra.
     # Agrupar por día del año y restringir a 365 días (excluyendo el día bisiesto 366 si existe)
     df_grouped = df.groupby('DIA_DEL_ANO')[grouped_cols].mean().reset_index()
     df_grouped = df_grouped[df_grouped['DIA_DEL_ANO'] <= 365].copy()
@@ -1167,13 +866,11 @@ def render_seasonal_chart():
     y_min = min(
         df_grouped['EVENTOS'].min(),
         df_grouped[y_pred_col].min(),
-        df_grouped[y_robust_col].min() if has_robust_prediction else df_grouped[y_pred_col].min(),
         min(reference_values),
     )
     y_max = max(
         df_grouped['EVENTOS'].max(),
         df_grouped[y_pred_col].max(),
-        df_grouped[y_robust_col].max() if has_robust_prediction else df_grouped[y_pred_col].max(),
         max(reference_values),
     )
     ymin_fixed = max(0.0, float(y_min) - 0.5)
@@ -1187,16 +884,10 @@ def render_seasonal_chart():
     if dias_suavizado > 1:
         y_real = df_grouped['EVENTOS'].rolling(dias_suavizado, min_periods=1, center=True).mean()
         y_pred = df_grouped[y_pred_col].rolling(dias_suavizado, min_periods=1, center=True).mean()
-        y_robust = (
-            df_grouped[y_robust_col].rolling(dias_suavizado, min_periods=1, center=True).mean()
-            if has_robust_prediction
-            else None
-        )
         legend_view = f"Vista: promedio móvil de {dias_suavizado} días"
     else:
         y_real = df_grouped['EVENTOS']
         y_pred = df_grouped[y_pred_col]
-        y_robust = df_grouped[y_robust_col] if has_robust_prediction else None
         legend_view = "Vista: valores diarios sin suavizado"
 
     # Crear gráfico Plotly
@@ -1217,19 +908,10 @@ def render_seasonal_chart():
         x=df_grouped['FECHA_EJE'],
         y=y_pred,
         mode='lines',
-        name='Predicción del modelo',
+        name='Predicción fuera de muestra',
         line=dict(color='#3b82f6', width=2.5, dash='dash'),
         hovertemplate='Fecha: %{x|%d-%b}<br>Predicho: %{y:.2f} eventos<extra></extra>'
     ))
-    if has_robust_prediction:
-        fig.add_trace(go.Scatter(
-            x=df_grouped['FECHA_EJE'],
-            y=y_robust,
-            mode='lines',
-            name='Predicción robusta',
-            line=dict(color='#f97316', width=2.3, dash='dot'),
-            hovertemplate='Fecha: %{x|%d-%b}<br>Robusto: %{y:.2f} eventos<extra></extra>'
-        ))
     
     # Referencias históricas de media y desviación estándar.
     for label, level, color, dash in reference_levels:
@@ -1318,13 +1000,12 @@ def render_seasonal_chart():
 
 @st.fragment
 def render_historical_chart():
-    historical_cols = ['FECHA_DT', 'EVENTOS', 'PRED_EVENTOS_PRIMARY']
-    if 'PRED_EVENTOS_KFOLD' in df.columns:
-        historical_cols.append('PRED_EVENTOS_KFOLD')
-    historical = df[historical_cols].sort_values('FECHA_DT').copy()
-    has_robust_prediction = (
-        'PRED_EVENTOS_KFOLD' in historical.columns
-        and pd.to_numeric(historical['PRED_EVENTOS_KFOLD'], errors='coerce').notna().any()
+    # Only the walk-forward validation period has out-of-sample predictions.
+    historical = (
+        df[['FECHA_DT', 'EVENTOS', 'PRED_EVENTOS_PRIMARY']]
+        .dropna(subset=['PRED_EVENTOS_PRIMARY'])
+        .sort_values('FECHA_DT')
+        .copy()
     )
     historical['AÑO'] = historical['FECHA_DT'].dt.year
     historical['MES_NUM'] = historical['FECHA_DT'].dt.month
@@ -1393,22 +1074,13 @@ def render_historical_chart():
 
     real = historical['EVENTOS'].astype(float)
     predicted = historical['PRED_EVENTOS_PRIMARY'].astype(float)
-    robust_predicted = (
-        pd.to_numeric(historical['PRED_EVENTOS_KFOLD'], errors='coerce')
-        if has_robust_prediction
-        else None
-    )
 
     historical_metrics = [
         ("Días", f"{len(historical):,}", "observaciones"),
         ("Media real", f"{real.mean():.2f}", "llamadas/día"),
         ("Desv. real", f"{real.std():.2f}", "llamadas"),
-        ("Media predicción", f"{predicted.mean():.2f}", "llamadas/día"),
+        ("MAE fuera de muestra", f"{(real - predicted).abs().mean():.2f}", "llamadas/día"),
     ]
-    if robust_predicted is not None:
-        historical_metrics.append(
-            ("Media robusta", f"{robust_predicted.mean():.2f}", "llamadas/día")
-        )
     historical_metrics_html = "".join(
         f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem;">
             <div style="font-size: .68rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">{label}</div>
@@ -1427,16 +1099,10 @@ def render_historical_chart():
     if smoothing_days > 1:
         real_plot = real.rolling(smoothing_days, min_periods=1, center=True).mean()
         predicted_plot = predicted.rolling(smoothing_days, min_periods=1, center=True).mean()
-        robust_plot = (
-            robust_predicted.rolling(smoothing_days, min_periods=1, center=True).mean()
-            if robust_predicted is not None
-            else None
-        )
         smoothing_detail = f"Promedio móvil de {smoothing_days} días"
     else:
         real_plot = real
         predicted_plot = predicted
-        robust_plot = robust_predicted
         smoothing_detail = "Valores diarios sin suavizado"
 
     real_color = '#fafafa' if IS_DARK else '#09090b'
@@ -1453,20 +1119,10 @@ def render_historical_chart():
         x=historical['FECHA_DT'],
         y=predicted_plot,
         mode='lines',
-        name='Predicción del modelo',
+        name='Predicción fuera de muestra',
         line=dict(color='#3b82f6', width=2, dash='dash'),
         hovertemplate='%{x|%d-%m-%Y}<br>Predicción: %{y:.2f}<extra></extra>',
     ))
-
-    if robust_plot is not None:
-        fig.add_trace(go.Scatter(
-            x=historical['FECHA_DT'],
-            y=robust_plot,
-            mode='lines',
-            name='Predicción robusta',
-            line=dict(color='#f97316', width=1.9, dash='dot'),
-            hovertemplate='%{x|%d-%m-%Y}<br>Robusto: %{y:.2f}<extra></extra>',
-        ))
 
     global_mean = float(df['EVENTOS'].mean())
     global_std = float(df['EVENTOS'].std())
@@ -1492,10 +1148,8 @@ def render_historical_chart():
 
     legend_items = [
         ("Llamados reales", "", real_color, "solid"),
-        ("Predicción modelo", "", "#3b82f6", "dash"),
+        ("Predicción fuera de muestra", "", "#3b82f6", "dash"),
     ]
-    if robust_plot is not None:
-        legend_items.append(("Predicción robusta", "", "#f97316", "dot"))
     legend_items.extend([
         ("Promedio histórico", f"{global_mean:.2f} llamadas", "#22c55e", "solid"),
         ("Nivel alto habitual", f"+1 desviación · {global_mean + global_std:.2f}", "#f59e0b", "dash"),
@@ -1518,7 +1172,6 @@ def render_historical_chart():
         13.0,
         float(real.max()) + 0.5,
         float(predicted.max()) + 0.5,
-        float(robust_predicted.max()) + 0.5 if robust_predicted is not None else 0.0,
         max(level for _, level, _, _ in historical_reference_levels) + 0.5,
     )
     layout = PLOT_LAYOUT.copy()
@@ -1643,11 +1296,11 @@ def render_distribution_charts():
         key="dist_events",
     )
 
-    historical_predictions = df['PRED_EVENTOS_PRIMARY'].astype(float)
+    historical_predictions = df['PRED_EVENTOS_PRIMARY'].dropna().astype(float)
     render_distribution_section(
         historical_predictions,
-        "Distribución de Predicciones Históricas · Modelo Optimizado",
-        "Predicciones generadas sobre el histórico y campana normal de referencia.",
+        "Distribución de Predicciones Fuera de Muestra",
+        "Predicciones walk-forward del modelo oficial y campana normal de referencia.",
         [
             ("Mínimo predicho", f"{historical_predictions.min():.2f}", "llamadas/día"),
             ("Máximo predicho", f"{historical_predictions.max():.2f}", "llamadas/día"),
@@ -1660,27 +1313,6 @@ def render_distribution_charts():
         key="dist_pred_opt",
     )
 
-
-    robust_predictions = pd.to_numeric(
-        df.get('PRED_EVENTOS_KFOLD', pd.Series(dtype=float)),
-        errors='coerce',
-    ).dropna()
-    if not robust_predictions.empty:
-        render_distribution_section(
-            robust_predictions,
-            "Distribución de Predicciones Históricas · Modelo Robusto",
-            "Predicciones KFold generadas sobre el histórico y campana normal de referencia.",
-            [
-                ("Mínimo robusto", f"{robust_predictions.min():.2f}", "llamadas/día"),
-                ("Máximo robusto", f"{robust_predictions.max():.2f}", "llamadas/día"),
-                ("Media robusta", f"{robust_predictions.mean():.2f}", "llamadas/día"),
-                ("Desviación estándar", f"{robust_predictions.std():.2f}", "llamadas"),
-            ],
-            "#f97316",
-            0.5,
-            "Llamados robustos por día",
-            key="dist_pred_rob",
-        )
 
 
 # 12. Pestañas de navegación
@@ -1708,22 +1340,15 @@ with tab_forecast:
             and shared_weather.get('_source', [''])[0] == 'local_fallback'
         )
 
-        if shared_weather is None:
-            pred_results = pred_results_base = pred_results_v3 = None
-            clf_threshold = float((metadata_aug or {}).get('classification_threshold', 0.25))
-            umbral_alta = float((metadata_aug or {}).get('umbral_alta_actividad', 7.0))
-        else:
+        pred_results = None
+        if shared_weather is not None:
             try:
-                pred_results, clf_threshold, umbral_alta = predict_6_days(
-                    start_pred_date, is_historical_pred, prefix="_climatic_augmented", weather_data=shared_weather
+                pred_results, _, umbral_alta = predict_6_days(
+                    start_pred_date, is_historical_pred, weather_data=shared_weather
                 )
-                pred_results_base = pred_results_v3 = pred_results
             except Exception as e:
                 st.error(f"Error en predicción: {e}")
-                pred_results = pred_results_base = pred_results_v3 = None
-                clf_threshold = float((metadata_aug or {}).get('classification_threshold', 0.25))
-                umbral_alta = float((metadata_aug or {}).get('umbral_alta_actividad', 7.0))
-        
+
     if pred_results is not None:
         if weather_uses_local_fallback:
             st.warning(
@@ -1731,15 +1356,8 @@ with tab_forecast:
                 "El pronostico usa clima estimado desde el historico local."
             )
         historical_mean = float(df['EVENTOS'].astype(float).mean())
-        # Umbrales calculados solo sobre el período de entrenamiento (sin fuga de test ni in-sample del test)
-        train_end_date = str((metadata_aug or {}).get('train_end_date', ''))
-        train_mask = (
-            df['FECHA_DIA'].astype(str) <= train_end_date
-            if train_end_date
-            else pd.Series([True] * len(df), index=df.index)
-        )
-        df_train = df[train_mask]
-        train_predictions = df_train['PRED_EVENTOS_PRIMARY'].astype(float)
+        # Predicciones fuera de muestra (walk-forward), no ajustadas sobre los mismos días.
+        oof_predictions = df['PRED_EVENTOS_PRIMARY'].dropna().astype(float)
         # Para category risk: usar umbrales OOF almacenados en el artefacto
         historical_rescue_probabilities = risk_probability_series(
             "rescate_vehicular", "rescate"
@@ -1754,6 +1372,11 @@ with tab_forecast:
         for p in pred_results:
             activity_text, activity_class = operational_activity_level(
                 p['Prediccion']
+            )
+            low_confidence_html = (
+                ""
+                if p['Confianza_Horizonte']
+                else '<br><span title="En la validación este día no superó al promedio de 30 días">baja confianza</span>'
             )
             rescue_label, rescue_class = category_risk_label(
                 p.get('Prob_Rescate_Alto', np.nan)
@@ -1860,7 +1483,9 @@ with tab_forecast:
                     <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Dia']}</div>
                     <div style="font-size: 0.8rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem;">{p['Fecha'].strftime('%d-%b')}</div>
                     <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Prediccion']:.1f}</div>
-                    <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.5rem;">llamadas</div>
+                    <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.2rem;">llamadas</div>
+                    <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.2rem;" title="En la validación, el 80% de los días cayó dentro de este rango">rango 80%: <strong>{p['Intervalo_80_Bajo']:.0f}–{p['Intervalo_80_Alto']:.0f}</strong></div>
+                    <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.5rem;" title="Probabilidad calibrada para este día del forecast">P(&gt;{umbral_alta:.0f} llamados): <strong>{p['Prob_Alta'] * 100:.0f}%</strong>{low_confidence_html}</div>
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 0.35rem; margin-bottom: 0.6rem;">
                         <div class="metric-delta {activity_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{activity_text}</div>
                     </div>
@@ -1941,12 +1566,13 @@ with tab_forecast:
                 "al menos un llamado durante esa hora local. Por ejemplo, 25% "
                 "equivale a un evento en esa franja en 25 de cada 100 días."
             )
-        current_model_name = format_model_name(metadata_aug.get("validation_protocol", "Modelo Climático Aumentado"))
-        suffix = model_algorithm_suffix(metadata_aug)
-        st.markdown(f"**Modelo oficial:** {current_model_name}{suffix} · NUEVO")
+        st.markdown(
+            f"**Modelo oficial:** {model_metadata['description']} · "
+            f"{model_metadata['validation_protocol']}"
+        )
         st.caption(
-            "Nivel operacional: Baja <4 · Normal 4–<6 · "
-            "Alta 6–<8 · Muy alta ≥8 llamados."
+            "Nivel operacional: Baja <4 · Normal 4–<6 · Alta 6–<8 · Muy alta ≥8 llamados. "
+            "El rango 80% muestra dónde cayeron 8 de cada 10 días en la validación de ese día del forecast."
         )
         lag_details = pred_results[0]
         if lag_details.get('Lag_Mode') != 'observed':
@@ -1956,15 +1582,22 @@ with tab_forecast:
                 if last_observed
                 else 'no disponible'
             )
-            st.warning(
-                "La actividad reciente no está actualizada: el último conteo "
-                f"observado es del {last_observed_label}. Los días sin conteo "
-                "observado se tratan como faltantes, igual que en el "
-                "entrenamiento."
-            )
+            if model_metadata.get('uses_event_history'):
+                st.warning(
+                    "La actividad reciente no está actualizada: el último conteo "
+                    f"observado es del {last_observed_label}. Los días sin conteo "
+                    "observado se tratan como faltantes, igual que en el "
+                    "entrenamiento."
+                )
+            else:
+                st.caption(
+                    f"Último conteo observado: {last_observed_label}. El conteo total "
+                    "no usa el historial reciente; la composición por tipo trata los "
+                    "días sin conteo como faltantes."
+                )
 
         percentile_summary_html = render_percentile_table([
-            build_percentile_row("Nivel de actividad (predicciones)", train_predictions, as_probability=False),
+            build_percentile_row("Nivel de actividad (predicciones fuera de muestra)", oof_predictions, as_probability=False),
             build_percentile_row("Probabilidad de R.Vehicular", historical_rescue_probabilities, as_probability=True),
             build_percentile_row("Probabilidad de incendio", historical_fire_probabilities, as_probability=True),
             build_percentile_row("Probabilidad de climaticas", historical_climate_probabilities, as_probability=True),
@@ -1983,162 +1616,53 @@ with tab_forecast:
             unsafe_allow_html=True,
         )
                 
-def render_model_metrics(metadata, title, color):
-    if metadata is None:
-        st.info(f"{title}: metricas no disponibles.")
-        return
 
-    def number_value(key):
-        if key == "rmse":
-            if "rmse" in metadata:
-                val = metadata["rmse"]
-            elif "mse" in metadata:
-                val = metadata["mse"]
-                try:
-                    return float(val) ** 0.5
-                except:
-                    return None
-            else:
-                return None
-        elif key == "baseline_rmse":
-            if "baseline_rmse" in metadata:
-                val = metadata["baseline_rmse"]
-            elif "baseline_mse" in metadata:
-                val = metadata["baseline_mse"]
-                try:
-                    return float(val) ** 0.5
-                except:
-                    return None
-            else:
-                return None
-        
-        if key not in metadata:
-            return None
-        try:
-            value = float(metadata[key])
-        except (TypeError, ValueError):
-            return None
-        if not np.isfinite(value):
-            return None
-        return value
 
-    metric_specs = [
-        ("MAE", "mae", lambda value: f"{value:.2f} eventos"),
-        ("RMSE", "rmse", lambda value: f"{value:.2f}"),
-        ("R2", "r2", lambda value: f"{value * 100:.1f}%"),
-        ("Ratio variabilidad", "std_ratio", lambda value: f"{value * 100:.1f}%"),
-        ("Salidas 4-5", "boring_4_5_share", lambda value: f"{value * 100:.1f}%"),
-        ("Precision top 20%", "top20_precision", lambda value: f"{value * 100:.1f}%"),
-        ("Recall top 20%", "top20_recall", lambda value: f"{value * 100:.1f}%"),
-        ("Brier", "brier", lambda value: f"{value:.3f}"),
-        ("ROC-AUC", "roc_auc", lambda value: f"{value * 100:.1f}%"),
-        ("Accuracy", "accuracy", lambda value: f"{value * 100:.1f}%"),
-        ("Precision", "precision", lambda value: f"{value * 100:.1f}%"),
-        ("Recall", "recall", lambda value: f"{value * 100:.1f}%"),
-        ("F1-Score", "f1", lambda value: f"{value * 100:.1f}%"),
-    ]
 
+
+
+
+
+
+def render_horizon_table(metadata):
+    """Per-day validation metrics against the 30-day mean."""
     rows = []
-
-    for label, key, formatter in metric_specs:
-        value = number_value(key)
-        rows.append((label, formatter(value) if value is not None else "N/A"))
-
-    principal = " · PRINCIPAL" if metadata.get("is_primary") else ""
-    table_rows = "".join(
-        f'<tr style="border-bottom: 1px solid rgba(128,128,128,.15);">'
-        f'<td style="color: var(--text-muted); padding: .3rem 0;">{label}</td>'
-        f'<td style="text-align: right; font-weight: 700; padding: .3rem 0;">{value}</td></tr>'
-        for label, value in rows
+    for horizon, details in sorted(metadata.get("horizons", {}).items(), key=lambda item: int(item[0])):
+        lower, upper = details["interval_80"]
+        gain = details["mae_promedio_30d"] - details["mae"]
+        confidence = "Sí" if details["publish"] else "Baja"
+        rows.append(
+            f"<tr><td>Día {horizon}</td><td>{details['mae']:.2f}</td>"
+            f"<td>{details['mae_promedio_30d']:.2f}</td><td>{gain:+.2f}</td>"
+            f"<td>{details['high_auc']:.2f}</td><td>{details['brier_nested']:.3f}</td>"
+            f"<td>{lower:+.1f} / {upper:+.1f}</td><td>{confidence}</td></tr>"
+        )
+    header = "".join(
+        f"<th>{label}</th>" for label in [
+            "Día", "MAE modelo", "MAE promedio 30 días", "Mejora", "AUC (>7)",
+            "Brier", "Rango 80%", "Confianza",
+        ]
     )
     st.markdown(
-        f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem;">
-        <div style="font-weight: 700; border-bottom: 2px solid {color}; padding-bottom: .4rem; margin-bottom: .8rem;">{title}{principal}</div>
-        <table style="width: 100%; border-collapse: collapse; font-size: .82rem;">{table_rows}</table>
-        </div>""",
+        f"""<div style="overflow-x: auto; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: .75rem 1rem;">
+        <table class="percentile-table" style="width: 100%; min-width: 560px;">
+        <thead><tr>{header}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>""",
         unsafe_allow_html=True,
     )
-
-
-def build_constant_regressor_metadata(df_source, source_metadata, kind):
-    if df_source is None or source_metadata is None:
-        return None
-
-    value_key = "train_target_mean" if kind == "mean" else "train_target_median"
-    mae_key = "baseline_mae" if kind == "mean" else "median_baseline_mae"
-    mse_key = "baseline_mse" if kind == "mean" else "median_baseline_mse"
-
-    if value_key not in source_metadata:
-        return None
-    prediction_value = float(source_metadata[value_key])
-    baseline_metadata = {
-        "validation_protocol": "Baseline regresor constante",
-        "metrics_scope": "regression_only",
-        "prediction_value": prediction_value,
-        "mae": source_metadata.get(mae_key),
-        "mse": source_metadata.get(mse_key),
-        "rmse": (float(source_metadata[mse_key]) ** 0.5) if source_metadata.get(mse_key) is not None else None,
-    }
-
-    if "FECHA_DIA" in df_source.columns and "EVENTOS" in df_source.columns:
-        dates = pd.to_datetime(df_source["FECHA_DIA"], errors="coerce")
-        start = pd.to_datetime(source_metadata.get("test_start_date"), errors="coerce")
-        end = pd.to_datetime(source_metadata.get("test_end_date"), errors="coerce")
-        if pd.notna(start) and pd.notna(end):
-            mask = dates.between(start, end)
-        else:
-            test_samples = int(source_metadata.get("test_samples", 0) or 0)
-            mask = pd.Series(False, index=df_source.index)
-            if test_samples > 0:
-                mask.iloc[-test_samples:] = True
-
-        y_test = df_source.loc[mask, "EVENTOS"].astype(float)
-        if not y_test.empty:
-            pred = np.full(len(y_test), prediction_value)
-            residual = y_test.to_numpy() - pred
-            baseline_metadata["mae"] = float(np.mean(np.abs(residual)))
-            baseline_metadata["mse"] = float(np.mean(residual ** 2))
-            baseline_metadata["rmse"] = float(np.mean(residual ** 2) ** 0.5)
-            denom = float(np.sum((y_test.to_numpy() - y_test.mean()) ** 2))
-            baseline_metadata["r2"] = (
-                float(1 - np.sum(residual ** 2) / denom) if denom > 0 else 0.0
-            )
-
-    return baseline_metadata
-
-
-def build_operational_display_metadata(df_source, source_metadata):
-    if source_metadata is None:
-        return None
-    display_metadata = dict(source_metadata)
-    display_metadata["metrics_scope"] = "regression_only"
-    return display_metadata
-
-
-def build_classification_metadata(source_metadata):
-    if source_metadata is None:
-        return None
-    classification_metadata = dict(source_metadata)
-    classification_metadata["metrics_scope"] = "classification_only"
-    return classification_metadata
 
 
 def render_metric_explanations():
     st.markdown(
         """
         <div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-top: 1rem;">
-            <div style="font-weight: 700; color: var(--text); margin-bottom: 0.55rem;">Guia breve de metricas</div>
+            <div style="font-weight: 700; color: var(--text); margin-bottom: 0.55rem;">Guía breve de métricas</div>
             <div style="font-size: 0.78rem; line-height: 1.55; color: var(--text-muted);">
-                <p><strong>MAE:</strong> error absoluto medio. Indica cuantos eventos se equivoca el modelo en promedio.</p>
-                <p><strong>RMSE:</strong> raíz del error cuadrático medio. Penaliza más fuerte los errores grandes, en la misma escala que la variable objetivo.</p>
-                <p><strong>R2:</strong> mejora frente a usar una media historica. Cerca de 0 significa que el conteo diario sigue teniendo mucho ruido.</p>
-                <p><strong>ROC-AUC:</strong> capacidad de ordenar dias riesgosos sobre dias normales; 0.50 equivale a azar y 1.00 seria separacion perfecta.</p>
-                <p><strong>Brier:</strong> error de calibracion de probabilidades. Menor es mejor: castiga probabilidades confiadas que se equivocan.</p>
-                <p><strong>Matriz de confusion:</strong> TP = alerta correcta, TN = normal correcto, FP = falsa alerta, FN = alerta omitida.</p>
-                <p><strong>Accuracy:</strong> proporcion de aciertos totales. Formula: <code>(TP + TN) / (TP + TN + FP + FN)</code>.</p>
-                <p><strong>Precision:</strong> de las alertas emitidas, cuantas fueron correctas. Formula: <code>TP / (TP + FP)</code>.</p>
-                <p><strong>Recall:</strong> de los dias realmente criticos, cuantos detecto el modelo. Formula: <code>TP / (TP + FN)</code>.</p>
-                <p><strong>F1-Score:</strong> equilibrio entre precision y recall. Formula: <code>2 * Precision * Recall / (Precision + Recall)</code>.</p>
+                <p><strong>MAE:</strong> error absoluto medio, en llamados por día. Se compara con el promedio de los últimos 30 días, la referencia más simple posible.</p>
+                <p><strong>Mejora:</strong> cuántos llamados por día menos se equivoca el modelo que el promedio de 30 días.</p>
+                <p><strong>AUC (&gt;7):</strong> capacidad de ordenar los días con más de 7 llamados por sobre los demás; 0,50 equivale a azar y 1,00 sería separación perfecta.</p>
+                <p><strong>Brier:</strong> error de la probabilidad de más de 7 llamados, calibrada solo con días anteriores. Menor es mejor.</p>
+                <p><strong>Rango 80%:</strong> diferencia entre lo real y lo pronosticado dentro de la cual cayeron 8 de cada 10 días.</p>
+                <p><strong>Confianza:</strong> "Sí" cuando ese día del forecast le gana al promedio de 30 días con al menos 95% de probabilidad (bootstrap por bloques).</p>
             </div>
         </div>
         """,
@@ -2193,269 +1717,36 @@ with tab_stats:
     st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
     st.markdown('<div class="chart-title">Estadísticas del Modelo en Forecast</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="chart-subtitle">Desempeño y estructura del modelo oficial utilizado actualmente en el Forecast diario.</div>',
+        '<div class="chart-subtitle">Validación walk-forward del modelo oficial, día por día del '
+        'forecast, con el clima pronosticado con la anticipación real.</div>',
         unsafe_allow_html=True,
     )
-    stats_model_name = (
-        f"{format_model_name((metadata_aug or {}).get('validation_protocol', 'Modelo oficial'))}"
-        f"{model_algorithm_suffix(metadata_aug)} · OFICIAL"
+    st.info(
+        f"{model_metadata['description']} · {model_metadata['validation_protocol']} · "
+        f"validación del {model_metadata['test_start_date']} al {model_metadata['test_end_date']}."
     )
-    st.info("Ensemble hidrometeorológico validado con seis bloques temporales walk-forward de 120 días.")
-
-    col_stats_forecast = st.columns(1)[0]
-    with col_stats_forecast:
-        if metadata_aug is not None:
-            render_model_metrics(
-                metadata_aug,
-                stats_model_name,
-                "#e11d48",
-            )
-        else:
-            st.info("Métricas del modelo oficial no disponibles.")
-
+    render_horizon_table(model_metadata)
     render_metric_explanations()
 
     st.markdown(
         '<div class="chart-title" style="margin-top: 1.25rem;">Importancia de Variables</div>',
         unsafe_allow_html=True,
     )
-    col_imp_forecast = st.columns(1)[0]
-    with col_imp_forecast:
-        if df_imp_aug is not None and not df_imp_aug.empty:
-            render_importance_chart(
-                df_imp_aug,
-                f"Importancia · {stats_model_name}",
-                "#e11d48",
-                key="importance_forecast",
-            )
-        else:
-            st.info("No hay importancia de variables disponible.")
-
-
-if False:  # Vista comparativa antigua, conservada temporalmente como referencia.
-    with st.container():
-
-        st.markdown('<div class="importance-anchor"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="chart-title">Desempeño Comparativo e Importancia Relativa Completa de Variables</div>', unsafe_allow_html=True)
-        st.markdown('<div class="chart-subtitle">Comparación entre Modelo Climático, Modelo Climático con Inercia y Modelo Climático Aumentado.</div>', unsafe_allow_html=True)
-    col_met1, col_met2, col_met3 = st.columns(3)
-    with col_met1:
-        mae_base = float(metadata_base['mae'])
-        mse_base = float(metadata_base['mse'])
-        r2_base = float(metadata_base['r2']) * 100
-        thresh_base = float(metadata_base['classification_threshold'])
-        acc_base = float(metadata_base['accuracy']) * 100
-        prec_base = float(metadata_base['precision']) * 100
-        rec_base = float(metadata_base['recall']) * 100
-        f1_base = float(metadata_base['f1']) * 100
-        st.markdown(f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); border-bottom: 2px solid #3b82f6; padding-bottom: 0.4rem; margin-bottom: 0.8rem;">Métricas Modelo Climático</div>
-            <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; line-height: 1.6;">
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Absoluto Medio (MAE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mae_base:.2f} eventos</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Cuadrático Medio (MSE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mse_base:.2f}</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Coeficiente R² (Regresión)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{r2_base:.1f}%</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Umbral Clasificación Calibrado</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{thresh_base:.2f}</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Exactitud (Accuracy)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{acc_base:.1f}%</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Precisión (Precision)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{prec_base:.1f}%</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Sensibilidad (Recall)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{rec_base:.1f}%</td></tr>
-                <tr><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">F1-Score (Clasificador)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{f1_base:.1f}%</td></tr>
-            </table>
-        </div>""", unsafe_allow_html=True)
-    with col_met2:
-        mae_aug = float(metadata_aug['mae'])
-        mse_aug = float(metadata_aug['mse'])
-        r2_aug = float(metadata_aug['r2']) * 100
-        thresh_aug = float(metadata_aug['classification_threshold'])
-        acc_aug = float(metadata_aug['accuracy']) * 100
-        prec_aug = float(metadata_aug['precision']) * 100
-        rec_aug = float(metadata_aug['recall']) * 100
-        f1_aug = float(metadata_aug['f1']) * 100
-        st.markdown(f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); border-bottom: 2px solid #10b981; padding-bottom: 0.4rem; margin-bottom: 0.8rem;">Métricas Modelo Climático con Inercia</div>
-            <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; line-height: 1.6;">
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Absoluto Medio (MAE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mae_aug:.2f} eventos</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Cuadrático Medio (MSE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mse_aug:.2f}</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Coeficiente R² (Regresión)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{r2_aug:.1f}%</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Umbral Clasificación Calibrado</td><td style="text-align: right; color: #10b981; font-weight: 700; padding: 0.3rem 0;">{thresh_aug:.2f}</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Exactitud (Accuracy)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{acc_aug:.1f}%</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Precisión (Precision)</td><td style="text-align: right; color: #10b981; font-weight: 700; padding: 0.3rem 0;">{prec_aug:.1f}%</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Sensibilidad (Recall)</td><td style="text-align: right; color: #10b981; font-weight: 700; padding: 0.3rem 0;">{rec_aug:.1f}%</td></tr>
-                <tr><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">F1-Score (Clasificador)</td><td style="text-align: right; color: #10b981; font-weight: 700; padding: 0.3rem 0;">{f1_aug:.1f}%</td></tr>
-            </table>
-        </div>""", unsafe_allow_html=True)
-    with col_met3:
-        mae_v3 = float(metadata_v3['mae'])
-        mse_v3 = float(metadata_v3['mse'])
-        r2_v3 = float(metadata_v3['r2']) * 100
-        thresh_v3 = float(metadata_v3['classification_threshold'])
-        acc_v3 = float(metadata_v3['accuracy']) * 100
-        prec_v3 = float(metadata_v3['precision']) * 100
-        rec_v3 = float(metadata_v3['recall']) * 100
-        f1_v3 = float(metadata_v3['f1']) * 100
-        st.markdown(f"""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text); border-bottom: 2px solid #8b5cf6; padding-bottom: 0.4rem; margin-bottom: 0.8rem;">Métricas Climático Aumentado (Principal)</div>
-            <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; line-height: 1.6;">
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Absoluto Medio (MAE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mae_v3:.2f} eventos</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Error Cuadrático Medio (MSE)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{mse_v3:.2f}</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Coeficiente R² (Regresión)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{r2_v3:.1f}%</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Umbral Clasificación Calibrado</td><td style="text-align: right; color: #8b5cf6; font-weight: 700; padding: 0.3rem 0;">{thresh_v3:.2f}</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Exactitud (Accuracy)</td><td style="text-align: right; color: var(--text); font-weight: 700; padding: 0.3rem 0;">{acc_v3:.1f}%</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Precisión (Precision)</td><td style="text-align: right; color: #8b5cf6; font-weight: 700; padding: 0.3rem 0;">{prec_v3:.1f}%</td></tr>
-                <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);"><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">Sensibilidad (Recall)</td><td style="text-align: right; color: #8b5cf6; font-weight: 700; padding: 0.3rem 0;">{rec_v3:.1f}%</td></tr>
-                <tr><td style="color: var(--text-muted); font-weight: 500; padding: 0.3rem 0;">F1-Score (Clasificador)</td><td style="text-align: right; color: #8b5cf6; font-weight: 700; padding: 0.3rem 0;">{f1_v3:.1f}%</td></tr>
-            </table>
-        </div>""", unsafe_allow_html=True)
-    with st.expander("📖 Guía de Interpretación y Explicación de Métricas de Evaluación"):
-        st.markdown("""<div style="font-size: 0.78rem; line-height: 1.6; color: var(--text-muted); padding: 0.5rem;">
-            <p style="margin-top: 0px;"><strong>1. Métricas del Modelo de Regresión (¿Cuántas llamadas exactas ocurrirán hoy?):</strong></p>
-            <ul>
-                <li style="margin-bottom: 0.5rem;"><strong>Error Absoluto Medio (MAE):</strong> Desviación promedio esperada de la predicción. Un valor de 2.5 indica que, en promedio, el pronóstico del modelo acierta con una diferencia de <strong>&plusmn;2.5 eventos</strong> respecto a la realidad.</li>
-                <li style="margin-bottom: 0.5rem;"><strong>Error Cuadrático Medio (MSE):</strong> Promedio de los errores elevados al cuadrado. Al elevarlos al cuadrado, penaliza y destaca con mayor rigor las fallas graves de predicción.</li>
-                <li style="margin-bottom: 0.5rem;"><strong>Coeficiente R² (Regresión):</strong> Mide la mejora del modelo en comparación con usar un promedio histórico fijo.
-                <br/><em>¿Por qué es negativo o cercano a cero?</em> La demanda de emergencias de bomberos diaria posee una aleatoriedad intrínseca extrema. Un R² ligeramente negativo o muy bajo (-0.7% o -0.3%) en la evaluación indica que predecir el número puntual exacto tiene tanto "ruido" que el promedio histórico comete un error similar, lo que demuestra la dificultad de acertar el número exacto, aunque el modelo sea excelente en capturar tendencias y días críticos.</li>
-            </ul>
-            <p style="margin-top: 1rem;"><strong>2. Metricas del Modelo de Clasificacion (probabilidad de alerta por percentiles historicos):</strong></p>
-            <ul>
-                <li style="margin-bottom: 0.5rem;"><strong>Umbral de Clasificacion Calibrado:</strong> La comunicacion operacional usa percentiles historicos de probabilidad: <strong>Bajo bajo p33</strong>, <strong>Normal p33-p66</strong>, <strong>Alto sobre p66</strong> y <strong>Alerta sobre p80</strong>.</li>
-                <li style="margin-bottom: 0.5rem;"><strong>Exactitud (Accuracy):</strong> El porcentaje de días totales (tanto normales como críticos) en los que el clasificador del modelo acertó el estado de alerta correcto.</li>
-                <li style="margin-bottom: 0.5rem;"><strong>Precisión (Precision):</strong> De todos los días en los que el modelo emitió una alerta de día crítico, cuántos lo fueron realmente. Un 25% indica que 1 de cada 4 alertas preventivas es un día crítico real (tasa óptima y segura para logística de bomberos).</li>
-                <li style="margin-bottom: 0.5rem;"><strong>Sensibilidad (Recall):</strong> Qué porcentaje de los días críticos reales que ocurrieron logró anticipar y alertar el modelo. Un 70.4% significa que el modelo capta y advierte con éxito el 70% de las situaciones críticas reales.</li>
-                <li style="margin-bottom: 0.5rem;"><strong>F1-Score:</strong> Balance de equilibrio matemático entre la Precisión y la Sensibilidad. Es la métrica estándar más robusta para evaluar modelos con datos altamente desbalanceados.</li>
-            </ul>
-        </div>""", unsafe_allow_html=True)
-    col_imp1, col_imp2, col_imp3 = st.columns(3)
-    with col_imp1:
-        st.markdown('<div style="text-align: center; margin-bottom: 0.5rem; font-weight: 700; font-size: 0.85rem; color: var(--text); margin-top: 1rem;">Importancia Relativa - Modelo Climático</div>', unsafe_allow_html=True)
-        fig_imp = go.Figure()
-        fig_imp.add_trace(go.Bar(
-            y=df_imp_base['Feature'],
-            x=df_imp_base['Importance'] * 100,
-            orientation='h',
-            marker=dict(color='#3b82f6', line=dict(color='rgba(255,255,255,0.05)', width=1)),
-            hovertemplate='%{y}: %{x:.2f}% de importancia<extra></extra>',
-            text=[f"{val:.1f}%" for val in df_imp_base['Importance'] * 100],
-            textposition='outside',
-            textfont=dict(size=9, color="#fafafa" if IS_DARK else "#09090b")
-        ))
-        max_val_base = max(df_imp_base['Importance'] * 100)
-        layout_base = PLOT_LAYOUT.copy()
-        layout_base['xaxis'] = dict(
-            **PLOT_LAYOUT['xaxis'],
-            range=[0, max_val_base * 1.18]
-        )
-        fig_imp.update_layout(
-            **layout_base,
-            xaxis_title="Importancia Relativa (%)",
-            yaxis_title="Características",
-            height=750
-        )
-        st.plotly_chart(fig_imp, use_container_width=True, config={"displayModeBar": False}, key="stats_imp_base")
-    with col_imp2:
-        st.markdown('<div style="text-align: center; margin-bottom: 0.5rem; font-weight: 700; font-size: 0.85rem; color: var(--text); margin-top: 1rem;">Importancia Relativa - Modelo Climático con Inercia</div>', unsafe_allow_html=True)
-        fig_imp_agn = go.Figure()
-        fig_imp_agn.add_trace(go.Bar(
-            y=df_imp_aug['Feature'],
-            x=df_imp_aug['Importance'] * 100,
-            orientation='h',
-            marker=dict(color='#10b981', line=dict(color='rgba(255,255,255,0.05)', width=1)),
-            hovertemplate='%{y}: %{x:.2f}% de importancia<extra></extra>',
-            text=[f"{val:.1f}%" for val in df_imp_aug['Importance'] * 100],
-            textposition='outside',
-            textfont=dict(size=9, color="#fafafa" if IS_DARK else "#09090b")
-        ))
-        max_val_aug = max(df_imp_aug['Importance'] * 100)
-        layout_aug = PLOT_LAYOUT.copy()
-        layout_aug['xaxis'] = dict(
-            **PLOT_LAYOUT['xaxis'],
-            range=[0, max_val_aug * 1.18]
-        )
-        fig_imp_agn.update_layout(
-            **layout_aug,
-            xaxis_title="Importancia Relativa (%)",
-            yaxis_title="Características",
-            height=750
-        )
-        st.plotly_chart(fig_imp_agn, use_container_width=True, config={"displayModeBar": False}, key="stats_imp_agn")
-    with col_imp3:
-        st.markdown('<div style="text-align: center; margin-bottom: 0.5rem; font-weight: 700; font-size: 0.85rem; color: var(--text); margin-top: 1rem;">Importancia Relativa - Climático Aumentado (Principal)</div>', unsafe_allow_html=True)
-        fig_imp_v3 = go.Figure()
-        fig_imp_v3.add_trace(go.Bar(
-            y=df_imp_v3['Feature'],
-            x=df_imp_v3['Importance'] * 100,
-            orientation='h',
-            marker=dict(color='#8b5cf6', line=dict(color='rgba(255,255,255,0.05)', width=1)),
-            hovertemplate='%{y}: %{x:.2f}% de importancia<extra></extra>',
-            text=[f"{val:.1f}%" for val in df_imp_v3['Importance'] * 100],
-            textposition='outside',
-            textfont=dict(size=9, color="#fafafa" if IS_DARK else "#09090b")
-        ))
-        max_val_v3 = max(df_imp_v3['Importance'] * 100)
-        layout_v3 = PLOT_LAYOUT.copy()
-        layout_v3['xaxis'] = dict(
-            **PLOT_LAYOUT['xaxis'],
-            range=[0, max_val_v3 * 1.18]
-        )
-        fig_imp_v3.update_layout(
-            **layout_v3,
-            xaxis_title="Importancia Relativa (%)",
-            yaxis_title="Características",
-            height=750
-        )
-        st.plotly_chart(fig_imp_v3, use_container_width=True, config={"displayModeBar": False}, key="stats_imp_v3")
-    st.markdown("""<div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; margin-top: 1.5rem;">
-        <div style="font-weight: 700; font-size: 0.95rem; color: var(--text); margin-bottom: 0.8rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem;">📋 Glosario Completo y Explicación de las Variables de Entrada</div>
-        <div style="font-size: 0.78rem; line-height: 1.6; color: var(--text-muted);">
-            <div style="font-weight: 700; margin-top: 0.6rem; color: var(--text);">1. Métricas Operativas y Lags de Emergencias (Históricos):</div>
-            <ul style="margin: 0; padding-left: 1.2rem;">
-                <li style="margin-bottom: 0.4rem;"><strong>EVENTOS_lag_1, EVENTOS_lag_2, EVENTOS_lag_3, EVENTOS_lag_7:</strong> Cantidad total de despachos ocurridos hace 1, 2, 3 y 7 días respectivamente. Miden la correlación serial de corta distancia (el nivel basal inmediato del sistema).</li>
-                <li style="margin-bottom: 0.4rem;"><strong>EVENTOS_rolling_mean_3d, EVENTOS_rolling_mean_7d:</strong> Promedio diario móvil de incidentes en los últimos 3 y 7 días. Suaviza picos puntuales e indica el volumen de carga semanal del CBT.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>EVENTOS_rolling_std_3d, EVENTOS_rolling_std_7d:</strong> Desviación estándar (volatilidad) de los eventos de emergencias en las ventanas de 3 y 7 días. Ayuda a capturar la incertidumbre del comportamiento de la demanda reciente.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>EVENTOS_rolling_max_3d:</strong> Carga operativa máxima en un solo día durante las últimas 72 horas, detectando si venimos de un día atípicamente congestionado.</li>
-            </ul>
-            <div style="font-weight: 700; margin-top: 0.6rem; color: var(--text);">2. Lags Operativos por Tipo de Emergencia (Históricos):</div>
-            <ul style="margin: 0; padding-left: 1.2rem;">
-                <li style="margin-bottom: 0.4rem;"><strong>N_INCENDIO_ESTR_lag_1:</strong> Cantidad de llamados por incendios estructurales (edificaciones, viviendas) atendidos el día anterior.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>N_INCENDIO_FOREST_lag_1:</strong> Cantidad de incendios de cobertura forestal o pastizales forestales combatidos el día de ayer.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>N_RESCATE_VEH_lag_1:</strong> Cantidad de llamados por accidentes de tránsito y colisiones vehiculares registradas ayer.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>N_RESCATE_PERS_lag_1:</strong> Cantidad de llamados por rescate de personas atrapadas o en peligro físico ocurridos el día anterior.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>N_GASES_lag_1:</strong> Cantidad de llamados por emanación de gases atendidos el día anterior.</li>
-            </ul>
-            <div style="font-weight: 700; margin-top: 0.6rem; color: var(--text);">3. Variables Meteorológicas del Día Pronosticado:</div>
-            <ul style="margin: 0; padding-left: 1.2rem;">
-                <li style="margin-bottom: 0.4rem;"><strong>TEMP_MAX, TEMP_MEDIA, TEMP_MIN:</strong> Temperaturas máxima, media y mínima pronosticadas para el día objetivo. Las altas temperaturas veraniegas evaporan humedad de los combustibles forestales; las bajas invernales aumentan el uso de calefacción e incendios eléctricos.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>TEMP_SKEW / TEMP_KURT:</strong> Asimetría y curtosis de la temperatura calculadas sobre las 24 lecturas horarias. La asimetría mide si el perfil térmico intra-diario se sesga hacia calor o frío extremo, y la curtosis mide la volatilidad y apuntamiento térmico.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>HUM_MAX, HUM_MIN, HUM_MEDIA:</strong> Niveles de humedad relativa máxima, mínima y media pronosticados. La baja humedad relativa (&lt;30%) es clave en la regla del 30-30-30 de propagación de incendios.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>HUM_SKEW / HUM_KURT:</strong> Asimetría y curtosis de la humedad relativa calculadas sobre las 24 lecturas horarias. Explican la persistencia y velocidad de desecación del combustible fino forestal, indicando si la humedad cae de golpe o se mantiene persistentemente baja.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>VIENTO_MAX, VIENTO_MEDIO, WX_GUST_MAX, WX_GUST_MEAN:</strong> Velocidad sostenida máxima, promedio, ráfaga máxima y ráfaga media estimadas en km/h. La tarjeta de Forecast muestra la ráfaga media por separado; es uno de los factores de propagación y caídas de árboles más críticos en la península.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>VIENTO_SKEW / VIENTO_KURT:</strong> Asimetría y curtosis de la velocidad del viento calculadas sobre las 24 lecturas horarias. Capturan ráfagas o rachas extremas de viento de corta duración (picos de asimetría y colas anchas de curtosis) que las medias diarias ocultan por completo.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA:</strong> Cantidad total de precipitaciones proyectadas en milímetros (mm). Actúa como un supresor directo de incendios forestales pero incrementa accidentes y problemas en techos.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>Contribución al Coeficiente R² Positivo:</strong> Juntas, estas 6 variables de forma de los perfiles horarios meteorológicos acumulan el <strong>16.54%</strong> del peso total en el Modelo Climático con Inercia de Actividad. Al capturar la dinámica intra-diaria fina del clima, permiten que el modelo supere el ruido intrínseco y logre un R² de <strong>+1.3%</strong> en test (comparado con el -1.4% del modelo base).</li>
-            </ul>
-            <div style="font-weight: 700; margin-top: 0.6rem; color: var(--text);">4. Historial Meteorológico de Corto Plazo (Lags Climáticos):</div>
-            <ul style="margin: 0; padding-left: 1.2rem;">
-                <li style="margin-bottom: 0.4rem;"><strong>VIENTO_MEDIO_lag_1:</strong> Velocidad promedio del viento registrada el día anterior. Es el predictor individual con mayor peso en el algoritmo, debido a la persistencia del comportamiento atmosférico local.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>HUM_MEDIA_lag_1:</strong> Humedad relativa promedio del día anterior, capturando la desecación acumulada del suelo y aire.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_LAG_1D, LLUVIA_LAG_2D, LLUVIA_LAG_3D:</strong> Precipitación de ayer, hace 2 días y hace 3 días.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_TOTAL_3D_PREV:</strong> Lluvia total de los 3 días anteriores.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_PROMEDIO_7D_PREV:</strong> Promedio diario de lluvia durante los 7 días anteriores.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_MAX_30D_PREV:</strong> Mayor precipitación diaria registrada durante los 30 días anteriores.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>LLUVIA_DESV_30D_PREV:</strong> Variabilidad de la precipitación diaria durante los 30 días anteriores.</li>
-                <li style="margin-bottom: 0.4rem;"><strong>DIAS_SECOS_30D_PREV:</strong> Cantidad de días con lluvia menor o igual a 0.1 mm durante los 30 días anteriores.</li>
-            </ul>
-            <div style="font-weight: 700; margin-top: 0.6rem; color: var(--text);">5. Factores de Calendario y Ciclos Temporales (Descartados):</div>
-            <ul style="margin: 0; padding-left: 1.2rem;">
-                <li style="margin-bottom: 0.4rem;"><strong>MES, DIA_SEMANA, DANO_SIN, DANO_COS, etc.:</strong> *Nota: Estas variables de calendario y estacionalidad fija fueron descartadas por completo en favor de una aproximación puramente agnóstica basada en clima y lags de actividad, reduciendo el riesgo de sobreajuste y garantizando adaptabilidad al cambio climático.*</li>
-            </ul>
-        </div>
-    </div>""", unsafe_allow_html=True)
+    render_importance_chart(
+        df_importance,
+        "Importancia · modelo oficial",
+        "#e11d48",
+        key="importance_forecast",
+    )
 
 
 with tab_history:
     st.markdown('<div class="chart-anchor"></div>', unsafe_allow_html=True)
     st.markdown('<div class="chart-title">Histórico Real versus Predicción</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="chart-subtitle">Serie cronológica del modelo principal v0617. '
-        'Los filtros de año, mes y día de la semana pueden combinarse libremente.</div>',
+        '<div class="chart-subtitle">Llamados reales y predicción fuera de muestra del modelo oficial '
+        'en el período de validación walk-forward: cada día se predijo con un modelo que no lo vio al '
+        'entrenar. Los filtros de año, mes y día de la semana pueden combinarse libremente.</div>',
         unsafe_allow_html=True,
     )
     render_historical_chart()
@@ -2464,15 +1755,11 @@ with tab_history:
 
 with tab_seasonal:
     with st.container():
-        principal_variant = {
-            'full': 'Full',
-            'pruned': 'Optimizado',
-            'category_blend': 'Optimizado por categorías',
-        }.get(metadata_v3.get('selected_variant'), 'Principal')
         st.markdown('<div class="chart-anchor"></div>', unsafe_allow_html=True)
         st.markdown('<div class="chart-title">Curva Estacional del Modelo Principal</div>', unsafe_allow_html=True)
         st.markdown(
-            f'<div class="chart-subtitle">Eventos reales versus predicciones históricas del modelo {principal_variant} v0617, seleccionado automáticamente por desempeño.</div>',
+            '<div class="chart-subtitle">Llamados reales promedio por día del año (todo el histórico) '
+            'y predicción fuera de muestra del modelo oficial (período de validación).</div>',
             unsafe_allow_html=True,
         )
         render_seasonal_chart()

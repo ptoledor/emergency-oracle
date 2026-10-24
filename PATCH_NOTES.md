@@ -1,5 +1,15 @@
 # Patch Notes
 
+## 2026-10-23 - Dashboard con confianza por día del forecast
+
+- Forecast: cada tarjeta muestra el rango donde cayeron 8 de cada 10 días en la validación de ese día del forecast y la probabilidad calibrada de más de 7 llamados para ese día. Un día que no le gane al promedio de 30 días se marca "baja confianza" (hoy los seis lo superan). La CLI muestra lo mismo.
+
+- Histórico Diario, Estacional y distribuciones usan las predicciones fuera de muestra del walk-forward (2024-03-18 a 2026-04-16) en vez de las del modelo sobre sus propios datos de entrenamiento. El histórico agrega el MAE fuera de muestra.
+
+- Estadísticas de Modelo: tabla por día del forecast con MAE, MAE del promedio de 30 días, mejora, AUC, Brier, rango 80% y confianza; se eliminan la vista comparativa antigua (código inactivo con glosario desactualizado) y las lecturas de experimentos borrados.
+
+- Limpieza: `saved_models` versiona solo el modelo activo y los submodelos por categoría; se eliminan los pickles de `climatic_augmented`, `signal_xgb_d3_flexible` y `signal_hydro_ensemble_v2`, las clases de modelo que solo ellos usaban y la ruta de carga heredada. Verificado en navegador a escritorio y 390×844, sin errores de consola ni desborde horizontal.
+
 ## 2026-10-23 - Modelo reconstruido con evaluación honesta
 
 - Datos: `clean_and_augment.py` descarga una sola vez el clima horario de la Historical Forecast API (17 variables) y lo agrega con `features.aggregate_weather_daily`, igual que el forecast. El dataset trae todas las variables `WX_*`/`WX2_*` y ya no depende de `historical_forecast_features*.csv`. Los días sin cobertura quedan faltantes en el historial de llamados, al entrenar y al servir (antes se rellenaban con 0 al entrenar y con un promedio estacional al servir). Se elimina el conteo de la 5ta Compañía.
