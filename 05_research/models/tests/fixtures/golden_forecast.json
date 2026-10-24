@@ -1,0 +1,1118 @@
+{
+ "invierno_clima_real": {
+  "classification_threshold": 0.21000000000000002,
+  "umbral_alta_actividad": 7.0,
+  "days": [
+   {
+    "Fecha": "2025-06-10",
+    "FechaStr": "2025-06-10",
+    "Dia": "Martes",
+    "Prediccion": 4.8249714410305025,
+    "Lag_Mode": "observed",
+    "Lag_Age_Days": 1,
+    "Last_Observed_Date": "2025-06-09",
+    "Prob_Alta": 0.1570824812766429,
+    "Prob_RVehicular_Alto": 0.12521286600265724,
+    "Prob_Rescate_Alto": 0.12521286600265724,
+    "Prob_Incendio_Alto": 0.11148689392380498,
+    "Prob_Climaticas_Alto": 0.013502223010047667,
+    "Category_Composition": {
+     "baseline_total": 4.740018952972465,
+     "forecast_total": 4.8249714410305025,
+     "delta_total": 0.0849524880580379,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 0.88401187969953,
+       "share_total": 0.1832159817946457,
+       "baseline": 0.8849597858431345,
+       "delta": -0.0009479061436045155,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 1.8651268489467268,
+       "share_total": 0.386557075361337,
+       "baseline": 1.7266397836371807,
+       "delta": 0.13848706530954602,
+       "share_positive_delta": 0.47393079835071356
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.00551823648482195,
+       "share_total": 0.0011436827248128504,
+       "baseline": 0.21182730786651557,
+       "delta": -0.20630907138169363,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 2.070314475899424,
+       "share_total": 0.4290832601192045,
+       "baseline": 1.9165920756256336,
+       "delta": 0.15372240027379047,
+       "share_positive_delta": 0.5260692016492864
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.8616188764572144,
+    "Prob_5ta_Cia_Alta": 0.26131966710090637,
+    "Temp_Max": 12.7,
+    "Temp_Media": 7.608333333333333,
+    "Hum_Media": 83.83333333333333,
+    "Viento_Medio": 4.670833333333333,
+    "Rafaga_Media": 11.791666666666666,
+    "Lluvia": 0.0
+   },
+   {
+    "Fecha": "2025-06-11",
+    "FechaStr": "2025-06-11",
+    "Dia": "Miércoles",
+    "Prediccion": 8.263282541036604,
+    "Lag_Mode": "observed",
+    "Lag_Age_Days": 1,
+    "Last_Observed_Date": "2025-06-09",
+    "Prob_Alta": 0.5165921063793857,
+    "Prob_RVehicular_Alto": 0.1445600608168216,
+    "Prob_Rescate_Alto": 0.1445600608168216,
+    "Prob_Incendio_Alto": 0.07676510881974596,
+    "Prob_Climaticas_Alto": 0.28390311007720503,
+    "Category_Composition": {
+     "baseline_total": 4.8867415915188275,
+     "forecast_total": 8.263282541036604,
+     "delta_total": 3.3765409495177767,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 1.0192620358305744,
+       "share_total": 0.12334832202200254,
+       "baseline": 0.7810953629554702,
+       "delta": 0.23816667287510418,
+       "share_positive_delta": 0.07053569805191258
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 2.4548523866154848,
+       "share_total": 0.2970795654661871,
+       "baseline": 1.848584920626055,
+       "delta": 0.6062674659894298,
+       "share_positive_delta": 0.17955282493346164
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 2.0850814208383284,
+       "share_total": 0.2523308879350943,
+       "baseline": 0.22079471985864826,
+       "delta": 1.8642867009796802,
+       "share_positive_delta": 0.5521291549110131
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 2.704086697752217,
+       "share_total": 0.32724122457671617,
+       "baseline": 2.0362665880786537,
+       "delta": 0.6678201096735634,
+       "share_positive_delta": 0.1977823221036127
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.5197439193725586,
+    "Prob_5ta_Cia_Alta": 0.17676642537117004,
+    "Temp_Max": 13.7,
+    "Temp_Media": 11.8125,
+    "Hum_Media": 84.29166666666667,
+    "Viento_Medio": 28.650000000000002,
+    "Rafaga_Media": 57.7875,
+    "Lluvia": 12.799999999999999
+   },
+   {
+    "Fecha": "2025-06-12",
+    "FechaStr": "2025-06-12",
+    "Dia": "Jueves",
+    "Prediccion": 4.635017439126968,
+    "Lag_Mode": "observed",
+    "Lag_Age_Days": 1,
+    "Last_Observed_Date": "2025-06-09",
+    "Prob_Alta": 0.14472529736391856,
+    "Prob_RVehicular_Alto": 0.10937730830344919,
+    "Prob_Rescate_Alto": 0.10937730830344919,
+    "Prob_Incendio_Alto": 0.09784557435467976,
+    "Prob_Climaticas_Alto": 0.10295752333188134,
+    "Category_Composition": {
+     "baseline_total": 4.816118585218646,
+     "forecast_total": 4.635017439126968,
+     "delta_total": -0.18110114609167827,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 0.6024752934971801,
+       "share_total": 0.12998339303134526,
+       "baseline": 0.814647154878178,
+       "delta": -0.21217186138099786,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 1.7925810478659008,
+       "share_total": 0.3867474225088447,
+       "baseline": 1.9297722980181407,
+       "delta": -0.13719125015223987,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.5286686242376692,
+       "share_total": 0.11405968395606447,
+       "baseline": 0.22943665099719615,
+       "delta": 0.2992319732404731,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.7112924735262183,
+       "share_total": 0.3692095005037457,
+       "baseline": 1.8422624813251312,
+       "delta": -0.13097000779891288,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.6598711013793945,
+    "Prob_5ta_Cia_Alta": 0.21952930092811584,
+    "Temp_Max": 11.3,
+    "Temp_Media": 10.458333333333334,
+    "Hum_Media": 89.70833333333333,
+    "Viento_Medio": 13.2125,
+    "Rafaga_Media": 28.195833333333336,
+    "Lluvia": 18.900000000000002
+   },
+   {
+    "Fecha": "2025-06-13",
+    "FechaStr": "2025-06-13",
+    "Dia": "Viernes",
+    "Prediccion": 4.6564732825756066,
+    "Lag_Mode": "observed",
+    "Lag_Age_Days": 1,
+    "Last_Observed_Date": "2025-06-09",
+    "Prob_Alta": 0.14607954268503498,
+    "Prob_RVehicular_Alto": 0.12697255906088803,
+    "Prob_Rescate_Alto": 0.12697255906088803,
+    "Prob_Incendio_Alto": 0.08705744209682646,
+    "Prob_Climaticas_Alto": 0.02296321498876271,
+    "Category_Composition": {
+     "baseline_total": 5.255864958538667,
+     "forecast_total": 4.6564732825756066,
+     "delta_total": -0.5993916759630604,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 0.7743610867396706,
+       "share_total": 0.16629776222217538,
+       "baseline": 0.9196501458020889,
+       "delta": -0.1452890590624183,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 2.0062247138190497,
+       "share_total": 0.43084639212390347,
+       "baseline": 2.1333007716901697,
+       "delta": -0.12707605787112008,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.007506733210775979,
+       "share_total": 0.0016121070078649363,
+       "baseline": 0.2161883937226206,
+       "delta": -0.20868166051184464,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.8683807488061104,
+       "share_total": 0.4012437386460563,
+       "baseline": 1.986725647323788,
+       "delta": -0.1183448985176776,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.6518352031707764,
+    "Prob_5ta_Cia_Alta": 0.2428915947675705,
+    "Temp_Max": 11.8,
+    "Temp_Media": 9.683333333333334,
+    "Hum_Media": 87.5,
+    "Viento_Medio": 10.666666666666666,
+    "Rafaga_Media": 22.0125,
+    "Lluvia": 1.3
+   },
+   {
+    "Fecha": "2025-06-14",
+    "FechaStr": "2025-06-14",
+    "Dia": "Sábado",
+    "Prediccion": 10.531399114131926,
+    "Lag_Mode": "observed",
+    "Lag_Age_Days": 1,
+    "Last_Observed_Date": "2025-06-09",
+    "Prob_Alta": 0.7717964967048608,
+    "Prob_RVehicular_Alto": 0.10501715676547814,
+    "Prob_Rescate_Alto": 0.10501715676547814,
+    "Prob_Incendio_Alto": 0.08322559554612065,
+    "Prob_Climaticas_Alto": 0.4681969456529525,
+    "Category_Composition": {
+     "baseline_total": 4.770030422579296,
+     "forecast_total": 10.531399114131926,
+     "delta_total": 5.761368691552629,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 0.9817086750596952,
+       "share_total": 0.09321730801583192,
+       "baseline": 0.9290622108730472,
+       "delta": 0.05264646418664798,
+       "share_positive_delta": 0.009137839809460329
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 2.198553183331916,
+       "share_total": 0.20876173806590526,
+       "baseline": 1.9185654163061647,
+       "delta": 0.2799877670257511,
+       "share_positive_delta": 0.04859743960428565
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 5.3668977143388465,
+       "share_total": 0.5096091845134886,
+       "baseline": 0.19085798190109934,
+       "delta": 5.176039732437747,
+       "share_positive_delta": 0.8984045301643172
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.9842395414014686,
+       "share_total": 0.1884117694047743,
+       "baseline": 1.7315448134989853,
+       "delta": 0.2526947279024834,
+       "share_positive_delta": 0.04386019042193683
+      }
+     }
+    },
+    "Pred_5ta_Cia": 2.2531445026397705,
+    "Prob_5ta_Cia_Alta": 0.3382001519203186,
+    "Temp_Max": 12.1,
+    "Temp_Media": 11.012500000000001,
+    "Hum_Media": 85.0,
+    "Viento_Medio": 35.637499999999996,
+    "Rafaga_Media": 68.20833333333333,
+    "Lluvia": 37.2
+   },
+   {
+    "Fecha": "2025-06-15",
+    "FechaStr": "2025-06-15",
+    "Dia": "Domingo",
+    "Prediccion": 17.12068900346756,
+    "Lag_Mode": "observed",
+    "Lag_Age_Days": 1,
+    "Last_Observed_Date": "2025-06-09",
+    "Prob_Alta": 0.9897026135311616,
+    "Prob_RVehicular_Alto": 0.0847873067104453,
+    "Prob_Rescate_Alto": 0.0847873067104453,
+    "Prob_Incendio_Alto": 0.07644610135860767,
+    "Prob_Climaticas_Alto": 0.6869808028372925,
+    "Category_Composition": {
+     "baseline_total": 4.468822882134104,
+     "forecast_total": 17.12068900346756,
+     "delta_total": 12.651866121333457,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 0.7428945883880891,
+       "share_total": 0.04339162917086024,
+       "baseline": 0.9884555074102658,
+       "delta": -0.2455609190221767,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 1.7084132799396168,
+       "share_total": 0.09978647936386212,
+       "baseline": 1.6716853082951952,
+       "delta": 0.03672797164442154,
+       "share_positive_delta": 0.002847697570182092
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 13.033539989390631,
+       "share_total": 0.761274268036226,
+       "baseline": 0.20800871521797495,
+       "delta": 12.825531274172656,
+       "share_positive_delta": 0.9944255729489287
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.635841145749223,
+       "share_total": 0.09554762342905158,
+       "baseline": 1.600673351210668,
+       "delta": 0.03516779453855512,
+       "share_positive_delta": 0.0027267294808891902
+      }
+     }
+    },
+    "Pred_5ta_Cia": 2.3128178119659424,
+    "Prob_5ta_Cia_Alta": 0.3877972960472107,
+    "Temp_Max": 13.9,
+    "Temp_Media": 12.25,
+    "Hum_Media": 92.45833333333333,
+    "Viento_Medio": 18.0,
+    "Rafaga_Media": 42.2875,
+    "Lluvia": 52.9
+   }
+  ]
+ },
+ "verano_fallback": {
+  "classification_threshold": 0.21000000000000002,
+  "umbral_alta_actividad": 7.0,
+  "days": [
+   {
+    "Fecha": "2026-01-15",
+    "FechaStr": "2026-01-15",
+    "Dia": "Jueves",
+    "Prediccion": 5.158667820692061,
+    "Lag_Mode": "observed",
+    "Lag_Age_Days": 1,
+    "Last_Observed_Date": "2026-01-14",
+    "Prob_Alta": 0.1808503443322476,
+    "Prob_RVehicular_Alto": 0.12773408283890686,
+    "Prob_Rescate_Alto": 0.12773408283890686,
+    "Prob_Incendio_Alto": 0.19890981210186331,
+    "Prob_Climaticas_Alto": 0.016581476652004885,
+    "Category_Composition": {
+     "baseline_total": 5.256868457678422,
+     "forecast_total": 5.158667820692061,
+     "delta_total": -0.09820063698636083,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 1.2390923148357817,
+       "share_total": 0.24019618201924683,
+       "baseline": 1.3373601416581418,
+       "delta": -0.09826782682236002,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 2.054574615306146,
+       "share_total": 0.3982761997322236,
+       "baseline": 1.9984497069832776,
+       "delta": 0.05612490832286854,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.005284623593935295,
+       "share_total": 0.001024416337244668,
+       "baseline": 0.112144296028781,
+       "delta": -0.1068596724348457,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.8597162669561975,
+       "share_total": 0.36050320191128477,
+       "baseline": 1.8089143130082215,
+       "delta": 0.05080195394797604,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.4144119024276733,
+    "Prob_5ta_Cia_Alta": 0.20882901549339294,
+    "Temp_Max": 19.720833333333335,
+    "Temp_Media": 16.970833333333335,
+    "Hum_Media": 66.08333333333333,
+    "Viento_Medio": 17.45,
+    "Rafaga_Media": 26.174999999999997,
+    "Lluvia": 0.0
+   },
+   {
+    "Fecha": "2026-01-16",
+    "FechaStr": "2026-01-16",
+    "Dia": "Viernes",
+    "Prediccion": 5.718787394762039,
+    "Lag_Mode": "observed",
+    "Lag_Age_Days": 1,
+    "Last_Observed_Date": "2026-01-14",
+    "Prob_Alta": 0.2268675394701123,
+    "Prob_RVehicular_Alto": 0.10859341414845061,
+    "Prob_Rescate_Alto": 0.10859341414845061,
+    "Prob_Incendio_Alto": 0.20771061309176267,
+    "Prob_Climaticas_Alto": 0.025503109221234447,
+    "Category_Composition": {
+     "baseline_total": 5.7837124189495785,
+     "forecast_total": 5.718787394762039,
+     "delta_total": -0.06492502418753965,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 1.6885432644024905,
+       "share_total": 0.2952624652472767,
+       "baseline": 1.5150628525830054,
+       "delta": 0.17348041181948504,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 2.135477367271746,
+       "share_total": 0.3734143656446603,
+       "baseline": 2.2095544760230945,
+       "delta": -0.07407710875134832,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.006799194375779861,
+       "share_total": 0.0011889223897372703,
+       "baseline": 0.1056362263127074,
+       "delta": -0.09883703193692754,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.8879675687120219,
+       "share_total": 0.3301342467183257,
+       "baseline": 1.953458864030771,
+       "delta": -0.0654912953187492,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.446101427078247,
+    "Prob_5ta_Cia_Alta": 0.19613896310329437,
+    "Temp_Max": 22.479166666666664,
+    "Temp_Media": 17.679166666666667,
+    "Hum_Media": 59.54166666666666,
+    "Viento_Medio": 18.441666666666663,
+    "Rafaga_Media": 27.662499999999994,
+    "Lluvia": 0.0
+   },
+   {
+    "Fecha": "2026-01-17",
+    "FechaStr": "2026-01-17",
+    "Dia": "Sábado",
+    "Prediccion": 5.3917007875442495,
+    "Lag_Mode": "observed",
+    "Lag_Age_Days": 1,
+    "Last_Observed_Date": "2026-01-14",
+    "Prob_Alta": 0.19905234146376158,
+    "Prob_RVehicular_Alto": 0.10531339653993559,
+    "Prob_Rescate_Alto": 0.10531339653993559,
+    "Prob_Incendio_Alto": 0.19134279408405283,
+    "Prob_Climaticas_Alto": 0.04720590345711593,
+    "Category_Composition": {
+     "baseline_total": 5.321431607262325,
+     "forecast_total": 5.3917007875442495,
+     "delta_total": 0.07026918028192419,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 1.7535207311326106,
+       "share_total": 0.3252258981402572,
+       "baseline": 1.5358521457661145,
+       "delta": 0.21766858536649614,
+       "share_positive_delta": 1.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 1.9550919415002228,
+       "share_total": 0.3626113574434285,
+       "baseline": 1.9874319318955758,
+       "delta": -0.03233999039535296,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.005923620708640401,
+       "share_total": 0.0010986553115716244,
+       "baseline": 0.09324035870700007,
+       "delta": -0.08731673799835966,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.677164494202776,
+       "share_total": 0.3110640891047427,
+       "baseline": 1.704907170893635,
+       "delta": -0.02774267669085906,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.331282138824463,
+    "Prob_5ta_Cia_Alta": 0.18975353240966797,
+    "Temp_Max": 22.275000000000002,
+    "Temp_Media": 18.225,
+    "Hum_Media": 64.33333333333333,
+    "Viento_Medio": 22.02083333333333,
+    "Rafaga_Media": 33.03124999999999,
+    "Lluvia": 0.0
+   },
+   {
+    "Fecha": "2026-01-18",
+    "FechaStr": "2026-01-18",
+    "Dia": "Domingo",
+    "Prediccion": 6.059467475414276,
+    "Lag_Mode": "observed",
+    "Lag_Age_Days": 1,
+    "Last_Observed_Date": "2026-01-14",
+    "Prob_Alta": 0.25864261814873046,
+    "Prob_RVehicular_Alto": 0.10235325956019262,
+    "Prob_Rescate_Alto": 0.10235325956019262,
+    "Prob_Incendio_Alto": 0.21591033952950067,
+    "Prob_Climaticas_Alto": 0.15509638325606748,
+    "Category_Composition": {
+     "baseline_total": 5.051326141431249,
+     "forecast_total": 6.059467475414276,
+     "delta_total": 1.0081413339830263,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 2.0209236286634793,
+       "share_total": 0.3335150550544563,
+       "baseline": 1.6395525230147483,
+       "delta": 0.381371105648731,
+       "share_positive_delta": 0.3467311607505871
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 2.1078799317093857,
+       "share_total": 0.3478655410334179,
+       "baseline": 1.7319316482685763,
+       "delta": 0.37594828344080944,
+       "share_positive_delta": 0.3418008935886365
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.009846724846307676,
+       "share_total": 0.0016250148855918188,
+       "baseline": 0.10160972257421585,
+       "delta": -0.09176299772790818,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.9208171901951028,
+       "share_total": 0.316994389026534,
+       "baseline": 1.578232247573709,
+       "delta": 0.34258494262139383,
+       "share_positive_delta": 0.3114679456607764
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.5098285675048828,
+    "Prob_5ta_Cia_Alta": 0.16516345739364624,
+    "Temp_Max": 25.304166666666667,
+    "Temp_Media": 20.454166666666666,
+    "Hum_Media": 45.0,
+    "Viento_Medio": 17.75,
+    "Rafaga_Media": 26.625,
+    "Lluvia": 0.0
+   },
+   {
+    "Fecha": "2026-01-19",
+    "FechaStr": "2026-01-19",
+    "Dia": "Lunes",
+    "Prediccion": 4.837358708381652,
+    "Lag_Mode": "observed",
+    "Lag_Age_Days": 1,
+    "Last_Observed_Date": "2026-01-14",
+    "Prob_Alta": 0.15791740373288124,
+    "Prob_RVehicular_Alto": 0.10761757488141849,
+    "Prob_Rescate_Alto": 0.10761757488141849,
+    "Prob_Incendio_Alto": 0.1719353688195656,
+    "Prob_Climaticas_Alto": 0.013712122897417483,
+    "Category_Composition": {
+     "baseline_total": 5.235366281348543,
+     "forecast_total": 4.837358708381652,
+     "delta_total": -0.3980075729668906,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 1.287541396355098,
+       "share_total": 0.2661662022550003,
+       "baseline": 1.4448010502985984,
+       "delta": -0.1572596539435005,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 1.680402145646364,
+       "share_total": 0.3473800987168359,
+       "baseline": 1.751456424635078,
+       "delta": -0.07105427898871386,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.004697063038594227,
+       "share_total": 0.0009709974640614648,
+       "baseline": 0.09554279116515156,
+       "delta": -0.09084572812655733,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.864718103341596,
+       "share_total": 0.38548270156410236,
+       "baseline": 1.9435660152497152,
+       "delta": -0.07884791190811913,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 0.8626548051834106,
+    "Prob_5ta_Cia_Alta": 0.10826914757490158,
+    "Temp_Max": 20.766666666666666,
+    "Temp_Media": 16.566666666666666,
+    "Hum_Media": 76.95833333333333,
+    "Viento_Medio": 9.504166666666666,
+    "Rafaga_Media": 14.25625,
+    "Lluvia": 0.0
+   },
+   {
+    "Fecha": "2026-01-20",
+    "FechaStr": "2026-01-20",
+    "Dia": "Martes",
+    "Prediccion": 4.956902633905409,
+    "Lag_Mode": "observed",
+    "Lag_Age_Days": 1,
+    "Last_Observed_Date": "2026-01-14",
+    "Prob_Alta": 0.16616093547162963,
+    "Prob_RVehicular_Alto": 0.10246147456120304,
+    "Prob_Rescate_Alto": 0.10246147456120304,
+    "Prob_Incendio_Alto": 0.28764557790378337,
+    "Prob_Climaticas_Alto": 0.012037781009865585,
+    "Category_Composition": {
+     "baseline_total": 5.230987600676655,
+     "forecast_total": 4.956902633905409,
+     "delta_total": -0.2740849667712455,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 1.0469205648453583,
+       "share_total": 0.21120458523521934,
+       "baseline": 1.4529284849933792,
+       "delta": -0.4060079201480209,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 1.900203651710568,
+       "share_total": 0.38334496197546836,
+       "baseline": 1.7878001208346932,
+       "delta": 0.11240353087587485,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.005203477538907294,
+       "share_total": 0.0010497437458858486,
+       "baseline": 0.10426150379575812,
+       "delta": -0.09905802625685083,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 2.0045749398105763,
+       "share_total": 0.40440070904342656,
+       "baseline": 1.885997491052824,
+       "delta": 0.11857744875775222,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.371438980102539,
+    "Prob_5ta_Cia_Alta": 0.19742166996002197,
+    "Temp_Max": 17.804166666666667,
+    "Temp_Media": 14.354166666666666,
+    "Hum_Media": 84.16666666666667,
+    "Viento_Medio": 9.379166666666666,
+    "Rafaga_Media": 14.06875,
+    "Lluvia": 0.0
+   }
+  ]
+ },
+ "datos_vencidos_fallback": {
+  "classification_threshold": 0.21000000000000002,
+  "umbral_alta_actividad": 7.0,
+  "days": [
+   {
+    "Fecha": "2026-10-23",
+    "FechaStr": "2026-10-23",
+    "Dia": "Viernes",
+    "Prediccion": 4.478928304314613,
+    "Lag_Mode": "historical_baseline",
+    "Lag_Age_Days": 190,
+    "Last_Observed_Date": "2026-04-16",
+    "Prob_Alta": 0.13518507335576424,
+    "Prob_RVehicular_Alto": 0.1231701373359103,
+    "Prob_Rescate_Alto": 0.1231701373359103,
+    "Prob_Incendio_Alto": 0.2170104118375096,
+    "Prob_Climaticas_Alto": 0.012599535620837023,
+    "Category_Composition": {
+     "baseline_total": 4.990247628113765,
+     "forecast_total": 4.478928304314613,
+     "delta_total": -0.5113193237991513,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 0.5801516014565238,
+       "share_total": 0.1295291109923898,
+       "baseline": 0.9989514791306369,
+       "delta": -0.4187998776741131,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 2.139461864151376,
+       "share_total": 0.477672719630364,
+       "baseline": 2.1179833080408845,
+       "delta": 0.021478556110491542,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.004782376130542541,
+       "share_total": 0.001067750096811242,
+       "baseline": 0.1363945385324963,
+       "delta": -0.13161216240195375,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.7545324625761718,
+       "share_total": 0.3917304192804351,
+       "baseline": 1.7369183024097465,
+       "delta": 0.017614160166425252,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.3397835493087769,
+    "Prob_5ta_Cia_Alta": 0.18565919995307922,
+    "Temp_Max": 14.660416666666668,
+    "Temp_Media": 12.310416666666669,
+    "Hum_Media": 75.875,
+    "Viento_Medio": 13.100000000000001,
+    "Rafaga_Media": 19.650000000000002,
+    "Lluvia": 0.0
+   },
+   {
+    "Fecha": "2026-10-24",
+    "FechaStr": "2026-10-24",
+    "Dia": "Sábado",
+    "Prediccion": 3.867338814735413,
+    "Lag_Mode": "historical_baseline",
+    "Lag_Age_Days": 190,
+    "Last_Observed_Date": "2026-04-16",
+    "Prob_Alta": 0.10279683272802143,
+    "Prob_RVehicular_Alto": 0.1255680719648016,
+    "Prob_Rescate_Alto": 0.1255680719648016,
+    "Prob_Incendio_Alto": 0.20966217609957152,
+    "Prob_Climaticas_Alto": 0.012394398975399006,
+    "Category_Composition": {
+     "baseline_total": 4.554963902881546,
+     "forecast_total": 3.867338814735413,
+     "delta_total": -0.6876250881461332,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 0.5603304200195787,
+       "share_total": 0.14488785360222287,
+       "baseline": 1.0144483981664698,
+       "delta": -0.45411797814689114,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 1.8395612970622,
+       "share_total": 0.4756659256367883,
+       "baseline": 1.9053802832763584,
+       "delta": -0.06581898621415849,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.004570822015249268,
+       "share_total": 0.0011819036899051692,
+       "baseline": 0.11991764378825438,
+       "delta": -0.11534682177300512,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.4628762756383853,
+       "share_total": 0.3782643170710837,
+       "baseline": 1.5152175776504633,
+       "delta": -0.052341302012077984,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.3360326290130615,
+    "Prob_5ta_Cia_Alta": 0.17182756960391998,
+    "Temp_Max": 15.152083333333334,
+    "Temp_Media": 11.977083333333333,
+    "Hum_Media": 80.4375,
+    "Viento_Medio": 16.443749999999998,
+    "Rafaga_Media": 24.665624999999995,
+    "Lluvia": 0.0
+   },
+   {
+    "Fecha": "2026-10-25",
+    "FechaStr": "2026-10-25",
+    "Dia": "Domingo",
+    "Prediccion": 3.976832073926926,
+    "Lag_Mode": "historical_baseline",
+    "Lag_Age_Days": 190,
+    "Last_Observed_Date": "2026-04-16",
+    "Prob_Alta": 0.10804087643065924,
+    "Prob_RVehicular_Alto": 0.12448670234169898,
+    "Prob_Rescate_Alto": 0.12448670234169898,
+    "Prob_Incendio_Alto": 0.20999836039891917,
+    "Prob_Climaticas_Alto": 0.01268978188482818,
+    "Category_Composition": {
+     "baseline_total": 4.277803436789773,
+     "forecast_total": 3.976832073926926,
+     "delta_total": -0.300971362862847,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 0.6816150771053041,
+       "share_total": 0.17139649460537637,
+       "baseline": 1.084922087891434,
+       "delta": -0.40330701078612996,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 1.7839256549502263,
+       "share_total": 0.44857957836491885,
+       "baseline": 1.6607074462362712,
+       "delta": 0.12321820871395506,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.005258914577208127,
+       "share_total": 0.0013223878905239284,
+       "baseline": 0.13016521505758066,
+       "delta": -0.12490630048037253,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.506032427294187,
+       "share_total": 0.3787015391391807,
+       "baseline": 1.4020086876044873,
+       "delta": 0.10402373968969969,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.3409521579742432,
+    "Prob_5ta_Cia_Alta": 0.17338088154792786,
+    "Temp_Max": 16.364583333333336,
+    "Temp_Media": 12.339583333333335,
+    "Hum_Media": 74.20833333333334,
+    "Viento_Medio": 15.185416666666663,
+    "Rafaga_Media": 22.778125,
+    "Lluvia": 0.0
+   },
+   {
+    "Fecha": "2026-10-26",
+    "FechaStr": "2026-10-26",
+    "Dia": "Lunes",
+    "Prediccion": 4.013709412813187,
+    "Lag_Mode": "historical_baseline",
+    "Lag_Age_Days": 190,
+    "Last_Observed_Date": "2026-04-16",
+    "Prob_Alta": 0.10985932655100242,
+    "Prob_RVehicular_Alto": 0.11217984520255589,
+    "Prob_Rescate_Alto": 0.11217984520255589,
+    "Prob_Incendio_Alto": 0.23481973616414037,
+    "Prob_Climaticas_Alto": 0.012637114076558794,
+    "Category_Composition": {
+     "baseline_total": 4.485279475568257,
+     "forecast_total": 4.013709412813187,
+     "delta_total": -0.4715700627550703,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 0.6179343710647297,
+       "share_total": 0.15395593141149272,
+       "baseline": 0.9578545224684789,
+       "delta": -0.3399201514037492,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 1.6725063405613607,
+       "share_total": 0.41669841250144474,
+       "baseline": 1.6797168466851096,
+       "delta": -0.00721050612374885,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.0048746584662113825,
+       "share_total": 0.0012145020889279478,
+       "baseline": 0.12190572659660168,
+       "delta": -0.1170310681303903,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.7183940427208853,
+       "share_total": 0.42813115399813473,
+       "baseline": 1.725802379818067,
+       "delta": -0.007408337097181805,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.2849029302597046,
+    "Prob_5ta_Cia_Alta": 0.14965011179447174,
+    "Temp_Max": 16.96875,
+    "Temp_Media": 13.46875,
+    "Hum_Media": 78.10416666666666,
+    "Viento_Medio": 15.458333333333334,
+    "Rafaga_Media": 23.1875,
+    "Lluvia": 0.0
+   },
+   {
+    "Fecha": "2026-10-27",
+    "FechaStr": "2026-10-27",
+    "Dia": "Martes",
+    "Prediccion": 3.9454583775997167,
+    "Lag_Mode": "historical_baseline",
+    "Lag_Age_Days": 190,
+    "Last_Observed_Date": "2026-04-16",
+    "Prob_Alta": 0.10651469405574789,
+    "Prob_RVehicular_Alto": 0.11284113082378837,
+    "Prob_Rescate_Alto": 0.11284113082378837,
+    "Prob_Incendio_Alto": 0.2258431024204288,
+    "Prob_Climaticas_Alto": 0.012409044467137375,
+    "Category_Composition": {
+     "baseline_total": 4.486466926377463,
+     "forecast_total": 3.9454583775997167,
+     "delta_total": -0.5410085487777461,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 0.568934852773369,
+       "share_total": 0.14419993783320295,
+       "baseline": 0.9651157703635688,
+       "delta": -0.3961809175901998,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 1.7061658939262623,
+       "share_total": 0.43243794019295567,
+       "baseline": 1.714870832258971,
+       "delta": -0.00870493833270869,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.004870822917683225,
+       "share_total": 0.001234539171756887,
+       "baseline": 0.13249612404230418,
+       "delta": -0.12762530112462095,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.6654868079824026,
+       "share_total": 0.42212758280208457,
+       "baseline": 1.673984199712619,
+       "delta": -0.008497391730216464,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.322748064994812,
+    "Prob_5ta_Cia_Alta": 0.19577279686927795,
+    "Temp_Max": 16.15833333333333,
+    "Temp_Media": 13.033333333333333,
+    "Hum_Media": 82.77083333333333,
+    "Viento_Medio": 13.852083333333333,
+    "Rafaga_Media": 20.778125,
+    "Lluvia": 0.1
+   },
+   {
+    "Fecha": "2026-10-28",
+    "FechaStr": "2026-10-28",
+    "Dia": "Miércoles",
+    "Prediccion": 4.134961926937103,
+    "Lag_Mode": "historical_baseline",
+    "Lag_Age_Days": 190,
+    "Last_Observed_Date": "2026-04-16",
+    "Prob_Alta": 0.1160285411051235,
+    "Prob_RVehicular_Alto": 0.11880219734922107,
+    "Prob_Rescate_Alto": 0.11880219734922107,
+    "Prob_Incendio_Alto": 0.1978575300131225,
+    "Prob_Climaticas_Alto": 0.012869249508397441,
+    "Category_Composition": {
+     "baseline_total": 4.610703355154902,
+     "forecast_total": 4.134961926937103,
+     "delta_total": -0.4757414282177992,
+     "groups": {
+      "incendios": {
+       "label": "Incendios",
+       "count": 0.5796072872064647,
+       "share_total": 0.14017233953972538,
+       "baseline": 0.856404485765526,
+       "delta": -0.27679719855906126,
+       "share_positive_delta": 0.0
+      },
+      "rescates": {
+       "label": "Rescates",
+       "count": 1.7971125111969994,
+       "share_total": 0.43461404069763165,
+       "baseline": 1.8365665446715156,
+       "delta": -0.03945403347451615,
+       "share_positive_delta": 0.0
+      },
+      "climaticas": {
+       "label": "Climáticas",
+       "count": 0.01628001397667827,
+       "share_total": 0.003937161759730492,
+       "baseline": 0.1375269554114843,
+       "delta": -0.12124694143480602,
+       "share_positive_delta": 0.0
+      },
+      "otros": {
+       "label": "Otros",
+       "count": 1.7419621145569606,
+       "share_total": 0.4212764580029125,
+       "baseline": 1.7802053693063764,
+       "delta": -0.03824325474941581,
+       "share_positive_delta": 0.0
+      }
+     }
+    },
+    "Pred_5ta_Cia": 1.353896975517273,
+    "Prob_5ta_Cia_Alta": 0.19354471564292908,
+    "Temp_Max": 17.085416666666667,
+    "Temp_Media": 14.060416666666667,
+    "Hum_Media": 80.04166666666666,
+    "Viento_Medio": 16.206249999999997,
+    "Rafaga_Media": 24.309375,
+    "Lluvia": 7.55
+   }
+  ]
+ }
+}
