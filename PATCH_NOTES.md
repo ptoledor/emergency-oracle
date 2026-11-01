@@ -1,5 +1,39 @@
 # Patch Notes
 
+## 2026-11-01 - Promoción del modelo con historia Viper
+
+- Modelo oficial: `active_models.json` apunta a `signal_hydro_ensemble_v2_viper_mensajes` (misma clase y 118 variables que `signal_hydro_ensemble_v2`, que queda como respaldo). Walk-forward 6×120: MAE 2,331 / RMSE 3,408 / R² 0,395; umbral de alerta 0,17 (precisión 31,5%, recall 40,2%).
+
+- Datos canónicos: `augmented_emergency_data.csv` y `compiled_scraped_data.csv` pasan a ser la versión tweets+Viper (conteo por mensaje, igual que antes). Los archivos solo-Twitter quedan en `*_twitter.csv`. Los lags que calcula `predict_tomorrow.py` desde los mensajes crudos coinciden con el dataset de entrenamiento (112 de 112 días comparados).
+
+- Clima: los caches oficiales `historical_forecast_features*.csv` se reemplazan por la descarga completa del 2026-11-01 (la misma con la que se entrenó); se conservan las columnas de humedad de suelo.
+
+- Refresco mensual: `03_model/refresh_viper_model.py` reconstruye dataset, clima, walk-forward y modelo a partir de un nuevo dump en `01_scraper/talcahuano/`, respaldando antes el modelo vigente en `saved_models/archive/<fecha>/`. Corrido sobre el dump actual reproduce el modelo promovido bit a bit.
+
+- Pendiente: los modelos secundarios (riesgo por categoría, composición, 5ª compañía, hora punta) siguen entrenados con la historia de tweets.
+
+## 2026-11-01 - Historia Viper Talcahuano y candidato reentrenado (no promovido)
+
+- Datos: se combinan los tweets (2022-02 → 2024-06-23) con los despachos Viper de Talcahuano (2024-06-24 → 2026-10-31). Viper usa UTC−3 fijo; corregido eso, todos los tweets desde jun-2024 tienen su par en Viper. Viper recupera los mensajes que Twitter no publicó en días de temporal (p. ej. 2024-08-01: 23 → 118). Se excluyen reclasificaciones `6-6`, repeticiones del feed y días tocados por huecos >30 h (`coverage_unknown`). Resultado: 1.626 días (antes 1.444).
+
+- Target opcional de emergencias únicas: `dispatch.id` agrupa los `SALE …`/`SEGUNDA ALARMA`; excluir esos prefijos reproduce las emergencias únicas también en la era Twitter. `clean_and_augment.py` acepta `--target incidentes`; por defecto el comportamiento no cambia (verificado idéntico).
+
+- Clima: caches extendidos a 2026-10-31 y versión re-descargada completa (`*_fresh.csv`), porque Open-Meteo re-procesó `weather_code` y humedad de suelo.
+
+- Resultado en holdout real (17-abr → 31-oct, 189 días): producción congelada MAE 2,858 / RMSE 5,721 / R² 0,157; misma arquitectura reentrenada con historia Viper y refit mensual MAE 2,554 / RMSE 3,997 / R² 0,588. Walk-forward 6×120: entrenar con target Viper en vez de Twitter baja RMSE 3,99 → 3,41 y sube R² 0,17 → 0,40.
+
+- Concepción: sin valor como predictor rezagado ni como entrenamiento conjunto; modelo propio R² 0,08.
+
+- Gate: candidatos guardados con sufijo (`signal_hydro_ensemble_v2_viper_mensajes` recomendado, mismas 118 variables que producción); `active_models.json` no cambia. Detalle en `05_research/results/viper_talcahuano/README.md`.
+
+## 2026-10-24 - Candidato hydro v3 (no promovido)
+
+- Investigación: se reproduce el walk-forward oficial (6 × 120 días) y se evalúan calendario enriquecido, nivel lento, anomalías meteorológicas, regularización, ponderación por recencia y una cabeza GLM Poisson.
+
+- Candidato `signal_hydro_v3_glm_cal`: calendario enriquecido + GLM Poisson regularizado (α=10) al 25% sobre el blend hidrometeorológico. MAE 2,239 → 2,221, RMSE 2,918 → 2,888, R² 0,141 → 0,159, AUC de ranking 0,662 → 0,671. Mejora en 5 de 6 bloques; bootstrap 96% (MAE) y 96% (MSE). La variabilidad baja de 39,6% a 36,8%.
+
+- Gate: el modelo se guarda con sufijo y `active_models.json` no cambia. El serving aún no calcula las variables `CAL_*`; promover requiere integrarlas y aprobación explícita. Detalle y resultados negativos en `05_research/results/hydro_v3/README.md`.
+
 ## 2026-07-22 - Distribución histórica por hora
 
 - Forecast: se elimina la hora más probable de las tarjetas para evitar presentar un único horario como una predicción precisa.

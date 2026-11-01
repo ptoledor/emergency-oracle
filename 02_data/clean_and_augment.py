@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import argparse
 import sys
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -46,17 +47,36 @@ def fetch_json_with_retry(url, timeout=30, retries=3):
     raise RuntimeError(f"Error Open-Meteo despues de {retries} intentos: {last_error}")
 
 
+def parse_args():
+    base_dir = Path(__file__).resolve().parent.parent
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", type=Path, default=base_dir / "02_data" / "compiled_scraped_data.csv")
+    parser.add_argument("--output", type=Path, default=base_dir / "02_data" / "augmented_emergency_data.csv")
+    parser.add_argument("--weather-cache", type=Path, default=base_dir / "02_data" / "weather_archive_talcahuano.csv")
+    parser.add_argument("--fifth-audit", type=Path, default=base_dir / "02_data" / "fifth_company_dispatch_audit.csv")
+    parser.add_argument(
+        "--coverage-override", type=Path, default=None,
+        help="CSV local_date,day_state que reemplaza el audit para esas fechas (p. ej. viper_coverage.csv)",
+    )
+    parser.add_argument(
+        "--target", choices=["mensajes", "incidentes"], default="mensajes",
+        help="incidentes: excluye mensajes SALE/SEGUNDA ALARMA que agregan unidades a una emergencia ya contada",
+    )
+    return parser.parse_args()
+
+
 def main():
     print("=== Paso 2: Limpieza y Aumentación de Datos (v2) ===")
+    args = parse_args()
 
     # 1. Rutas de archivos
     base_dir = Path(__file__).resolve().parent.parent
-    raw_tweets_path = base_dir / "02_data" / "compiled_scraped_data.csv"
+    raw_tweets_path = args.input
     claves_cbt_path = base_dir / "02_data" / "Clave_CBT.xlsx"
-    weather_cache_path = base_dir / "02_data" / "weather_archive_talcahuano.csv"
-    output_data_path = base_dir / "02_data" / "augmented_emergency_data.csv"
+    weather_cache_path = args.weather_cache
+    output_data_path = args.output
     audit_target_path = base_dir / "05_research" / "data_quality" / "output" / "daily_target_audit.csv"
-    fifth_company_audit_path = base_dir / "02_data" / "fifth_company_dispatch_audit.csv"
+    fifth_company_audit_path = args.fifth_audit
 
     if not os.path.exists(raw_tweets_path):
         raise FileNotFoundError(f"No se encontró el archivo de tweets: {raw_tweets_path}")
@@ -97,6 +117,11 @@ def main():
     df_merged['_IS_INCIDENT_LIKE'] = df_merged.index.map(
         lambda i: incident_flags.get(i, True)
     )
+    if args.target == "incidentes":
+        from build_viper_dataset import is_additional_message
+        additional = is_additional_message(df_merged['Texto'])
+        df_merged.loc[additional, '_IS_INCIDENT_LIKE'] = False
+        print(f"Target incidentes: {int(additional.sum())} mensajes adicionales (SALE/ALARMA) excluidos")
     n_total = len(df_merged)
     n_incident = int(df_merged['_IS_INCIDENT_LIKE'].sum())
     n_dup = 0
@@ -197,6 +222,18 @@ def main():
             print(f"Marcando {n_unknown} días con coverage_unknown (sin observación confiable)")
         df_daily.loc[audit_states == 'observed_zero', 'DAY_STATE'] = 'observed_zero'
         df_daily.loc[audit_states == 'coverage_unknown', 'DAY_STATE'] = 'coverage_unknown'
+
+    if args.coverage_override is not None:
+        override = pd.read_csv(args.coverage_override)
+        override_map = dict(zip(override['local_date'], override['day_state']))
+        override_states = df_daily['FECHA_DIA'].map(override_map)
+        covered = override_states.notna()
+        df_daily.loc[covered, 'DAY_STATE'] = np.where(
+            df_daily.loc[covered, 'EVENTOS'].isna(), 'observed_zero', 'observed_nonzero'
+        )
+        df_daily.loc[override_states == 'coverage_unknown', 'DAY_STATE'] = 'coverage_unknown'
+        print(f"Cobertura override: {int(covered.sum())} dias, "
+              f"{int((override_states == 'coverage_unknown').sum())} coverage_unknown")
 
     # observed_zero queda como 0; coverage_unknown/no_data quedan fuera del entrenamiento.
     observed_mask = df_daily['DAY_STATE'].isin(['observed_nonzero', 'observed_zero'])
@@ -387,7 +424,7 @@ def main():
     df_daily['VPD_MAX'] = es_max * (1 - df_daily['HUM_MIN'] / 100)
 
     # --- Calendario y feriados ---
-    chile_holidays = holidays.Chile(years=range(2022, 2027))
+    chile_holidays = holidays.Chile(years=range(2022, 2028))
     df_daily['FECHA_DT'] = pd.to_datetime(df_daily['FECHA_DIA'])
     df_daily['MES'] = df_daily['FECHA_DT'].dt.month
     df_daily['DIA_SEMANA'] = df_daily['FECHA_DT'].dt.dayofweek

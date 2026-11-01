@@ -1,0 +1,4 @@
+config;n;mae;rmse;r2;poisson_dev;auc_high;bias;y_mean;std_ratio;boot_mae;boot_mse;folds_mae_better;mae_le12
+talca_v3_conce_none;720;2.309;3.4099;0.394;1.6169;0.6827;-0.1695;5.3056;0.4885;0.0;0.0;0;2.0649
+talca_v3_conce_flag;720;2.3252;3.4307;0.3866;1.6273;0.6705;-0.0705;5.3056;0.4799;0.0775;0.2125;2;2.0809
+talca_v3_conce_scaled;720;2.3065;3.5678;0.3366;1.6704;0.6828;-0.2727;5.3056;0.4233;0.512;0.057;4;2.0318

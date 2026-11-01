@@ -193,6 +193,45 @@ class HydroObjectiveEnsembleRegressor:
         return np.clip(calibrated, 0, None)
 
 
+class HydroGLMBlendRegressor:
+    """Shrink the hydro XGBoost blend toward a regularized Poisson GLM."""
+
+    def __init__(self, hydro, glm, glm_feature_cols, glm_fill_values,
+                 glm_weight, feature_cols):
+        self.hydro = hydro
+        self.glm = glm
+        self.glm_feature_cols = list(glm_feature_cols)
+        self.glm_fill_values = {key: float(value) for key, value in glm_fill_values.items()}
+        self.glm_weight = float(glm_weight)
+        self.feature_cols = list(feature_cols)
+        self.feature_names_in_ = np.asarray(self.feature_cols, dtype=object)
+        self.feature_importances_ = np.asarray([
+            (1 - self.glm_weight) * value
+            for value in hydro.feature_importances_
+        ] + [0.0] * (len(self.feature_cols) - len(hydro.feature_cols)))
+
+    def raw_blend(self, X):
+        blended = np.zeros(len(X), dtype=float)
+        for name, model in self.hydro.models.items():
+            blended += self.hydro.weights[name] * np.asarray(
+                model.predict(X[self.hydro.model_feature_cols[name]]), dtype=float
+            )
+        glm_X = X[self.glm_feature_cols].fillna(self.glm_fill_values)
+        glm_count = np.asarray(self.glm.predict(glm_X), dtype=float)
+        return (1 - self.glm_weight) * blended + self.glm_weight * glm_count
+
+    def predict(self, X):
+        missing = [column for column in self.feature_cols if column not in X.columns]
+        if missing:
+            raise KeyError(f"Missing hydro GLM blend features: {missing[:10]}")
+        calibrated = (
+            self.hydro.center
+            + self.hydro.spread_scale * (self.raw_blend(X) - self.hydro.center)
+            + self.hydro.offset
+        )
+        return np.clip(calibrated, 0, None)
+
+
 class RegressorProbabilityClassifier:
     """Calibrated high-activity probability derived from a count regressor."""
 

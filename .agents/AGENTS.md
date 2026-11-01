@@ -18,8 +18,8 @@ Este documento contiene las directrices operacionales, políticas de datos y el 
 
 - **Zona Horaria**: Operacionalmente todo se maneja en `America/Santiago`.
 - **Actualización de Cambios**: Antes de cerrar una actualización relevante, registrar las modificaciones, el contexto y el motivo en `PATCH_NOTES.md`.
-- **Deduplicación**: Actualmente desactivada (`dedup_mode = disabled`). No activar o alterar la lógica de deduplicación sin instrucción directa del usuario.
-- **Scraping**: No utilizar scraping Viper/XY en esta etapa.
+- **Deduplicación**: `mark_duplicates()` sigue sin filtrar (`_IS_DUPLICATE = False`). Desde 2026-11-01 los datos Viper se limpian en `build_viper_dataset.py` (repeticiones del feed y reclasificaciones `6-6`); `dispatch.id` identifica una emergencia y los mensajes `SALE …`/`SEGUNDA ALARMA` la reutilizan (solo se excluyen con `--target incidentes`). No alterar esta lógica sin instrucción directa del usuario.
+- **Viper**: los dumps JSON de Viper (`01_scraper/talcahuano/`) son la fuente oficial de conteos desde 2024-06-24 (el campo `date` está en UTC−3 fijo). Se entregan manualmente; no automatizar scraping sin instrucción del usuario. Concepción (`01_scraper/concepcion/`) no aporta a Talcahuano (ver `05_research/results/viper_talcahuano/README.md`).
 - **Nomenclatura**:
   - Headers internos de datos y código de variables deben estar **sin tildes**.
   - Textos visibles en gráficos y etiquetas del dashboard **pueden y deben usar tildes** correctamente.
@@ -46,12 +46,11 @@ Este documento contiene las directrices operacionales, políticas de datos y el 
 
 ## 4. Modelos Activos Actuales
 
-Definidos y resueltos dinámicamente mediante `active_models.json`:
-- **Regresor Principal (Operativo)**: `03_model/saved_models/regressor_repeated_5fold_30seeds.pkl` (CategoryBlendRegressor).
-- **Clasificador Principal**: `03_model/saved_models/classifier_repeated_5fold_30seeds.pkl`.
-- **Metadata Principal**: `03_model/saved_models/metadata_repeated_5fold_30seeds.pkl` (Contiene un $R^2$ OOF de ~9.0%).
-- **Modelo Directo Base (Comparativo)**: `03_model/saved_models/regressor_climatic_augmented_direct31.pkl`.
-- **Submodelos de Categorías (Riesgos Secundarios)**: `03_model/saved_models/category_risk_models.pkl`.
+Definidos y resueltos dinámicamente mediante `03_model/saved_models/active_models.json`:
+- **Regresor/Clasificador Principal (Operativo)**: `signal_hydro_ensemble_v2_viper_mensajes` (HydroObjectiveEnsembleRegressor + RegressorProbabilityClassifier, 118 variables), promovido el 2026-11-01. Entrenado con historia tweets+Viper (1.626 días). Walk-forward 6×120: MAE 2,33 / RMSE 3,41 / R² 0,39.
+- **Respaldo**: `signal_hydro_ensemble_v2` (misma arquitectura, historia solo Twitter hasta 2026-04-16).
+- **Datos canónicos**: `02_data/augmented_emergency_data.csv` y `02_data/compiled_scraped_data.csv` son la versión tweets+Viper; la versión solo Twitter está en `*_twitter.csv`.
+- **Submodelos de Categorías (Riesgos Secundarios)**: `03_model/saved_models/category_risk_models.pkl` (aún entrenados con historia Twitter).
 
 ---
 
@@ -60,7 +59,11 @@ Definidos y resueltos dinámicamente mediante `active_models.json`:
 El flujo secuencial de scripts para preparar datos, entrenar y predecir es:
 
 ```powershell
-# 1. Limpieza y aumento de features (clima + calendarios deterministas)
+# 0. Refresco mensual con un nuevo dump Viper (dataset + clima + walk-forward + modelo activo)
+.\.venv\Scripts\python.exe 03_model\refresh_viper_model.py
+
+# 1. Limpieza y aumento de features (clima + calendarios deterministas). Sin argumentos
+#    procesa el archivo canonico; el refresco Viper usa --coverage-override 02_data\viper_coverage.csv
 .\.venv\Scripts\python.exe 02_data\clean_and_augment.py
 
 # 2. Entrenamiento de validación cruzada estructurada repetida (ej. 5-Fold, 30 semillas)

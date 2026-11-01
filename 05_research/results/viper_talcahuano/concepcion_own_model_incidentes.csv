@@ -1,0 +1,4 @@
+config;n;mae;rmse;r2;poisson_dev;auc_high;bias;y_mean;std_ratio
+conce_v3;480;2.5628;3.2657;0.0917;1.4756;0.5599;0.5813;6.8667;0.37
+conce_baseline_roll28;480;2.5331;3.4577;-0.0183;1.6009;0.5269;0.0472;6.8667;0.2291
+conce_baseline_mes_dow_median;480;2.7688;3.761;-0.2048;1.9117;0.5156;-0.0354;6.8667;0.4398
