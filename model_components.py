@@ -193,6 +193,21 @@ class HydroObjectiveEnsembleRegressor:
         return np.clip(calibrated, 0, None)
 
 
+class QuantileSeedEnsembleRegressor:
+    """Average of quantile XGBoost regressors trained with different seeds."""
+
+    def __init__(self, models, feature_cols, quantile):
+        self.models = list(models)
+        self.feature_cols = list(feature_cols)
+        self.feature_names_in_ = np.asarray(self.feature_cols, dtype=object)
+        self.quantile = float(quantile)
+
+    def predict(self, X):
+        X = X[self.feature_cols]
+        predictions = [np.asarray(model.predict(X), dtype=float) for model in self.models]
+        return np.clip(np.mean(predictions, axis=0), 0, None)
+
+
 class HydroGLMBlendRegressor:
     """Shrink the hydro XGBoost blend toward a regularized Poisson GLM."""
 

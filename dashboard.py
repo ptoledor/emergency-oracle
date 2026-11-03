@@ -1007,6 +1007,22 @@ def load_fifth_company_artifact():
 
 
 fifth_company_artifact = load_fifth_company_artifact()
+
+
+@st.cache_resource
+def load_alarm_artifact(suffix, mtime=None):
+    """Escenario alto (cuantil) entrenado sobre el mismo modelo oficial."""
+    path = models_dir / f"alarm_{suffix}.pkl"
+    if not path.exists():
+        return None
+    with path.open("rb") as stream:
+        artifact = pickle.load(stream)
+    if artifact["metadata"].get("base_model_suffix") != suffix:
+        return None
+    artifact["regressor"].models = [
+        force_single_thread_model(model) for model in artifact["regressor"].models
+    ]
+    return artifact
 if df is not None and fifth_company_artifact:
     try:
         fifth_metadata = fifth_company_artifact["metadata"]
@@ -1278,6 +1294,11 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
     except Exception as e:
         st.error(f"Error al cargar modelos: {e}")
         return None, 0.25, 7.0
+    model_suffix = Path(reg_path).stem.removeprefix("regressor_")
+    alarm_path = models_dir / f"alarm_{model_suffix}.pkl"
+    alarm_artifact = load_alarm_artifact(
+        model_suffix, alarm_path.stat().st_mtime if alarm_path.exists() else None
+    )
 
     # Get weather
     try:
@@ -1536,6 +1557,13 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
         except Exception as exc:
             print(f"No se pudo calcular la composicion por categoria: {exc}")
 
+        alarm_count = np.nan
+        if alarm_artifact:
+            try:
+                alarm_count = max(float(alarm_artifact["regressor"].predict(X_all)[0]), pred_count)
+            except Exception as exc:
+                print(f"No se pudo calcular el escenario alto: {exc}")
+
         fifth_company_count = np.nan
         fifth_company_probability = np.nan
         if fifth_company_artifact:
@@ -1562,6 +1590,7 @@ def predict_6_days(start_date, is_historical, prefix="_climatic_augmented", weat
             'FechaStr': d_str,
             'Dia': DIAS_ES[d.strftime('%A')],
             'Prediccion': pred_count,
+            'Prediccion_Alarma': alarm_count,
             'Lag_Mode': lag_mode,
             'Lag_Age_Days': lag_age_days,
             'Last_Observed_Date': last_observed_date,
@@ -2368,11 +2397,19 @@ with tab_forecast:
                     'title="Llamados esperados por tipo; el color exige coherencia entre probabilidad y conteo">'
                     + ''.join(mix_rows) + '</div>'
                 )
+            alarm_html = ""
+            if pd.notna(p.get('Prediccion_Alarma', np.nan)):
+                alarm_html = (
+                    '<sup style="font-size: 0.7rem; font-weight: 700; color: var(--text-muted); '
+                    'margin-left: 2px; cursor: help;" '
+                    'title="Escenario alto: cerca de 1 de cada 4 días supera este valor">'
+                    f"&#8593;{p['Prediccion_Alarma']:.1f}</sup>"
+                )
             forecast_cards.append(
                 f"""<div class="forecast-card">
                     <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">{p['Dia']}</div>
                     <div style="font-size: 0.8rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem;">{p['Fecha'].strftime('%d-%b')}</div>
-                    <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Prediccion']:.1f}</div>
+                    <div style="font-size: 1.3rem; font-weight: 800; color: var(--text); margin-bottom: 0.1rem;">{p['Prediccion']:.1f}{alarm_html}</div>
                     <div style="font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.5rem;">llamadas</div>
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 0.35rem; margin-bottom: 0.6rem;">
                         <div class="metric-delta {activity_class}" style="margin: 0; font-size: 0.62rem; padding: 2px 6px;">{activity_text}</div>

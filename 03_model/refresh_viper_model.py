@@ -7,6 +7,7 @@ Pasos (todos con los scripts validados el 2026-11-01):
 4. copia ambos archivos a los nombres canonicos que lee el serving
 5. viper_wf.py              -> walk-forward 6x120 (OOF para calibrar)
 6. build_viper_candidate.py --promote -> reescribe el modelo activo
+7. build_alarm_model.py    -> escenario alto (cuantil 0,75) para el superindice del dashboard
 
 Antes de reescribir, el modelo vigente se respalda en saved_models/archive/<train_end_date>/.
 Uso: copiar los JSON nuevos a 01_scraper/talcahuano/ y correr
@@ -68,6 +69,7 @@ def main():
     run(ROOT / "03_model" / "viper_wf.py", "mensajes", "7")
     previous = backup_active_model()
     run(ROOT / "03_model" / "build_viper_candidate.py", "mensajes", "7", "official", "--promote")
+    run(ROOT / "03_model" / "build_alarm_model.py")
 
     with (MODELS / f"metadata_{SUFFIX}.pkl").open("rb") as stream:
         current = pickle.load(stream)

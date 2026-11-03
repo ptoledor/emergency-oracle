@@ -67,3 +67,32 @@ MAE 1,813 / RMSE 2,819 / R² **0,431** (media 4,53; error relativo 40% vs 44% en
 Promoción: `active_models.json` apunta al candidato, los archivos canónicos de `02_data/` son la versión tweets+Viper (lags del serving verificados contra el dataset) y los caches de clima oficiales contienen la descarga fresca.
 
 Scripts: `02_data/build_viper_dataset.py`, `02_data/extend_weather.py`, `03_model/viper_eval.py`, `viper_experiments.py`, `viper_wf.py`, `viper_concepcion.py`, `build_viper_candidate.py`.
+
+## Modelo "alarmista" vs modelo de conteo (`03_model/viper_alert_models.py`, `alert_models.csv`)
+
+Mismo walk-forward (720 días, día alto = >7 llamados, tasa base 16%). Puntajes comparados por ROC-AUC y PR-AUC:
+
+| Puntaje | ROC-AUC | PR-AUC | Recall con precisión ≥25% |
+|---|---|---|---|
+| Conteo del modelo oficial Viper | 0,673 | 0,311 | 67,5% |
+| XGB cuantil 75 (4 semillas) | 0,681 | 0,355 | ~69% |
+| Clasificador XGB >7 (con/sin peso de clase) | 0,653–0,658 | 0,297–0,322 | 49–57% |
+| Clasificador XGB >5 | 0,598–0,602 | 0,275 | 47–49% |
+| Regresión logística | 0,634 | 0,273 | 44% |
+
+Los clasificadores dedicados no superan al conteo. El cuantil 75 mejora la PR-AUC (bootstrap 98%), pero la ganancia está en los ~25 días mejor rankeados; en la zona de alto recall empata con el conteo (q75 ≥ 6,5: P 27% / R 62%; conteo ≥ 5,0: P 26% / R 64%). Conclusión: un solo modelo de conteo con dos umbrales cubre ambos usos.
+
+## Selección de variables con ambas ciudades (`03_model/viper_joint_selection.py`)
+
+Selección anidada: en cada fold de Talcahuano las variables se eligen solo con datos previos de ambas ciudades (importancia por permutación, deviance Poisson, 2 ventanas de 120 días). Evaluación en los 3 folds con ≥360 días de historia de Concepción (2025-10-10 → 2026-10-31, 360 días).
+
+| Conjunto (6 semillas, estabilidad) | n variables | MAE | RMSE | R² | PR-AUC >7 |
+|---|---|---|---|---|---|
+| Completo (producción) | 118 | 2,401 | 3,572 | 0,465 | 0,341 |
+| Estables en Talcahuano | 7–25 | 2,304 | 3,577 | 0,464 | 0,317 |
+| Estables en ambas ciudades | 3–10 | 2,334 | 3,616 | 0,452 | 0,286 |
+| Estables en modelo conjunto | 11 | 2,375 | 3,527 | 0,479 | 0,328 |
+
+Con 2 semillas el conjunto pooled oscilaba entre R² 0,39 y 0,58 según la semilla: la selección es mayormente ruido. Con 6 semillas ningún conjunto supera al completo de forma consistente (bootstrap MSE ≤ 64%). No se cambia el modelo.
+
+Señales comunes y estables: ráfaga y viento máximo, índice de tormenta, presión media, nivel de congelamiento mínimo (frentes fríos) y lluvia de hace 10 días. Las correlaciones con los llamados son similares en ambas ciudades (ráfaga máx. Spearman +0,11 / +0,13); la diferencia es la respuesta: en el 10% de días más ventosos Talcahuano sube ×1,72 y Concepción ×1,32, y Concepción tiene varianza cercana a Poisson (var/media 2,0 vs 3,6). Concepción no carece de señal: tiene menos variación explicable por clima.

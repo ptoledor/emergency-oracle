@@ -1,5 +1,15 @@
 # Patch Notes
 
+## 2026-11-02 - Escenario alto en las tarjetas del pronóstico
+
+- Dashboard: cada tarjeta mantiene las llamadas esperadas del modelo oficial y agrega como superíndice (↑) el escenario alto: cuantil 0,75 de llamados (XGBoost cuantil, promedio de 4 semillas, mismas 118 variables), acotado a no quedar bajo el valor esperado. Tooltip: "cerca de 1 de cada 4 días supera este valor".
+
+- Validación walk-forward 6×120 (`03_model/viper_alert_models.py`): para detectar días altos (>7 llamados) el cuantil 0,75 logra PR-AUC 0,355 vs 0,311 del conteo (bootstrap 98%); cobertura OOF 70,8%. Los clasificadores dedicados (con y sin pesos, logístico) fueron peores que el conteo.
+
+- Artefacto: `saved_models/alarm_signal_hydro_ensemble_v2_viper_mensajes.pkl` (`03_model/build_alarm_model.py`, clase `QuantileSeedEnsembleRegressor`). Se carga solo si su `base_model_suffix` coincide con el modelo activo; si falta, la tarjeta se ve como antes. `refresh_viper_model.py` lo reentrena después del modelo oficial.
+
+- Investigación (sin cambio en producción): selección de variables con ambas ciudades (`03_model/viper_joint_selection.py`). Ningún subconjunto estable supera al modelo completo con 6 semillas; las señales compartidas son ráfaga/viento máximo, índice de tormenta, presión, nivel de congelamiento y lluvia de hace 10 días. Concepción responde menos al clima (×1,32 vs ×1,72 en los días más ventosos).
+
 ## 2026-11-01 - Promoción del modelo con historia Viper
 
 - Modelo oficial: `active_models.json` apunta a `signal_hydro_ensemble_v2_viper_mensajes` (misma clase y 118 variables que `signal_hydro_ensemble_v2`, que queda como respaldo). Walk-forward 6×120: MAE 2,331 / RMSE 3,408 / R² 0,395; umbral de alerta 0,17 (precisión 31,5%, recall 40,2%).
